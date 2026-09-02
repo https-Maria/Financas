@@ -1,7 +1,7 @@
 /* Service worker — cache do "casco" do app.
    Os dados vêm sempre do Supabase; aqui só guardamos a interface,
    para o app abrir mesmo sem internet. */
-const CACHE = 'financeiro-v17';
+const CACHE = 'financeiro-v19';
 const SHELL = ['./', './index.html', './app.js', './manifest.json',
                './icon-192.png', './icon-512.png'];
 
