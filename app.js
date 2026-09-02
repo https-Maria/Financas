@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v19';
+const APP_VER='v20';
 
 /* =====================================================================
    ESTADO
@@ -207,21 +207,47 @@ function resumoFin(f){
           jurosFuturos: L.slice(pagas).reduce((s,x)=>s+x.juros,0),
           totalContrato: PMT*n, ultima: L[n-1]?.venc};
 }
-/* Quanto custa quitar antecipadamente N parcelas do fim, e quanto isso economiza. */
-function anteciparN(f,N){
-  const L=tabelaAmortizacao(f), pagas=+f.parcelas_pagas, i=taxaEfetiva(f), PMT=+f.valor_parcela;
-  const restantes=L.length-pagas;
-  N=Math.max(0,Math.min(N,restantes));
-  let vp=0;
-  /* traz a valor presente as N últimas parcelas */
-  for(let k=L.length-N;k<L.length;k++){
-    const meses=(k+1)-pagas;
-    vp += PMT/Math.pow(1+i,meses);
+/* Antecipação de parcelas.
+   A escolha de QUAIS parcelas antecipar muda o resultado:
+     - as ÚLTIMAS rendem mais desconto (estão mais longe, carregam mais juros)
+       e encurtam o contrato;
+     - as PRÓXIMAS descontam menos, mas aliviam o caixa dos meses seguintes.
+   O contrato prevê quitação a valor presente pela taxa da operação. */
+function anteciparPlano(f, opt){
+  const L=tabelaAmortizacao(f), i=taxaEfetiva(f), PMT=+f.valor_parcela;
+  const pend=L.filter(l=>!l.paga);
+  const N=Math.max(0,Math.min(+opt.n||0, pend.length));
+  const est=opt.estrategia||'ultimas';
+  let sel=[];
+  if(N>0){
+    if(est==='proximas') sel=pend.slice(0,N);
+    else if(est==='ultimas') sel=pend.slice(-N);
+    else { const a=Math.ceil(N/2), b=N-a; sel=[...pend.slice(0,a), ...(b?pend.slice(-b):[])]; }
   }
-  return {n:N, custoHoje:vp, nominal:PMT*N, economia:PMT*N-vp,
-          novaUltima: L[L.length-N-1]?.venc};
+  const pagamento = opt.data ? new Date(opt.data+'T12:00:00') : new Date();
+  const diaria = Math.pow(1+i, 1/30)-1;
+  let custo=0;
+  const itens = sel.map(l=>{
+    const dias = Math.max(0, Math.round((l.venc-pagamento)/86400000));
+    const vp = PMT/Math.pow(1+diaria, dias);
+    custo += vp;
+    return {k:l.k, venc:l.venc, dias, vp, desconto:PMT-vp};
+  });
+  const restantes = pend.filter(l=>!sel.includes(l));
+  return {n:N, estrategia:est, itens, custo, nominal:PMT*N, economia:PMT*N-custo,
+          pagamento, restantes,
+          novaUltima: restantes.length?restantes[restantes.length-1].venc:null,
+          qtdRestante: restantes.length,
+          /* meses em que a parcela deixa de sair do orçamento */
+          mesesLiberados: new Set(sel.map(l=>ym(l.venc.toISOString().slice(0,10))))};
 }
 
+const anteciparN=(f,N)=>{
+  const p=anteciparPlano(f,{n:N,estrategia:'ultimas'});
+  return {n:p.n, custoHoje:p.custo, nominal:p.nominal, economia:p.economia, novaUltima:p.novaUltima};
+};
+
+/* ---- Fluxo por dia de pagamento ---- */
 /* ---- Fluxo por dia de pagamento ---- */
 function blocosDoMes(k){
   const cartoes = D.cartoes.length?D.cartoes:[];
@@ -1186,7 +1212,7 @@ window.addCasaItem=async()=>{
 /* =====================================================================
    AMORTIZAÇÃO — plano de pagamento dos financiamentos
    ===================================================================== */
-let FIN_SEL=null, FIN_ANTEC=6;
+let FIN_SEL=null, FIN_ANTEC=6, FIN_EST='ultimas', FIN_DATA=null;
 function vAmort(){
   if(FALTANDO.includes('financiamentos'))
     return head('Amortização','Esta aba precisa de uma tabela que ainda não existe no seu banco.');
@@ -1197,9 +1223,9 @@ function vAmort(){
         ou cadastre um financiamento no banco.</div>`;
   const f = fins.find(x=>x.id===FIN_SEL) || fins[0];
   const R = resumoFin(f);
-  const A = anteciparN(f,FIN_ANTEC);
-  const pctPago = R.pagas/(+f.total_parcelas);
   const fmtD = d => d ? String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+d.getFullYear() : '—';
+  const P = anteciparPlano(f,{n:FIN_ANTEC,estrategia:FIN_EST,data:FIN_DATA});
+  const pctPago = R.pagas/(+f.total_parcelas);
 
   return head('Amortização','Como a dívida se comporta ao longo do contrato e quanto custa antecipar.')
   +(fins.length>1?`<div class="rowbar"><div class="fld" style="max-width:220px"><label>Financiamento</label>
@@ -1235,37 +1261,83 @@ function vAmort(){
     ${f.observacao?`<p class="note" style="margin-top:10px">${esc(f.observacao)}</p>`:''}
   </div></div>
 
-  <div class="grid2">
-  <div class="panel"><h2>Antecipar parcelas <small>quanto custa e quanto economiza</small></h2><div class="pbody">
-    <div class="fld" style="margin-bottom:12px"><label>Antecipar quantas parcelas do fim</label>
-      <input type="number" min="0" max="${R.restantes}" value="${FIN_ANTEC}"
-        oninput="setAntec(+this.value)">
-      <div class="qbtns">${[1,3,6,12,R.restantes].map(x=>
-        `<button class="qbtn" aria-pressed="${FIN_ANTEC===x}" onclick="setAntec(${x})">${x===R.restantes?'tudo':x+'x'}</button>`).join('')}</div>
-    </div>
-    <div class="tw"><table class="mini"><tbody>
-      <tr><td>Se pagar no vencimento</td><td class="r">${BRL(A.nominal)}</td></tr>
-      <tr><td>Pagando hoje (valor presente)</td><td class="r"><b>${BRL(A.custoHoje)}</b></td></tr>
-      <tr><td><b>Economia</b></td><td class="r"><b style="color:var(--pos)">${BRL(A.economia)}</b></td></tr>
-      <tr><td>Contrato passaria a terminar em</td><td class="r">${A.n>=R.restantes?'quitado':fmtD(A.novaUltima)}</td></tr>
-    </tbody></table></div>
-    <p class="note" style="margin-top:10px">O contrato prevê quitação antecipada calculada a valor presente
-    pela taxa da operação. Quanto mais no fim está a parcela, maior o desconto — porque é a que carrega mais juros.</p>
-  </div></div>
+  <div class="panel"><h2>Simular antecipação <small>nada é gravado; é só simulação</small></h2>
+    <div class="pbody">
+      <div class="form" style="margin-bottom:14px">
+        <div class="fld"><label>Quantas parcelas</label>
+          <input type="number" min="0" max="${R.restantes}" value="${FIN_ANTEC}" oninput="setAntec(+this.value)">
+        </div>
+        <div class="fld"><label>Quais</label>
+          <div class="seg">
+            <button class="segb" aria-pressed="${FIN_EST==='ultimas'}" onclick="setEst('ultimas')">Últimas</button>
+            <button class="segb" aria-pressed="${FIN_EST==='proximas'}" onclick="setEst('proximas')">Próximas</button>
+            <button class="segb" aria-pressed="${FIN_EST==='ambas'}" onclick="setEst('ambas')">Ambas</button>
+          </div>
+        </div>
+        <div class="fld"><label>Dia do pagamento</label>
+          <input type="date" value="${P.pagamento.toISOString().slice(0,10)}" onchange="setFinData(this.value)">
+        </div>
+      </div>
+      <div class="qbtns" style="margin-bottom:14px">${[1,3,6,12,R.restantes].map(x=>
+        `<button class="qbtn" aria-pressed="${FIN_ANTEC===x}" onclick="setAntec(${x})">${x===R.restantes?'quitar tudo':x+'x'}</button>`).join('')}</div>
 
-  <div class="panel"><h2>Impacto no orçamento</h2><div class="pbody">
-    <div class="tw"><table class="mini"><tbody>
-      <tr><td>Parcela mensal</td><td class="r">${BRL(f.valor_parcela)}</td></tr>
-      <tr><td>Peso na renda</td><td class="r">${totRenda()?PCT((+f.valor_parcela)/totRenda()):'—'}</td></tr>
-      <tr><td>Vence dia</td><td class="r">${f.dia_vencimento||'—'}</td></tr>
-      <tr><td>Sobra do bloco desse dia</td><td class="r">${(()=>{
-        const b=blocosDoMes(MREF).find(x=>x.dia===+f.dia_vencimento);
-        return b?BRL(b.saldo):'—';})()}</td></tr>
-      <tr><td>Quando quitar, libera por mês</td><td class="r" style="color:var(--pos)"><b>${BRL(f.valor_parcela)}</b></td></tr>
+      <div class="verdict ${P.economia>0?'ok':'warn'}" style="border:1px solid var(--rule);border-radius:3px;margin-bottom:14px">
+        ${P.n===0?'Escolha quantas parcelas quer antecipar.'
+        :`Antecipando ${P.n} ${P.n===1?'parcela':'parcelas'} ${
+          FIN_EST==='ultimas'?'do fim':FIN_EST==='proximas'?'mais próximas':'das duas pontas'},
+          você paga <b>${BRL(P.custo)}</b> em vez de ${BRL(P.nominal)} — economia de <b>${BRL(P.economia)}</b>.
+          ${P.qtdRestante?`Sobram ${P.qtdRestante} parcelas, até ${fmtD(P.novaUltima)}.`:'O contrato fica quitado.'}`}
+      </div>
+
+      <div class="tw"><table class="mini"><tbody>
+        <tr><td>Se pagar no vencimento</td><td class="r">${BRL(P.nominal)}</td></tr>
+        <tr><td>Pagando em ${fmtD(P.pagamento)}</td><td class="r"><b>${BRL(P.custo)}</b></td></tr>
+        <tr><td><b>Economia</b></td><td class="r"><b style="color:var(--pos)">${BRL(P.economia)}</b></td></tr>
+        <tr><td>Desconto médio por parcela</td><td class="r">${P.n?BRL(P.economia/P.n):'—'}</td></tr>
+        <tr><td>Parcelas que sobram</td><td class="r">${P.qtdRestante}</td></tr>
+        <tr><td>Contrato termina em</td><td class="r">${P.novaUltima?fmtD(P.novaUltima):'quitado'}</td></tr>
+      </tbody></table></div>
+
+      ${P.itens.length?`<details class="mini-det" style="margin-top:10px"><summary>
+        <span>Ver as ${P.n} parcelas escolhidas</span><b>${BRL(P.custo)}</b></summary>
+        <div class="tw"><table class="mini"><thead><tr>
+          <th class="c">Nº</th><th>Vence</th><th class="r">Faltam</th>
+          <th class="r">Valor hoje</th><th class="r">Desconto</th></tr></thead><tbody>
+        ${P.itens.map(x=>`<tr><td class="c">${x.k}</td><td class="mono">${fmtD(x.venc)}</td>
+          <td class="r">${x.dias} dias</td><td class="r">${BRL(x.vp)}</td>
+          <td class="r" style="color:var(--pos)">${BRL(x.desconto)}</td></tr>`).join('')}
+        </tbody></table></div></details>`:''}
+
+      <p class="note" style="margin-top:10px">Antecipar as <b>últimas</b> economiza mais, porque são as que
+      carregam mais juros. Antecipar as <b>próximas</b> economiza menos, mas alivia o caixa dos meses seguintes —
+      veja a diferença na tabela abaixo. O desconto é calculado a valor presente pela taxa do contrato;
+      o valor exato do banco pode variar alguns centavos.</p>
+    </div></div>
+
+  <div class="panel"><h2>Impacto no orçamento <small>próximos 12 meses</small></h2>
+    <div class="tw"><table><thead><tr>
+      <th>Mês</th><th class="r">Renda</th><th class="r">Saídas hoje</th><th class="r">Sobra hoje</th>
+      <th class="r">Parcela do carro</th><th class="r">Sobra se antecipar</th><th class="r">Diferença</th>
+    </tr></thead><tbody>
+    ${fluxo(12,null,MREF).map(x=>{
+      const liberou = P.mesesLiberados.has(x.k);
+      const parc = (() => {
+        const l=R.linhas.find(l=>!l.paga && ym(l.venc.toISOString().slice(0,10))===x.k);
+        return l ? +f.valor_parcela : 0;
+      })();
+      const depois = x.sal + (liberou?parc:0);
+      return `<tr><td><b>${mLabel(x.k)}</b></td>
+        <td class="r">${BRL(x.renda)}</td>
+        <td class="r">${BRL(x.out)}</td>
+        <td class="r" style="color:${x.sal<0?'var(--neg)':'var(--muted)'}">${BRL(x.sal)}</td>
+        <td class="r">${parc?BRL(parc):'—'}${liberou?' <span class="tag t-ok">antecipada</span>':''}</td>
+        <td class="r" style="font-weight:600;color:${depois<0?'var(--neg)':'var(--pos)'}">${BRL(depois)}</td>
+        <td class="r" style="color:${liberou?'var(--pos)':'var(--muted)'}">${liberou?'+'+BRL(parc):'—'}</td>
+      </tr>`;}).join('')}
     </tbody></table></div>
-    <p class="note" style="margin-top:10px">Quitando hoje por ${BRL(R.saldo)}, vocês liberam
-    ${BRL(f.valor_parcela)} por mês durante ${R.restantes} meses e economizam ${BRL(R.economiaQuitar)} em juros.</p>
-  </div></div>
+    <div class="pbody"><p class="note">A coluna "sobra se antecipar" mostra os meses em que a parcela deixa
+    de sair, porque já foi paga na simulação. Note que o dinheiro para antecipar (${BRL(P.custo)}) sai
+    de uma vez, no dia escolhido — isso não está descontado desta tabela.</p></div>
   </div>
 
   <div class="panel"><h2>Tabela de amortização <small>parcela a parcela</small></h2>
@@ -1287,6 +1359,8 @@ function vAmort(){
 }
 window.setFin=v=>{ FIN_SEL=v; render(); };
 window.setAntec=v=>{ FIN_ANTEC=Math.max(0,v||0); render(); };
+window.setEst=v=>{ FIN_EST=v; render(); };
+window.setFinData=v=>{ FIN_DATA=v||null; render(); };
 
 /* =====================================================================
    SHELL E INICIALIZAÇÃO
