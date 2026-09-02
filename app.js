@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v20';
+const APP_VER='v21';
 
 /* =====================================================================
    ESTADO
@@ -216,14 +216,12 @@ function resumoFin(f){
 function anteciparPlano(f, opt){
   const L=tabelaAmortizacao(f), i=taxaEfetiva(f), PMT=+f.valor_parcela;
   const pend=L.filter(l=>!l.paga);
-  const N=Math.max(0,Math.min(+opt.n||0, pend.length));
-  const est=opt.estrategia||'ultimas';
-  let sel=[];
-  if(N>0){
-    if(est==='proximas') sel=pend.slice(0,N);
-    else if(est==='ultimas') sel=pend.slice(-N);
-    else { const a=Math.ceil(N/2), b=N-a; sel=[...pend.slice(0,a), ...(b?pend.slice(-b):[])]; }
-  }
+  /* quantas antecipar de cada ponta, sem deixar as duas se sobreporem */
+  let prox=Math.max(0, Math.min(+opt.prox||0, pend.length));
+  let ult =Math.max(0, Math.min(+opt.ult ||0, pend.length-prox));
+  const sel=[...pend.slice(0,prox), ...(ult?pend.slice(-ult):[])];
+  const N=sel.length;
+
   const pagamento = opt.data ? new Date(opt.data+'T12:00:00') : new Date();
   const diaria = Math.pow(1+i, 1/30)-1;
   let custo=0;
@@ -231,19 +229,21 @@ function anteciparPlano(f, opt){
     const dias = Math.max(0, Math.round((l.venc-pagamento)/86400000));
     const vp = PMT/Math.pow(1+diaria, dias);
     custo += vp;
-    return {k:l.k, venc:l.venc, dias, vp, desconto:PMT-vp};
+    return {k:l.k, venc:l.venc, dias, vp, desconto:PMT-vp,
+            ponta: prox && l.k<=pend[prox-1]?.k ? 'próxima' : 'última'};
   });
-  const restantes = pend.filter(l=>!sel.includes(l));
-  return {n:N, estrategia:est, itens, custo, nominal:PMT*N, economia:PMT*N-custo,
+  const escolhidas=new Set(sel.map(l=>l.k));
+  const restantes = pend.filter(l=>!escolhidas.has(l.k));
+  return {n:N, prox, ult, itens, custo, nominal:PMT*N, economia:PMT*N-custo,
           pagamento, restantes,
           novaUltima: restantes.length?restantes[restantes.length-1].venc:null,
           qtdRestante: restantes.length,
-          /* meses em que a parcela deixa de sair do orçamento */
+          maxPend: pend.length,
           mesesLiberados: new Set(sel.map(l=>ym(l.venc.toISOString().slice(0,10))))};
 }
 
 const anteciparN=(f,N)=>{
-  const p=anteciparPlano(f,{n:N,estrategia:'ultimas'});
+  const p=anteciparPlano(f,{prox:0,ult:N});
   return {n:p.n, custoHoje:p.custo, nominal:p.nominal, economia:p.economia, novaUltima:p.novaUltima};
 };
 
@@ -1212,7 +1212,7 @@ window.addCasaItem=async()=>{
 /* =====================================================================
    AMORTIZAÇÃO — plano de pagamento dos financiamentos
    ===================================================================== */
-let FIN_SEL=null, FIN_ANTEC=6, FIN_EST='ultimas', FIN_DATA=null;
+let FIN_SEL=null, FIN_PROX=0, FIN_ULT=6, FIN_DATA=null;
 function vAmort(){
   if(FALTANDO.includes('financiamentos'))
     return head('Amortização','Esta aba precisa de uma tabela que ainda não existe no seu banco.');
@@ -1224,7 +1224,7 @@ function vAmort(){
   const f = fins.find(x=>x.id===FIN_SEL) || fins[0];
   const R = resumoFin(f);
   const fmtD = d => d ? String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+d.getFullYear() : '—';
-  const P = anteciparPlano(f,{n:FIN_ANTEC,estrategia:FIN_EST,data:FIN_DATA});
+  const P = anteciparPlano(f,{prox:FIN_PROX,ult:FIN_ULT,data:FIN_DATA});
   const pctPago = R.pagas/(+f.total_parcelas);
 
   return head('Amortização','Como a dívida se comporta ao longo do contrato e quanto custa antecipar.')
@@ -1263,28 +1263,35 @@ function vAmort(){
 
   <div class="panel"><h2>Simular antecipação <small>nada é gravado; é só simulação</small></h2>
     <div class="pbody">
-      <div class="form" style="margin-bottom:14px">
-        <div class="fld"><label>Quantas parcelas</label>
-          <input type="number" min="0" max="${R.restantes}" value="${FIN_ANTEC}" oninput="setAntec(+this.value)">
+      <div class="form" style="margin-bottom:10px">
+        <div class="fld"><label>Das próximas a vencer</label>
+          <input type="number" min="0" max="${R.restantes}" value="${FIN_PROX}" oninput="setProx(+this.value)">
+          <span class="note">${FIN_PROX?'parcelas '+P.itens.filter(x=>x.ponta==='próxima').map(x=>x.k).join(', '):'nenhuma'}</span>
         </div>
-        <div class="fld"><label>Quais</label>
-          <div class="seg">
-            <button class="segb" aria-pressed="${FIN_EST==='ultimas'}" onclick="setEst('ultimas')">Últimas</button>
-            <button class="segb" aria-pressed="${FIN_EST==='proximas'}" onclick="setEst('proximas')">Próximas</button>
-            <button class="segb" aria-pressed="${FIN_EST==='ambas'}" onclick="setEst('ambas')">Ambas</button>
-          </div>
+        <div class="fld"><label>Das últimas do contrato</label>
+          <input type="number" min="0" max="${R.restantes}" value="${FIN_ULT}" oninput="setUlt(+this.value)">
+          <span class="note">${FIN_ULT?'parcelas '+P.itens.filter(x=>x.ponta==='última').map(x=>x.k).join(', '):'nenhuma'}</span>
         </div>
         <div class="fld"><label>Dia do pagamento</label>
           <input type="date" value="${P.pagamento.toISOString().slice(0,10)}" onchange="setFinData(this.value)">
         </div>
+        <div class="fld"><label>Total escolhido</label>
+          <div style="padding:7px 0;font-weight:600;font-size:15px">${P.n} de ${R.restantes}</div>
+        </div>
       </div>
-      <div class="qbtns" style="margin-bottom:14px">${[1,3,6,12,R.restantes].map(x=>
-        `<button class="qbtn" aria-pressed="${FIN_ANTEC===x}" onclick="setAntec(${x})">${x===R.restantes?'quitar tudo':x+'x'}</button>`).join('')}</div>
+      <div class="qbtns" style="margin-bottom:14px">
+        <button class="qbtn" onclick="setAntec(0,3)">3 do fim</button>
+        <button class="qbtn" onclick="setAntec(0,6)">6 do fim</button>
+        <button class="qbtn" onclick="setAntec(0,12)">12 do fim</button>
+        <button class="qbtn" onclick="setAntec(1,2)">1 agora + 2 do fim</button>
+        <button class="qbtn" onclick="setAntec(3,0)">3 próximas</button>
+        <button class="qbtn" onclick="setAntec(0,${R.restantes})">quitar tudo</button>
+        <button class="qbtn" onclick="setAntec(0,0)">limpar</button>
+      </div>
 
       <div class="verdict ${P.economia>0?'ok':'warn'}" style="border:1px solid var(--rule);border-radius:3px;margin-bottom:14px">
-        ${P.n===0?'Escolha quantas parcelas quer antecipar.'
-        :`Antecipando ${P.n} ${P.n===1?'parcela':'parcelas'} ${
-          FIN_EST==='ultimas'?'do fim':FIN_EST==='proximas'?'mais próximas':'das duas pontas'},
+        ${P.n===0?'Escolha quantas parcelas quer antecipar de cada ponta.'
+        :`Antecipando ${[P.prox?P.prox+' das próximas':'',P.ult?P.ult+' do fim':''].filter(Boolean).join(' e ')},
           você paga <b>${BRL(P.custo)}</b> em vez de ${BRL(P.nominal)} — economia de <b>${BRL(P.economia)}</b>.
           ${P.qtdRestante?`Sobram ${P.qtdRestante} parcelas, até ${fmtD(P.novaUltima)}.`:'O contrato fica quitado.'}`}
       </div>
@@ -1301,9 +1308,10 @@ function vAmort(){
       ${P.itens.length?`<details class="mini-det" style="margin-top:10px"><summary>
         <span>Ver as ${P.n} parcelas escolhidas</span><b>${BRL(P.custo)}</b></summary>
         <div class="tw"><table class="mini"><thead><tr>
-          <th class="c">Nº</th><th>Vence</th><th class="r">Faltam</th>
+          <th class="c">Nº</th><th>Vence</th><th>Ponta</th><th class="r">Faltam</th>
           <th class="r">Valor hoje</th><th class="r">Desconto</th></tr></thead><tbody>
         ${P.itens.map(x=>`<tr><td class="c">${x.k}</td><td class="mono">${fmtD(x.venc)}</td>
+          <td><span class="tag ${x.ponta==='última'?'t-ok':'t-i'}">${x.ponta}</span></td>
           <td class="r">${x.dias} dias</td><td class="r">${BRL(x.vp)}</td>
           <td class="r" style="color:var(--pos)">${BRL(x.desconto)}</td></tr>`).join('')}
         </tbody></table></div></details>`:''}
@@ -1358,8 +1366,9 @@ function vAmort(){
   </tbody></table></div></div>`;
 }
 window.setFin=v=>{ FIN_SEL=v; render(); };
-window.setAntec=v=>{ FIN_ANTEC=Math.max(0,v||0); render(); };
-window.setEst=v=>{ FIN_EST=v; render(); };
+window.setProx=v=>{ FIN_PROX=Math.max(0,v||0); render(); };
+window.setUlt =v=>{ FIN_ULT =Math.max(0,v||0); render(); };
+window.setAntec=(p,u)=>{ FIN_PROX=Math.max(0,p||0); FIN_ULT=Math.max(0,u||0); render(); };
 window.setFinData=v=>{ FIN_DATA=v||null; render(); };
 
 /* =====================================================================
