@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v21';
+const APP_VER='v22';
 
 /* =====================================================================
    ESTADO
@@ -1322,31 +1322,62 @@ function vAmort(){
       o valor exato do banco pode variar alguns centavos.</p>
     </div></div>
 
-  <div class="panel"><h2>Impacto no orçamento <small>próximos 12 meses</small></h2>
-    <div class="tw"><table><thead><tr>
-      <th>Mês</th><th class="r">Renda</th><th class="r">Saídas hoje</th><th class="r">Sobra hoje</th>
-      <th class="r">Parcela do carro</th><th class="r">Sobra se antecipar</th><th class="r">Diferença</th>
-    </tr></thead><tbody>
-    ${fluxo(12,null,MREF).map(x=>{
-      const liberou = P.mesesLiberados.has(x.k);
-      const parc = (() => {
-        const l=R.linhas.find(l=>!l.paga && ym(l.venc.toISOString().slice(0,10))===x.k);
-        return l ? +f.valor_parcela : 0;
-      })();
-      const depois = x.sal + (liberou?parc:0);
-      return `<tr><td><b>${mLabel(x.k)}</b></td>
-        <td class="r">${BRL(x.renda)}</td>
-        <td class="r">${BRL(x.out)}</td>
-        <td class="r" style="color:${x.sal<0?'var(--neg)':'var(--muted)'}">${BRL(x.sal)}</td>
-        <td class="r">${parc?BRL(parc):'—'}${liberou?' <span class="tag t-ok">antecipada</span>':''}</td>
-        <td class="r" style="font-weight:600;color:${depois<0?'var(--neg)':'var(--pos)'}">${BRL(depois)}</td>
-        <td class="r" style="color:${liberou?'var(--pos)':'var(--muted)'}">${liberou?'+'+BRL(parc):'—'}</td>
-      </tr>`;}).join('')}
-    </tbody></table></div>
-    <div class="pbody"><p class="note">A coluna "sobra se antecipar" mostra os meses em que a parcela deixa
-    de sair, porque já foi paga na simulação. Note que o dinheiro para antecipar (${BRL(P.custo)}) sai
-    de uma vez, no dia escolhido — isso não está descontado desta tabela.</p></div>
-  </div>
+  ${(()=>{
+    if(!P.n) return `<div class="panel"><h2>O que muda no seu caixa</h2>
+      <div class="pbody"><p class="note">Escolha parcelas acima para ver o efeito.</p></div></div>`;
+    const mesPag = ym(P.pagamento.toISOString().slice(0,10));
+    const F = fluxo(24,null,MREF);
+    const linhaPag = F.find(x=>x.k===mesPag);
+    /* parcelas antecipadas que venceriam no próprio mês do pagamento:
+       essas você pagaria de qualquer jeito naquele mês */
+    const noMesmoMes = P.itens.filter(it=>ym(it.venc.toISOString().slice(0,10))===mesPag);
+    const jaSairiaNoMes = noMesmoMes.length * (+f.valor_parcela);
+    const desembolsoExtra = P.custo - jaSairiaNoMes;
+    const sobraAntes = linhaPag ? linhaPag.sal : null;
+    const sobraDepois = linhaPag ? linhaPag.sal - desembolsoExtra : null;
+    const mesesAMenos = P.ult;   /* só as do fim encurtam o contrato */
+    return `
+    <div class="panel"><h2>O que muda no seu caixa</h2><div class="pbody">
+      <div class="warn" style="margin-bottom:14px">
+        <b>Antecipar não pula meses.</b> Você continua pagando ${BRL(f.valor_parcela)} todo mês
+        do jeito que está — o que muda é que o contrato acaba antes, e você paga menos juros.
+        ${noMesmoMes.length?`E as ${noMesmoMes.length} ${noMesmoMes.length===1?'parcela que vence':'parcelas que vencem'}
+          em ${mLabel(mesPag)} ${noMesmoMes.length===1?'sairia':'sairiam'} desse mês de qualquer forma:
+          antecipar só adianta o pagamento e rende o desconto.`:''}
+      </div>
+
+      <div class="kgroup">Em ${mLabel(mesPag)}, o mês do pagamento</div>
+      <div class="tw"><table class="mini"><tbody>
+        <tr><td>Sobra prevista do mês</td><td class="r">${linhaPag?BRL(sobraAntes):'fora da janela'}</td></tr>
+        <tr><td>Você desembolsa para antecipar</td><td class="r" style="color:var(--neg)">−${BRL(P.custo)}</td></tr>
+        ${jaSairiaNoMes?`<tr><td class="note">Desse valor, já sairia neste mês</td>
+          <td class="r note">+${BRL(jaSairiaNoMes)}</td></tr>
+        <tr><td>Desembolso extra de verdade</td><td class="r" style="color:var(--neg)">−${BRL(desembolsoExtra)}</td></tr>`:''}
+        <tr style="border-top:2px solid var(--rule)">
+          <td><b>Sobra depois de antecipar</b></td>
+          <td class="r"><b style="font-size:16px;color:${sobraDepois<0?'var(--neg)':'var(--pos)'}">${
+            linhaPag?BRL(sobraDepois):'—'}</b></td></tr>
+      </tbody></table></div>
+      ${linhaPag&&sobraDepois<0?`<div class="verdict bad" style="margin-top:12px;border:1px solid var(--rule);border-radius:3px">
+        Não cabe: ${mLabel(mesPag)} ficaria negativo em ${BRL(Math.abs(sobraDepois))}.</div>`
+      :linhaPag?`<p class="note" style="margin-top:10px">Sobram ${BRL(sobraDepois)} nesse mês.
+        Os meses seguintes não mudam — a parcela continua saindo normalmente.</p>`:''}
+
+      <div class="kgroup" style="margin-top:20px">O que você ganha</div>
+      <div class="tw"><table class="mini"><tbody>
+        <tr><td>Economia em juros</td><td class="r"><b style="color:var(--pos)">${BRL(P.economia)}</b></td></tr>
+        <tr><td>Parcelas que somem do fim</td><td class="r">${mesesAMenos||'nenhuma'}</td></tr>
+        <tr><td>Contrato terminava em</td><td class="r">${fmtD(R.ultima)}</td></tr>
+        <tr><td>Passa a terminar em</td><td class="r"><b>${P.novaUltima?fmtD(P.novaUltima):'quitado agora'}</b></td></tr>
+        <tr><td>Parcelas restantes</td><td class="r">${R.restantes} → <b>${P.qtdRestante}</b></td></tr>
+      </tbody></table></div>
+      ${mesesAMenos?`<p class="note" style="margin-top:10px">A folga real de ${BRL(f.valor_parcela)} por mês
+        só chega em ${fmtD(P.novaUltima)}, quando o contrato acabar — ${mesesAMenos}
+        ${mesesAMenos===1?'mês':'meses'} antes do previsto.</p>`
+      :`<p class="note" style="margin-top:10px">Antecipando só as próximas, o contrato continua terminando
+        em ${fmtD(R.ultima)}. Você paga mais cedo e ganha o desconto, mas não encurta o prazo.</p>`}
+    </div></div>`;
+  })()}
 
   <div class="panel"><h2>Tabela de amortização <small>parcela a parcela</small></h2>
   <div class="tw"><table><thead><tr>
