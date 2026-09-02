@@ -11,16 +11,16 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v17';
+const APP_VER='v19';
 
 /* =====================================================================
    ESTADO
    ===================================================================== */
 const TABELAS = ['rendas','fixas','beneficios','cartoes','parcelamentos',
-                 'assinaturas','lancamentos','terceiros','metas','casa_itens'];
+                 'assinaturas','lancamentos','terceiros','metas','casa_itens','financiamentos'];
 let USER=null, GRUPO=null, EU=null;
 let D = {rendas:[],fixas:[],beneficios:[],cartoes:[],parcelamentos:[],
-         assinaturas:[],lancamentos:[],terceiros:[],metas:[],casa_itens:[],config:null};
+         assinaturas:[],lancamentos:[],terceiros:[],metas:[],casa_itens:[],financiamentos:[],config:null};
 let ONLINE = navigator.onLine, SYNC='off', FALTANDO=[];
 
 /* =====================================================================
@@ -164,6 +164,62 @@ function fluxoCasa(n=24, extra, ini){
     return {k,renda,fix,cart,casa,par:parcelasMes(k,extra),ass:totAssin(),
             out,sal,acc,pct:renda?out/renda:0};
   });
+}
+
+/* ---- Amortização de financiamento (tabela Price) ---- */
+/* A taxa publicada no contrato vem arredondada (ex.: 2,19%), e com ela o
+   saldo não fecha em zero na última parcela. A taxa real é a que reproduz
+   exatamente a parcela contratada — é ela que o banco usa. Deduzimos por
+   busca binária a partir de valor financiado, parcela e prazo. */
+function taxaEfetiva(f){
+  const PV=+f.valor_financiado, PMT=+f.valor_parcela, n=+f.total_parcelas;
+  if(!PV||!PMT||!n) return +f.taxa_mensal||0;
+  const pmt=i=> i>0 ? PV*i/(1-Math.pow(1+i,-n)) : PV/n;
+  if(pmt(0.0000001)>PMT) return +f.taxa_mensal||0;
+  let lo=0.0000001, hi=1;
+  for(let k=0;k<200;k++){ const mid=(lo+hi)/2; if(pmt(mid)>PMT) hi=mid; else lo=mid; }
+  return (lo+hi)/2;
+}
+function tabelaAmortizacao(f){
+  const i=taxaEfetiva(f), PMT=+f.valor_parcela, n=+f.total_parcelas;
+  let saldo=+f.valor_financiado;
+  const ini=new Date(f.primeira_parcela+'T12:00:00');
+  const linhas=[];
+  for(let k=1;k<=n;k++){
+    const d=new Date(ini); d.setMonth(d.getMonth()+(k-1));
+    const juros=saldo*i, amort=PMT-juros, fim=Math.max(0,saldo-amort);
+    linhas.push({k, venc:d, ini:saldo, juros, amort, fim, paga:k<=+f.parcelas_pagas});
+    saldo=fim;
+  }
+  return linhas;
+}
+function resumoFin(f){
+  const L=tabelaAmortizacao(f);
+  const pagas=+f.parcelas_pagas, n=+f.total_parcelas, PMT=+f.valor_parcela;
+  const restantes=n-pagas;
+  /* Saldo devedor = valor presente das parcelas que faltam, na taxa do contrato.
+     É o que o banco cobra para quitar hoje (cláusula de liquidação antecipada). */
+  const saldo = pagas<n ? L[pagas].ini : 0;
+  const nominal = PMT*restantes;
+  return {linhas:L, pagas, restantes, saldo, nominal,
+          economiaQuitar: nominal-saldo,
+          jurosPagos: L.slice(0,pagas).reduce((s,x)=>s+x.juros,0),
+          jurosFuturos: L.slice(pagas).reduce((s,x)=>s+x.juros,0),
+          totalContrato: PMT*n, ultima: L[n-1]?.venc};
+}
+/* Quanto custa quitar antecipadamente N parcelas do fim, e quanto isso economiza. */
+function anteciparN(f,N){
+  const L=tabelaAmortizacao(f), pagas=+f.parcelas_pagas, i=taxaEfetiva(f), PMT=+f.valor_parcela;
+  const restantes=L.length-pagas;
+  N=Math.max(0,Math.min(N,restantes));
+  let vp=0;
+  /* traz a valor presente as N últimas parcelas */
+  for(let k=L.length-N;k<L.length;k++){
+    const meses=(k+1)-pagas;
+    vp += PMT/Math.pow(1+i,meses);
+  }
+  return {n:N, custoHoje:vp, nominal:PMT*N, economia:PMT*N-vp,
+          novaUltima: L[L.length-N-1]?.venc};
 }
 
 /* ---- Fluxo por dia de pagamento ---- */
@@ -543,7 +599,8 @@ window.confirmarCompra=async()=>{
    ===================================================================== */
 const PAGES=[['painel','Painel'],['compra','Nova compra'],['lanc','Lançamentos'],
   ['parc','Parcelamentos'],['assin','Assinaturas'],['terc','Terceiros'],
-  ['proj','Projeção'],['casa','Projeções Casa'],['cad','Cadastros'],['metas','Metas']];
+  ['proj','Projeção'],['amort','Amortização'],['casa','Projeções Casa'],
+  ['cad','Cadastros'],['metas','Metas']];
 let CUR='painel', MREF=ym(hoje()), VISAO=null;  // 'previsto' | 'realizado'
 
 function head(t,p){return `<div class="phead"><h1>${t}</h1><p>${p}</p></div>`
@@ -1127,10 +1184,115 @@ window.addCasaItem=async()=>{
 };
 
 /* =====================================================================
+   AMORTIZAÇÃO — plano de pagamento dos financiamentos
+   ===================================================================== */
+let FIN_SEL=null, FIN_ANTEC=6;
+function vAmort(){
+  if(FALTANDO.includes('financiamentos'))
+    return head('Amortização','Esta aba precisa de uma tabela que ainda não existe no seu banco.');
+  const fins=D.financiamentos.filter(f=>f.ativo);
+  if(!fins.length)
+    return head('Amortização','Nenhum financiamento cadastrado.')
+      +`<div class="info">Rode <b>migracao-financiamento.sql</b> para carregar o contrato do carro,
+        ou cadastre um financiamento no banco.</div>`;
+  const f = fins.find(x=>x.id===FIN_SEL) || fins[0];
+  const R = resumoFin(f);
+  const A = anteciparN(f,FIN_ANTEC);
+  const pctPago = R.pagas/(+f.total_parcelas);
+  const fmtD = d => d ? String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+d.getFullYear() : '—';
+
+  return head('Amortização','Como a dívida se comporta ao longo do contrato e quanto custa antecipar.')
+  +(fins.length>1?`<div class="rowbar"><div class="fld" style="max-width:220px"><label>Financiamento</label>
+    <select onchange="setFin(this.value)">${fins.map(x=>
+      `<option value="${x.id}" ${x.id===f.id?'selected':''}>${esc(x.descricao)}</option>`).join('')}</select>
+    </div></div>`:'')
+  +`<div class="kpis">
+    ${kpi('Saldo devedor hoje',BRL(R.saldo),'valor para quitar','amb')}
+    ${kpi('Se pagar tudo até o fim',BRL(R.nominal),R.restantes+' parcelas de '+BRL(f.valor_parcela))}
+    ${kpi('Economia ao quitar agora',BRL(R.economiaQuitar),'juros que deixam de correr','pos')}
+    ${kpi('Parcelas pagas',R.pagas+' de '+f.total_parcelas,'última em '+fmtD(R.ultima))}
+  </div>
+
+  <div class="panel"><h2>Progresso do contrato</h2><div class="pbody">
+    <div class="bar" style="grid-template-columns:110px 1fr 90px;margin-bottom:14px">
+      <span>Quitado</span>
+      <span class="track" style="height:22px"><span class="fill" style="width:${pctPago*100}%;background:var(--pos)"></span></span>
+      <span class="r" style="font-weight:600">${PCT(pctPago)}</span>
+    </div>
+    <div class="tw"><table class="mini"><tbody>
+      <tr><td>Credor</td><td class="r">${esc(f.credor||'—')} · contrato ${esc(f.contrato||'—')}</td></tr>
+      <tr><td>Bem</td><td class="r">${esc(f.bem||'—')}</td></tr>
+      <tr><td>Valor do bem / entrada</td><td class="r">${BRL(f.valor_bem)} · entrada ${BRL(f.entrada)}</td></tr>
+      <tr><td>Financiado</td><td class="r">${BRL(f.valor_financiado)}</td></tr>
+      <tr><td>Taxa de juros</td><td class="r">${(taxaEfetiva(f)*100).toFixed(4).replace('.',',')}% a.m.
+        <span class="note">contrato informa ${(+f.taxa_mensal*100).toFixed(2).replace('.',',')}%</span>${
+        f.cet_mensal?'<br><span class="note">CET '+(+f.cet_mensal*100).toFixed(2).replace('.',',')+'% a.m.</span>':''}</td></tr>
+      <tr><td>Total do contrato</td><td class="r"><b>${BRL(R.totalContrato)}</b>
+        <span class="note">(${BRL(R.totalContrato-(+f.valor_financiado))} de juros)</span></td></tr>
+      <tr><td>Juros já pagos</td><td class="r">${BRL(R.jurosPagos)}</td></tr>
+      <tr><td>Juros ainda a pagar</td><td class="r" style="color:var(--amber)">${BRL(R.jurosFuturos)}</td></tr>
+    </tbody></table></div>
+    ${f.observacao?`<p class="note" style="margin-top:10px">${esc(f.observacao)}</p>`:''}
+  </div></div>
+
+  <div class="grid2">
+  <div class="panel"><h2>Antecipar parcelas <small>quanto custa e quanto economiza</small></h2><div class="pbody">
+    <div class="fld" style="margin-bottom:12px"><label>Antecipar quantas parcelas do fim</label>
+      <input type="number" min="0" max="${R.restantes}" value="${FIN_ANTEC}"
+        oninput="setAntec(+this.value)">
+      <div class="qbtns">${[1,3,6,12,R.restantes].map(x=>
+        `<button class="qbtn" aria-pressed="${FIN_ANTEC===x}" onclick="setAntec(${x})">${x===R.restantes?'tudo':x+'x'}</button>`).join('')}</div>
+    </div>
+    <div class="tw"><table class="mini"><tbody>
+      <tr><td>Se pagar no vencimento</td><td class="r">${BRL(A.nominal)}</td></tr>
+      <tr><td>Pagando hoje (valor presente)</td><td class="r"><b>${BRL(A.custoHoje)}</b></td></tr>
+      <tr><td><b>Economia</b></td><td class="r"><b style="color:var(--pos)">${BRL(A.economia)}</b></td></tr>
+      <tr><td>Contrato passaria a terminar em</td><td class="r">${A.n>=R.restantes?'quitado':fmtD(A.novaUltima)}</td></tr>
+    </tbody></table></div>
+    <p class="note" style="margin-top:10px">O contrato prevê quitação antecipada calculada a valor presente
+    pela taxa da operação. Quanto mais no fim está a parcela, maior o desconto — porque é a que carrega mais juros.</p>
+  </div></div>
+
+  <div class="panel"><h2>Impacto no orçamento</h2><div class="pbody">
+    <div class="tw"><table class="mini"><tbody>
+      <tr><td>Parcela mensal</td><td class="r">${BRL(f.valor_parcela)}</td></tr>
+      <tr><td>Peso na renda</td><td class="r">${totRenda()?PCT((+f.valor_parcela)/totRenda()):'—'}</td></tr>
+      <tr><td>Vence dia</td><td class="r">${f.dia_vencimento||'—'}</td></tr>
+      <tr><td>Sobra do bloco desse dia</td><td class="r">${(()=>{
+        const b=blocosDoMes(MREF).find(x=>x.dia===+f.dia_vencimento);
+        return b?BRL(b.saldo):'—';})()}</td></tr>
+      <tr><td>Quando quitar, libera por mês</td><td class="r" style="color:var(--pos)"><b>${BRL(f.valor_parcela)}</b></td></tr>
+    </tbody></table></div>
+    <p class="note" style="margin-top:10px">Quitando hoje por ${BRL(R.saldo)}, vocês liberam
+    ${BRL(f.valor_parcela)} por mês durante ${R.restantes} meses e economizam ${BRL(R.economiaQuitar)} em juros.</p>
+  </div></div>
+  </div>
+
+  <div class="panel"><h2>Tabela de amortização <small>parcela a parcela</small></h2>
+  <div class="tw"><table><thead><tr>
+    <th class="c">Nº</th><th>Vencimento</th><th class="r">Saldo antes</th>
+    <th class="r">Juros</th><th class="r">Amortiza</th><th class="r">Saldo depois</th><th class="c">Status</th>
+  </tr></thead><tbody>
+  ${R.linhas.map(l=>`<tr class="${l.paga?'dim':''}">
+    <td class="c">${l.k}</td>
+    <td class="mono">${fmtD(l.venc)}</td>
+    <td class="r">${BRL(l.ini)}</td>
+    <td class="r" style="color:var(--neg)">${BRL(l.juros)}</td>
+    <td class="r" style="color:var(--pos)">${BRL(l.amort)}</td>
+    <td class="r"><b>${BRL(l.fim)}</b></td>
+    <td class="c"><span class="tag ${l.paga?'t-ok':(l.k===R.pagas+1?'t-w':'t-g')}">${
+      l.paga?'paga':(l.k===R.pagas+1?'próxima':'a vencer')}</span></td>
+  </tr>`).join('')}
+  </tbody></table></div></div>`;
+}
+window.setFin=v=>{ FIN_SEL=v; render(); };
+window.setAntec=v=>{ FIN_ANTEC=Math.max(0,v||0); render(); };
+
+/* =====================================================================
    SHELL E INICIALIZAÇÃO
    ===================================================================== */
 const VIEWS={painel:vPainel,compra:vCompra,lanc:vLanc,parc:vParc,assin:vAssin,
-             terc:vTerc,proj:vProj,casa:vCasa,cad:vCad,metas:vMetas};
+             terc:vTerc,proj:vProj,amort:vAmort,casa:vCasa,cad:vCad,metas:vMetas};
 
 function render(){
   const m=$('main'); if(!m) return montarShell();
