@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v16';
+const APP_VER='v17';
 
 /* =====================================================================
    ESTADO
@@ -599,7 +599,15 @@ function vPainel(){
   const cats=Object.entries(r.porCat).sort((a,b)=>b[1]-a[1]).slice(0,8);
   const mxc=Math.max(...cats.map(c=>c[1]),1);
 
+  const passado = MREF < ym(hoje());
+  const semDados = r.n===0;
   return head('Painel','Entradas e saídas nas datas de pagamento. Clique num bloco para ver o detalhe.')
+  +(passado&&semDados?`<div class="warn" style="margin-bottom:16px">
+    <b>Mês sem lançamentos.</b> ${mLabel(MREF)} já passou, mas nada foi registrado —
+    então os números abaixo são uma <b>projeção</b> feita a partir das contas fixas e
+    assinaturas, não o que aconteceu de verdade. Lance os movimentos do mês para ver o real.</div>`:'')
+  +(passado&&!semDados?`<div class="info" style="margin-bottom:16px">
+    ${mLabel(MREF)} já passou. Os valores abaixo vêm dos ${r.n} lançamentos registrados.</div>`:'')
   +`<div class="rowbar">
     <div class="fld" style="max-width:160px"><label>Mês em foco</label>
       <select onchange="setMes(this.value)">
@@ -612,8 +620,11 @@ function vPainel(){
 
   <div class="kpis">
     ${kpi('Renda',BRL(mes.renda),'em '+mLabel(MREF))}
-    ${kpi('Saídas previstas',BRL(mes.out),PCT(mes.pct)+' da renda')}
-    ${kpi('Saldo previsto',BRL(mes.sal),'',mes.sal<0?'neg':'pos')}
+    ${kpi(passado&&semDados?'Saídas (projetadas)':'Saídas previstas',BRL(mes.out),
+      passado&&semDados?'sem lançamentos no mês':PCT(mes.pct)+' da renda',
+      passado&&semDados?'amb':'')}
+    ${kpi(passado&&semDados?'Saldo (projetado)':'Saldo previsto',BRL(mes.sal),'',
+      passado&&semDados?'amb':(mes.sal<0?'neg':'pos'))}
     ${kpi('Dívida de cartões',BRL(saldoParc()),'quita em '+ultimoMesParcela(),'amb')}
   </div>
 
