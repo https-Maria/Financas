@@ -103,6 +103,36 @@ button{cursor:pointer;border:none;background:none}
 .kpi .s{font-size:11.5px;color:var(--muted);display:block;margin-top:3px}
 .v.pos{color:var(--pos)} .v.neg{color:var(--neg)} .v.amb{color:var(--amber)}
 
+/* ---------- calendário ---------- */
+.cal{padding:14px}
+.chead{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:6px}
+.chead span{text-align:center;font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;
+  color:var(--muted);font-weight:600;padding:4px 0}
+.cgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.cd{aspect-ratio:1/1;border:1px solid var(--rule-soft);border-radius:3px;background:#fff;
+  display:flex;flex-direction:column;align-items:center;justify-content:flex-start;
+  padding:5px 2px 3px;gap:3px;position:relative;min-height:52px}
+.cd.vazio{border:none;background:transparent;cursor:default}
+.cd:not(.vazio):hover{background:var(--surface);border-color:var(--rule)}
+.cd.fds{background:#FAFBFC}
+.cd.hoje{border-color:var(--steel);border-width:2px}
+.cd.sel{background:var(--ink);border-color:var(--ink)}
+.cd.sel .dn{color:#fff}
+.dn{font-size:13px;font-weight:600;line-height:1}
+.pontos{display:flex;gap:2px;flex-wrap:wrap;justify-content:center;max-width:100%}
+.pontos i{width:5px;height:5px;border-radius:50%;display:block}
+.cd .mais{font-size:9px;color:var(--muted);line-height:1}
+.cd.sel .mais{color:#B8C8D4}
+.cleg{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px;padding-top:10px;
+  border-top:1px solid var(--rule-soft)}
+.cleg span{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--muted)}
+.cleg i{width:7px;height:7px;border-radius:50%;display:block}
+i.pt{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:6px;vertical-align:1px}
+@media(max-width:520px){
+  .cd{min-height:44px;padding:3px 1px}
+  .dn{font-size:12px}
+  .pontos i{width:4px;height:4px}
+}
 /* ---------- fluxo por dia (accordion) ---------- */
 .dayflow{border:1px solid var(--rule);border-radius:3px;overflow:hidden;margin-bottom:18px;background:var(--panel)}
 .day{border-bottom:1px solid var(--rule-soft)}
@@ -292,6 +322,6 @@ input:focus,select:focus{border-color:var(--steel);outline:none;box-shadow:0 0 0
 <div id="root"><div class="gate"><div class="gatebox"><h1>Carregando…</h1>
 <p class="sub">Conectando ao banco de dados.</p></div></div></div>
 <div class="toast" id="toast"></div>
-<script type="module" src="app.js?v=24"></script>
+<script type="module" src="app.js?v=26"></script>
 </body>
 </html>
