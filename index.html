@@ -159,6 +159,10 @@ i.pt{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:6p
 .dline.chk{cursor:pointer;padding:5px 0;align-items:flex-start}
 .dline.chk:hover{background:#F0F4F7;margin:0 -6px;padding:5px 6px;border-radius:2px}
 .dline.chk input[type=checkbox]{width:auto;margin-right:7px;cursor:pointer;vertical-align:-1px}
+.tick{display:inline-block;width:13px;margin-right:7px;color:var(--pos);font-weight:700;
+  font-size:12px;cursor:help}
+.dline.chk:has(.tick){cursor:default}
+.dline.chk:has(.tick):hover{background:none;margin:0;padding:5px 0}
 .dline.chk.feito>span:first-child{color:var(--muted);text-decoration:line-through;
   text-decoration-color:var(--rule)}
 .dline.chk.feito b{opacity:.5}
@@ -316,6 +320,6 @@ input:focus,select:focus{border-color:var(--steel);outline:none;box-shadow:0 0 0
 <div id="root"><div class="gate"><div class="gatebox"><h1>Carregando…</h1>
 <p class="sub">Conectando ao banco de dados.</p></div></div></div>
 <div class="toast" id="toast"></div>
-<script type="module" src="app.js?v=27"></script>
+<script type="module" src="app.js?v=29"></script>
 </body>
 </html>
