@@ -126,6 +126,13 @@ button{cursor:pointer;border:none;background:none}
 .dline{display:flex;justify-content:space-between;gap:10px;padding:3px 0;font-size:12.5px;
   border-bottom:1px solid var(--rule-soft)}
 .dline:last-child{border-bottom:none}
+.dline.chk{cursor:pointer;padding:5px 0;align-items:flex-start}
+.dline.chk:hover{background:#F0F4F7;margin:0 -6px;padding:5px 6px;border-radius:2px}
+.dline.chk input[type=checkbox]{width:auto;margin-right:7px;cursor:pointer;vertical-align:-1px}
+.dline.chk.feito>span:first-child{color:var(--muted);text-decoration:line-through;
+  text-decoration-color:var(--rule)}
+.dline.chk.feito b{opacity:.5}
+.dcol h5{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:6px}
 .dline .note{font-size:11px}
 .mini-det{border-bottom:1px solid var(--rule-soft);padding:2px 0}
 .mini-det>summary{display:flex;justify-content:space-between;gap:10px;cursor:pointer;padding:6px 0;
@@ -285,6 +292,6 @@ input:focus,select:focus{border-color:var(--steel);outline:none;box-shadow:0 0 0
 <div id="root"><div class="gate"><div class="gatebox"><h1>Carregando…</h1>
 <p class="sub">Conectando ao banco de dados.</p></div></div></div>
 <div class="toast" id="toast"></div>
-<script type="module" src="app.js?v=22"></script>
+<script type="module" src="app.js?v=24"></script>
 </body>
 </html>
