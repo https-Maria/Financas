@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v27';
+const APP_VER='v29';
 
 /* =====================================================================
    ESTADO
@@ -76,7 +76,14 @@ function saldoConta(){
   const c=cfg();
   const base = c.saldo_conferido==null ? null : +c.saldo_conferido;
   const desde = c.saldo_conferido_em || null;
-  const depois = D.lancamentos.filter(l=>!l.beneficio && (!desde || String(l.data)>desde));
+  /* Saldo é extrato, não previsão: só entra o que já aconteceu e foi confirmado.
+     Lançamento com data futura ou status Projetado fica de fora. */
+  const ate = hoje();
+  const depois = D.lancamentos.filter(l=>
+    !l.beneficio &&
+    l.status!=='Projetado' &&
+    String(l.data) <= ate &&
+    (!desde || String(l.data)>desde));
   const ent = depois.filter(l=>l.tipo==='Entrada').reduce((s,l)=>s+ +l.valor,0);
   const sai = depois.filter(l=>l.tipo==='Saída').reduce((s,l)=>s+ +l.valor,0);
   const rep = depois.filter(l=>l.protegido)
@@ -230,6 +237,8 @@ function eventosDoDia(k, d){
 }
 
 /* ---- Ligação entre o previsto (blocos) e o realizado (lançamentos) ---- */
+const MARCA_PAINEL='Marcado no painel a partir do previsto';
+const veioDoPainel = l => (l.observacao||'')===MARCA_PAINEL;
 const ultimoDiaDoMes = k => new Date(+k.slice(0,4), +k.slice(5,7), 0).getDate();
 function dataDoItem(it, k, dia){
   if(it.tipo==='reserva') return it.competencia+'-01';
@@ -254,7 +263,7 @@ function montaLanc(it, k, dia){
           valor: +it.valor,
           status: 'Confirmado',
           protegido: false, beneficio: false,
-          observacao: 'Marcado no painel a partir do previsto',
+          observacao: MARCA_PAINEL,
           criado_por: USER?.id||null};
 }
 
@@ -703,6 +712,13 @@ window.marcarItem=async(dia,lado,ix)=>{
   if(!it) return;
   const ex=lancDoItem(it,MREF);
   if(ex){
+    /* Só apaga sem perguntar o que o próprio painel criou. Lançamento que veio
+       da carga inicial ou que você digitou pode ter o valor real da fatura —
+       apagar por engano faz o app cair de volta na estimativa. */
+    if(!ex.itens.every(veioDoPainel)){
+      toast('Este lançamento não foi criado aqui. Para apagar, vá em Lançamentos.', 4200);
+      render(); return;
+    }
     for(const l of ex.itens) await remover('lancamentos', l.id);
     render(); toast('Desmarcado — lançamento removido');
   }else{
@@ -836,7 +852,7 @@ function vPainel(){
     </div></div>`;
 
     return `<div class="panel"><h2>Saldo em conta
-      <small>conferido em ${S.desde.split('-').reverse().join('/')} · ${S.n} lançamento${S.n===1?'':'s'} depois disso</small></h2>
+      <small>conferido em ${S.desde.split('-').reverse().join('/')} · ${S.n} lançamento${S.n===1?'':'s'} confirmado${S.n===1?'':'s'} desde então</small></h2>
       <div class="pbody">
         <div class="kpis" style="margin-bottom:14px">
           ${kpi('Saldo hoje',BRL(S.atual),'segundo os lançamentos',S.atual<0?'neg':'pos')}
@@ -846,9 +862,10 @@ function vPainel(){
                         :kpi('Ponto de conferência',BRL(S.base),'em '+S.desde.split('-').reverse().join('/'))}
         </div>
         <div class="kgroup sub">Conferir com o extrato do banco</div>
-        <p class="note" style="margin-bottom:6px">O app calcula <b>${BRL(S.atual)}</b>.
-        Se o banco mostra outro número, a diferença é lançamento faltando ou sobrando —
-        ou é só corrigir aqui e seguir daqui pra frente.</p>
+        <p class="note" style="margin-bottom:6px">O app calcula <b>${BRL(S.atual)}</b>,
+        contando só lançamentos já confirmados e com data até hoje —
+        previsão e o que está marcado como Projetado ficam de fora.
+        Se o banco mostra outro número, corrija aqui e o app segue deste ponto.</p>
         ${formulario}
       </div></div>`;
   })()}
@@ -884,23 +901,29 @@ function vPainel(){
       </summary>
       <div class="ddet">
         ${b.entradas.length?`<div class="dcol"><h5>Entra — marque quando receber</h5>
-          ${b.entradas.map((e,ix)=>{const L=lancDoItem(e,MREF);return `
-            <label class="dline chk ${L?'feito':''}">
-              <span><input type="checkbox" ${L?'checked':''}
-                onchange="marcarItem(${b.dia},'in',${ix})">
+          ${b.entradas.map((e,ix)=>{const L=lancDoItem(e,MREF);
+            const meu=L&&L.itens.every(veioDoPainel);
+            return `
+            <div class="dline chk ${L?'feito':''}">
+              <span>${L&&!meu
+                ? `<span class="tick" title="Já existe lançamento para isto. Para desfazer, vá em Lançamentos.">✓</span>`
+                : `<input type="checkbox" ${L?'checked':''} onchange="marcarItem(${b.dia},'in',${ix})">`}
                 ${esc(e.desc)}${e.quem?` <span class="tag t-g">${esc(e.quem)}</span>`:''}
                 ${L&&Math.abs(L.valor-e.valor)>0.01?`<span class="tag t-w">lançado ${BRL(L.valor)}</span>`:''}</span>
-              <b style="color:var(--pos)">${BRL(e.valor)}</b></label>`;}).join('')}</div>`:''}
+              <b style="color:var(--pos)">${BRL(e.valor)}</b></div>`;}).join('')}</div>`:''}
         ${b.saidas.length?`<div class="dcol"><h5>Sai — marque quando pagar</h5>
-          ${b.saidas.map((x,ix)=>{const L=lancDoItem(x,MREF);return `
-            <label class="dline chk ${L?'feito':''}">
-              <span><input type="checkbox" ${L?'checked':''}
-                onchange="marcarItem(${b.dia},'out',${ix})">
+          ${b.saidas.map((x,ix)=>{const L=lancDoItem(x,MREF);
+            const meu=L&&L.itens.every(veioDoPainel);
+            return `
+            <div class="dline chk ${L?'feito':''}">
+              <span>${L&&!meu
+                ? `<span class="tick" title="Já existe lançamento para isto. Para desfazer, vá em Lançamentos.">✓</span>`
+                : `<input type="checkbox" ${L?'checked':''} onchange="marcarItem(${b.dia},'out',${ix})">`}
                 ${esc(x.desc)}
                 ${x.tipo==='reserva'?'<span class="tag t-w">reserva</span>':''}
                 ${x.tipo==='cartao'?'<span class="tag t-i">fatura</span>':''}
                 ${L&&Math.abs(L.valor-x.valor)>0.01?`<span class="tag t-w">lançado ${BRL(L.valor)}</span>`:''}</span>
-              <b style="color:var(--neg)">${BRL(x.valor)}</b></label>`;}).join('')}</div>`:''}
+              <b style="color:var(--neg)">${BRL(x.valor)}</b></div>`;}).join('')}</div>`:''}
       </div>
     </details>`).join('')}
   </div>
