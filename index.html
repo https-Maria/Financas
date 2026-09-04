@@ -4,70 +4,70 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Controle Financeiro — Maria &amp; Jéssica</title>
-<meta name="theme-color" content="#16202B">
+<meta name="theme-color" content="#0B4F4A">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:wght@500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 
 :root{
-  --surface:#EDF0F2; --panel:#FFFFFF; --ink:#16202B; --muted:#5F7183;
-  --rule:#CBD5DC; --rule-soft:#E3E9ED;
-  --pos:#0F6B4F; --neg:#A8322A; --amber:#8A6A12; --steel:#2D5D7C;
-  --pos-bg:#E4F0EA; --neg-bg:#F8E7E5; --amber-bg:#FBF2DC; --steel-bg:#E5EEF4;
+  --surface:#F6F8F8; --panel:#FFFFFF; --ink:#0D1716; --muted:#4A5C5A;
+  --rule:#DCE4E3; --rule-soft:#EBF0EF;
+  --pos:#146B4F; --neg:#9E3A2A; --amber:#96700F; --steel:#0B4F4A;
+  --pos-bg:#EDF5F0; --neg-bg:#FAF1EF; --amber-bg:#FCF4E4; --steel-bg:#EDF4F3;
+  /* barra do topo */
+  --barra:#0B4F4A; --barra-borda:#083C38; --barra-txt:#FFFFFF;
+  --barra-sub:#93BFBA; --barra-ativo:#E0A82E;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html{-webkit-text-size-adjust:100%}
 body{
-  font-family:'IBM Plex Sans',system-ui,sans-serif;
+  font-family:'Public Sans',system-ui,sans-serif;
   background:var(--surface); color:var(--ink);
   font-size:15px; line-height:1.5;
   font-variant-numeric:tabular-nums;
 }
 .num{font-variant-numeric:tabular-nums}
-h1,h2,h3{font-family:'IBM Plex Serif',Georgia,serif;font-weight:600;line-height:1.2}
+h1,h2,h3{font-weight:700;line-height:1.2;letter-spacing:-.012em}
 button,input,select{font-family:inherit;font-size:inherit;color:inherit}
 button{cursor:pointer;border:none;background:none}
 :focus-visible{outline:2px solid var(--steel);outline-offset:2px}
 
 /* ---------- shell ---------- */
-.shell{display:flex;min-height:100vh}
-.rail{
-  width:210px;flex:0 0 210px;background:var(--ink);color:#DDE5EA;
-  padding:20px 0;position:sticky;top:0;height:100vh;overflow-y:auto;
-}
-.brand{padding:0 20px 18px;border-bottom:1px solid #2C3B4A;margin-bottom:14px}
-.brand b{font-family:'IBM Plex Serif',serif;font-size:17px;color:#fff;display:block}
-.brand span{font-size:11.5px;color:#8AA0B2;display:block;margin-top:3px}
-.rail nav{display:flex;flex-direction:column}
-.rail button{
-  text-align:left;padding:9px 20px;color:#B8C8D4;font-size:14px;
-  border-left:3px solid transparent;width:100%;
-}
-.rail button:hover{background:#1E2B39;color:#fff}
-.rail button[aria-current="true"]{background:#22313F;color:#fff;border-left-color:#6FA8CC;font-weight:600}
-.railfoot{padding:14px 20px 0;margin-top:14px;border-top:1px solid #2C3B4A}
-.railfoot button{
-  border-left:none;padding:7px 0;font-size:13px;color:#8AA0B2;
-}
-.railfoot button:hover{background:none;color:#fff;text-decoration:underline}
+.shell{min-height:100vh}
+.rail{background:var(--barra);border-bottom:1px solid var(--barra-borda)}
+.railin{max-width:1180px;margin:0 auto;padding:0 18px}
+.brand{display:flex;justify-content:space-between;align-items:baseline;
+  padding:13px 0 0;gap:14px;flex-wrap:wrap}
+.brand b{font-size:15px;font-weight:700;color:var(--barra-txt);letter-spacing:-.01em}
+.brand span{font-size:12.5px;color:var(--barra-sub)}
+.rail nav{display:flex;margin-top:11px;overflow-x:auto;scrollbar-width:none}
+.rail nav::-webkit-scrollbar{display:none}
+.rail button{padding:9px 0;margin-right:20px;font-size:13.5px;color:var(--barra-sub);
+  border-bottom:2px solid transparent;white-space:nowrap;font-weight:500;background:none}
+.rail button:hover{color:var(--barra-txt)}
+.rail button[aria-current="true"]{color:var(--barra-txt);border-bottom-color:var(--barra-ativo);font-weight:700}
+.railfoot{display:flex;gap:16px;align-items:center;padding:0 0 9px;margin-top:-2px}
+.railfoot button{font-size:12px;color:var(--barra-sub);padding:0;background:none;
+  border:none;border-bottom:none}
+.railfoot button:hover{color:var(--barra-txt);text-decoration:underline}
 
-.main{flex:1;min-width:0;padding:26px 30px 60px;max-width:1180px}
+.main{max-width:1180px;margin:0 auto;padding:18px 18px 56px}
 .page{display:none}
 .page.on{display:block}
-.phead{margin-bottom:20px}
-.phead h1{font-size:25px}
-.phead p{color:var(--muted);font-size:13.5px;margin-top:5px;max-width:70ch}
+.phead{margin-bottom:16px}
+.phead h1{font-size:20px}
+.phead p{color:var(--muted);font-size:13.5px;margin-top:4px;max-width:74ch}
 
 /* ---------- panels ---------- */
 .panel{background:var(--panel);border:1px solid var(--rule);border-radius:3px;margin-bottom:18px}
 .panel>h2{
-  font-size:14px;padding:11px 16px;border-bottom:1px solid var(--rule-soft);
-  font-family:'IBM Plex Sans',sans-serif;font-weight:600;
+  font-size:13px;padding:10px 15px;border-bottom:1px solid var(--rule-soft);
+  color:var(--steel);font-weight:700;background:var(--steel-bg);
   display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;
 }
 .panel>h2 small{font-weight:400;color:var(--muted);font-size:12px}
@@ -264,20 +264,14 @@ input:focus,select:focus{border-color:var(--steel);outline:none;box-shadow:0 0 0
 .verd{margin-top:9px;text-align:center;padding:5px;border-radius:2px;font-size:11.5px;font-weight:700}
 
 @media(max-width:860px){
-  .shell{flex-direction:column}
-  .rail{width:100%;flex:none;height:auto;position:static;padding:12px 0}
-  .rail nav{flex-direction:row;overflow-x:auto;padding:0 10px;gap:2px}
-  .rail button{white-space:nowrap;border-left:none;border-bottom:3px solid transparent;padding:8px 12px;width:auto}
-  .rail button[aria-current="true"]{border-left:none;border-bottom-color:#6FA8CC}
-  .railfoot{display:flex;gap:14px;padding:10px 20px 0}
-  .brand{padding:0 20px 12px}
-  .main{padding:18px 14px 50px}
+  .main{padding:14px 14px 50px}
   .grid2{grid-template-columns:1fr}
+  .brand{padding-top:11px}
 }
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
 
 /* ---------- auth / gate ---------- */
-.gate{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;background:var(--ink)}
+.gate{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;background:var(--barra)}
 .gatebox{background:var(--panel);border-radius:4px;padding:28px;max-width:380px;width:100%;
   box-shadow:0 10px 40px rgba(0,0,0,.3)}
 .gatebox h1{font-size:21px;margin-bottom:4px}
@@ -290,7 +284,7 @@ input:focus,select:focus{border-color:var(--steel);outline:none;box-shadow:0 0 0
 .gatelink button{color:var(--steel);text-decoration:underline;font-size:12.5px}
 
 /* ---------- sync status ---------- */
-.sync{display:flex;align-items:center;gap:6px;font-size:11.5px;color:#8AA0B2;padding:8px 20px}
+.sync{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--barra-sub);padding:0}
 .dot{width:7px;height:7px;border-radius:50%;flex:0 0 7px}
 .dot.on{background:#4ADE80} .dot.off{background:#F87171} .dot.busy{background:#FBBF24}
 
@@ -322,6 +316,6 @@ input:focus,select:focus{border-color:var(--steel);outline:none;box-shadow:0 0 0
 <div id="root"><div class="gate"><div class="gatebox"><h1>Carregando…</h1>
 <p class="sub">Conectando ao banco de dados.</p></div></div></div>
 <div class="toast" id="toast"></div>
-<script type="module" src="app.js?v=26"></script>
+<script type="module" src="app.js?v=27"></script>
 </body>
 </html>
