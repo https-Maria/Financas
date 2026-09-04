@@ -11,16 +11,16 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v24';
+const APP_VER='v26';
 
 /* =====================================================================
    ESTADO
    ===================================================================== */
 const TABELAS = ['rendas','fixas','beneficios','cartoes','parcelamentos',
-                 'assinaturas','lancamentos','terceiros','metas','casa_itens','financiamentos'];
+                 'assinaturas','lancamentos','terceiros','metas','casa_itens','financiamentos','agenda'];
 let USER=null, GRUPO=null, EU=null;
 let D = {rendas:[],fixas:[],beneficios:[],cartoes:[],parcelamentos:[],
-         assinaturas:[],lancamentos:[],terceiros:[],metas:[],casa_itens:[],financiamentos:[],config:null};
+         assinaturas:[],lancamentos:[],terceiros:[],metas:[],casa_itens:[],financiamentos:[],agenda:[],config:null};
 let ONLINE = navigator.onLine, SYNC='off', FALTANDO=[];
 
 /* =====================================================================
@@ -185,6 +185,48 @@ function fluxoCasa(n=24, extra, ini){
     return {k,renda,fix,cart,casa,par:parcelasMes(k,extra),ass:totAssin(),
             out,sal,acc,pct:renda?out/renda:0};
   });
+}
+
+/* ---- Eventos do calendário ----
+   Os financeiros são derivados dos cadastros, não gravados: assim nunca
+   ficam desatualizados quando você muda um valor ou uma data. */
+function eventosDoDia(k, d){
+  const data = k+'-'+String(d).padStart(2,'0');
+  const ult = d===ultimoDiaDoMes(k);
+  const ev=[];
+  D.rendas.filter(r=>r.ativo&&!r.protegida).forEach(r=>{
+    const dia=Math.min(+r.dia||1, ultimoDiaDoMes(k));
+    if(dia===d) ev.push({t:'entrada',txt:r.descricao,v:+r.valor,quem:r.quem});
+  });
+  D.rendas.filter(r=>r.ativo&&r.protegida&&!(r.encerra_em&&k>=ym(r.encerra_em))).forEach(r=>{
+    const dia=Math.min(+r.dia||1, ultimoDiaDoMes(k));
+    if(dia===d) ev.push({t:'protegido',txt:r.descricao,v:+r.valor});
+  });
+  D.beneficios.filter(b=>b.ativo).forEach(b=>{
+    const dia=Math.min(+b.dia||1, ultimoDiaDoMes(k));
+    if(dia===d) ev.push({t:'beneficio',txt:b.descricao,v:+b.valor,quem:b.quem});
+  });
+  D.fixas.filter(f=>f.ativo).forEach(f=>{
+    const dia=Math.min(+f.dia||1, ultimoDiaDoMes(k));
+    if(dia===d) ev.push({t:'saida',txt:f.descricao,v:+f.valor});
+  });
+  D.cartoes.filter(c=>c.ativo&&+c.dia_venc===d).forEach(c=>{
+    const v=faturaCartao(c.nome,k);
+    if(v>0) ev.push({t:'fatura',txt:'Fatura '+c.nome,v,cartao:c.nome});
+  });
+  if(ult){
+    D.cartoes.filter(c=>c.ativo&&+c.dia_venc===1).forEach(c=>{
+      const v=faturaCartao(c.nome,addM(k,1));
+      if(v>0) ev.push({t:'reserva',txt:'Reservar p/ fatura '+c.nome,v});
+    });
+  }
+  D.agenda.filter(a=>a.data===data).forEach(a=>
+    ev.push({t:a.tipo,txt:a.titulo,v:a.valor?+a.valor:null,id:a.id,
+             feito:a.concluido,obs:a.observacao,quem:a.quem}));
+  D.lancamentos.filter(l=>l.data===data).forEach(l=>
+    ev.push({t:'lancado',txt:l.descricao,v:+l.valor,
+             entrada:l.tipo==='Entrada',id:l.id}));
+  return ev;
 }
 
 /* ---- Ligação entre o previsto (blocos) e o realizado (lançamentos) ---- */
@@ -694,7 +736,7 @@ window.confirmarCompra=async()=>{
    ===================================================================== */
 const PAGES=[['painel','Painel'],['compra','Nova compra'],['lanc','Lançamentos'],
   ['parc','Parcelamentos'],['assin','Assinaturas'],['terc','Terceiros'],
-  ['proj','Projeção'],['amort','Amortização'],['casa','Projeções Casa'],
+  ['cal','Calendário'],['proj','Projeção'],['amort','Amortização'],['casa','Projeções Casa'],
   ['cad','Cadastros'],['metas','Metas']];
 let CUR='painel', MREF=ym(hoje()), VISAO=null;  // 'previsto' | 'realizado'
 
@@ -772,9 +814,27 @@ function vPainel(){
 
   ${(()=>{
     const S=saldoConta();
-    if(S.base==null) return `<div class="warn" style="margin-bottom:16px">
-      <b>Saldo em conta não configurado.</b> Rode <b>migracao-saldo.sql</b> e depois
-      confira o saldo abaixo para o app começar a acompanhar.</div>`;
+    const semColuna = D.config && !('saldo_conferido' in D.config);
+    const naoConfig = S.base==null;
+    const formulario = `
+      <div class="form" style="margin-top:4px">
+        <div class="fld"><label>Saldo que aparece no banco</label>
+          <input type="number" step="0.01" id="sc_v" placeholder="${naoConfig?'0,00':(+S.atual).toFixed(2)}"></div>
+        <div class="fld"><label>Data do extrato</label>
+          <input type="date" id="sc_d" value="${hoje()}"></div>
+        <div class="fld"><label>&nbsp;</label>
+          <button class="btn" onclick="conferirSaldo()">${naoConfig?'Começar a acompanhar':'Fixar este saldo'}</button></div>
+      </div>`;
+
+    if(naoConfig) return `<div class="panel"><h2>Saldo em conta
+      <small>ainda não configurado</small></h2><div class="pbody">
+      ${semColuna?`<div class="warn" style="margin-bottom:12px">
+        Falta rodar <b>migracao-saldo.sql</b> no Supabase. Sem isso o app não tem onde guardar o saldo.</div>`:''}
+      <p class="note" style="margin-bottom:10px">Informe o saldo que está hoje na sua conta.
+      A partir daí o app soma e subtrai cada lançamento que você fizer.</p>
+      ${formulario}
+    </div></div>`;
+
     return `<div class="panel"><h2>Saldo em conta
       <small>conferido em ${S.desde.split('-').reverse().join('/')} · ${S.n} lançamento${S.n===1?'':'s'} depois disso</small></h2>
       <div class="pbody">
@@ -785,22 +845,11 @@ function vPainel(){
           ${S.protegido>0?kpi('Disso, é Reports',BRL(S.protegido),'protegido, não é sobra','amb')
                         :kpi('Ponto de conferência',BRL(S.base),'em '+S.desde.split('-').reverse().join('/'))}
         </div>
-        <details class="mini-det"><summary><span>Conferir com o extrato do banco</span>
-          <span class="note">ajustar</span></summary>
-          <div class="form" style="margin-top:10px">
-            <div class="fld"><label>Saldo que aparece no banco</label>
-              <input type="number" step="0.01" id="sc_v" placeholder="${(+S.atual).toFixed(2)}"></div>
-            <div class="fld"><label>Data do extrato</label>
-              <input type="date" id="sc_d" value="${hoje()}"></div>
-            <div class="fld"><label>&nbsp;</label>
-              <button class="btn" onclick="conferirSaldo()">Fixar este saldo</button></div>
-          </div>
-          <p class="note" style="margin-top:8px">Ao fixar, o app passa a contar deste ponto:
-          o saldo informado mais os lançamentos posteriores à data. Os lançamentos antigos
-          continuam no histórico, só não entram mais na conta do saldo.
-          ${S.atual!=null?`Hoje o app calcula <b>${BRL(S.atual)}</b> — se o banco mostra outro número,
-          a diferença é lançamento faltando ou sobrando.`:''}</p>
-        </details>
+        <div class="kgroup sub">Conferir com o extrato do banco</div>
+        <p class="note" style="margin-bottom:6px">O app calcula <b>${BRL(S.atual)}</b>.
+        Se o banco mostra outro número, a diferença é lançamento faltando ou sobrando —
+        ou é só corrigir aqui e seguir daqui pra frente.</p>
+        ${formulario}
       </div></div>`;
   })()}
 
@@ -1528,10 +1577,145 @@ window.setAntec=(p,u)=>{ FIN_PROX=Math.max(0,p||0); FIN_ULT=Math.max(0,u||0); re
 window.setFinData=v=>{ FIN_DATA=v||null; render(); };
 
 /* =====================================================================
+   CALENDÁRIO
+   ===================================================================== */
+let CAL_MES=null, CAL_DIA=null;
+const DIAS_SEM=['dom','seg','ter','qua','qui','sex','sáb'];
+const CORES={entrada:'var(--pos)',saida:'var(--neg)',fatura:'var(--steel)',
+  reserva:'var(--amber)',protegido:'#7E57C2',beneficio:'#8A6A12',
+  compromisso:'var(--ink)',lembrete:'var(--amber)',financeiro:'var(--steel)',
+  lancado:'var(--muted)'};
+const ROTULO={entrada:'entra',saida:'sai',fatura:'fatura',reserva:'reserva',
+  protegido:'Reports',beneficio:'benefício',compromisso:'compromisso',
+  lembrete:'lembrete',financeiro:'financeiro',lancado:'lançado'};
+
+function vCal(){
+  if(FALTANDO.includes('agenda'))
+    return head('Calendário','Esta aba precisa da tabela de agenda, que ainda não existe no seu banco.')
+      +`<div class="warn">Rode <b>migracao-agenda.sql</b> no Supabase e recarregue.</div>`;
+  const k = CAL_MES || MREF;
+  const [ano,m] = k.split('-').map(Number);
+  const primeiro = new Date(ano, m-1, 1);
+  const nDias = ultimoDiaDoMes(k);
+  const off = primeiro.getDay();
+  const hojeStr = hoje();
+  const diaSel = CAL_DIA && CAL_DIA.startsWith(k) ? +CAL_DIA.slice(8) : null;
+
+  const celulas=[];
+  for(let i=0;i<off;i++) celulas.push('<div class="cd vazio"></div>');
+  for(let d=1; d<=nDias; d++){
+    const data=k+'-'+String(d).padStart(2,'0');
+    const ev=eventosDoDia(k,d);
+    const fds=new Date(ano,m-1,d).getDay();
+    const pontos=[...new Set(ev.map(e=>e.t))].slice(0,5)
+      .map(t=>`<i style="background:${CORES[t]||'var(--muted)'}"></i>`).join('');
+    celulas.push(`<button class="cd ${data===hojeStr?'hoje':''} ${d===diaSel?'sel':''} ${
+      fds===0||fds===6?'fds':''}" onclick="selDia('${data}')">
+      <span class="dn">${d}</span>
+      <span class="pontos">${pontos}</span>
+      ${ev.length>5?`<span class="mais">+${ev.length-5}</span>`:''}
+    </button>`);
+  }
+
+  const evSel = diaSel ? eventosDoDia(k,diaSel) : [];
+  const meses=mesesDisponiveis();
+
+  return head('Calendário','Compromissos que você marca, junto com o que o app já sabe que vence.')
+  +`<div class="rowbar">
+    <div class="fld" style="max-width:170px"><label>Mês</label>
+      <select onchange="setCalMes(this.value)">
+        ${meses.map(x=>`<option value="${x}" ${x===k?'selected':''}>${mLabel(x)}</option>`).join('')}
+      </select></div>
+    <div style="flex:1"></div>
+    <button class="btn alt sm" onclick="setCalMes('${addM(k,-1)}')">← anterior</button>
+    <button class="btn alt sm" onclick="setCalMes('${addM(k,1)}')">próximo →</button>
+  </div>
+
+  <div class="panel"><div class="cal">
+    <div class="chead">${DIAS_SEM.map(x=>`<span>${x}</span>`).join('')}</div>
+    <div class="cgrid">${celulas.join('')}</div>
+    <div class="cleg">
+      ${['entrada','saida','fatura','reserva','compromisso','lembrete'].map(t=>
+        `<span><i style="background:${CORES[t]}"></i>${ROTULO[t]}</span>`).join('')}
+    </div>
+  </div></div>
+
+  ${diaSel?`<div class="panel"><h2>${String(diaSel).padStart(2,'0')}/${mLabel(k)}
+    <small>${DIAS_SEM[new Date(ano,m-1,diaSel).getDay()]}${
+      k+'-'+String(diaSel).padStart(2,'0')===hojeStr?' · hoje':''}</small></h2>
+    <div class="pbody">
+      ${evSel.length?evSel.map(e=>`
+        <div class="dline ${e.feito?'dim':''}">
+          <span>
+            <i class="pt" style="background:${CORES[e.t]||'var(--muted)'}"></i>
+            ${e.id&&e.t!=='lancado'?`<input type="checkbox" ${e.feito?'checked':''}
+              style="width:auto;margin-right:6px;cursor:pointer"
+              onchange="concluirAgenda('${e.id}',this.checked)">`:''}
+            ${esc(e.txt)}
+            <span class="tag t-g">${ROTULO[e.t]||e.t}</span>
+            ${e.quem?`<span class="tag t-i">${esc(e.quem)}</span>`:''}
+            ${e.obs?`<br><span class="note" style="margin-left:16px">${esc(e.obs)}</span>`:''}
+          </span>
+          <span style="white-space:nowrap">
+            ${e.v!=null?`<b style="color:${e.t==='entrada'?'var(--pos)':(e.t==='saida'||e.t==='fatura'?'var(--neg)':'inherit')}">${BRL(e.v)}</b>`:''}
+            ${e.id&&e.t!=='lancado'?`<button class="btn dgr" onclick="delRow('agenda','${e.id}')">excluir</button>`:''}
+          </span>
+        </div>`).join('')
+      :'<p class="note">Nada marcado neste dia.</p>'}
+
+      <div class="kgroup sub" style="margin-top:16px">Marcar algo neste dia</div>
+      <div class="form">
+        <div class="fld" style="grid-column:span 2"><label>O quê</label>
+          <input id="ag_t" placeholder="Ex.: Cartório da casa, consulta, cobrar a Jaqueline"></div>
+        <div class="fld"><label>Tipo</label>
+          <select id="ag_tp">
+            <option value="compromisso">Compromisso</option>
+            <option value="financeiro">Financeiro</option>
+            <option value="lembrete">Lembrete</option>
+          </select></div>
+        <div class="fld"><label>Valor (opcional)</label>
+          <input type="number" step="0.01" id="ag_v" placeholder="—"></div>
+        <div class="fld"><label>&nbsp;</label>
+          <button class="btn" onclick="addAgenda('${k}-${String(diaSel).padStart(2,'0')}')">Marcar</button></div>
+      </div>
+    </div></div>`
+  :`<div class="info">Toque num dia para ver o que tem e marcar algo.</div>`}
+
+  ${(()=>{
+    const prox=D.agenda.filter(a=>!a.concluido && a.data>=hojeStr)
+      .sort((a,b)=>a.data.localeCompare(b.data)).slice(0,6);
+    if(!prox.length) return '';
+    return `<div class="panel"><h2>Próximos compromissos</h2><div class="pbody">
+      ${prox.map(a=>{
+        const dias=Math.round((new Date(a.data+'T12:00:00')-new Date(hojeStr+'T12:00:00'))/86400000);
+        return `<div class="dline"><span>
+          <i class="pt" style="background:${CORES[a.tipo]}"></i>
+          ${esc(a.titulo)} <span class="note">${a.data.split('-').reverse().join('/')}</span>
+          <span class="tag ${dias<=3?'t-w':'t-g'}">${dias===0?'hoje':dias===1?'amanhã':'em '+dias+' dias'}</span>
+        </span><span>${a.valor?BRL(a.valor):''}</span></div>`;}).join('')}
+    </div></div>`;
+  })()}`;
+}
+window.setCalMes=v=>{ CAL_MES=v; CAL_DIA=null; render(); };
+window.selDia=v=>{ CAL_DIA = CAL_DIA===v ? null : v; render(); };
+window.addAgenda=async(data)=>{
+  const t=$('ag_t').value.trim();
+  if(!t) return toast('Escreva o que é');
+  const v=parseFloat($('ag_v').value);
+  if(await inserir('agenda',{data, titulo:t, tipo:$('ag_tp').value,
+      valor:isNaN(v)?null:v, concluido:false, criado_por:USER?.id||null})){
+    render(); toast('Marcado em '+data.split('-').reverse().join('/'));
+  }
+};
+window.concluirAgenda=async(id,v)=>{
+  if(await atualizar('agenda',id,{concluido:v})){ render(); toast(v?'Concluído':'Reaberto'); }
+};
+
+/* =====================================================================
    SHELL E INICIALIZAÇÃO
    ===================================================================== */
 const VIEWS={painel:vPainel,compra:vCompra,lanc:vLanc,parc:vParc,assin:vAssin,
-             terc:vTerc,proj:vProj,amort:vAmort,casa:vCasa,cad:vCad,metas:vMetas};
+             terc:vTerc,cal:vCal,proj:vProj,amort:vAmort,casa:vCasa,cad:vCad,metas:vMetas};
 
 function render(){
   const m=$('main'); if(!m) return montarShell();
