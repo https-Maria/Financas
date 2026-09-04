@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v22';
+const APP_VER='v24';
 
 /* =====================================================================
    ESTADO
@@ -64,7 +64,28 @@ const totVA    = () => D.beneficios.filter(b=>b.ativo).reduce((s,b)=>s+ +b.valor
 const saldoParc= () => D.parcelamentos.reduce((s,p)=>s+ +p.valor_parcela*p.restantes,0);
 const aReceber = () => D.terceiros.filter(t=>!t.recebido).reduce((s,t)=>s+ +t.valor,0);
 const recebido = () => D.terceiros.filter(t=> t.recebido).reduce((s,t)=>s+ +t.valor,0);
-const cfg = () => D.config || {reserva_atual:0,aporte_mensal:0};
+const cfg = () => D.config || {reserva_atual:0,aporte_mensal:0,
+                               saldo_conferido:null,saldo_conferido_em:null};
+
+/* ---- Saldo em conta ----
+   Parte de um ponto de conferência (saldo que você viu no extrato, e quando)
+   e soma tudo que foi lançado depois. Benefícios ficam fora: VA não é dinheiro
+   na conta. Reports entra, porque é dinheiro que passa pela conta de verdade,
+   mas fica destacado para não ser confundido com sobra. */
+function saldoConta(){
+  const c=cfg();
+  const base = c.saldo_conferido==null ? null : +c.saldo_conferido;
+  const desde = c.saldo_conferido_em || null;
+  const depois = D.lancamentos.filter(l=>!l.beneficio && (!desde || String(l.data)>desde));
+  const ent = depois.filter(l=>l.tipo==='Entrada').reduce((s,l)=>s+ +l.valor,0);
+  const sai = depois.filter(l=>l.tipo==='Saída').reduce((s,l)=>s+ +l.valor,0);
+  const rep = depois.filter(l=>l.protegido)
+    .reduce((s,l)=>s+(l.tipo==='Entrada'? +l.valor : -(+l.valor)),0);
+  return {base, desde, ent, sai, mov:ent-sai,
+          atual: base==null?null:base+ent-sai,
+          protegido: rep, n: depois.length,
+          disponivel: base==null?null:base+ent-sai-Math.max(0,rep)};
+}
 
 /* parcelas devidas num mês, a partir da primeira fatura de cada dívida */
 function parcelasMes(k, extra){
@@ -166,6 +187,35 @@ function fluxoCasa(n=24, extra, ini){
   });
 }
 
+/* ---- Ligação entre o previsto (blocos) e o realizado (lançamentos) ---- */
+const ultimoDiaDoMes = k => new Date(+k.slice(0,4), +k.slice(5,7), 0).getDate();
+function dataDoItem(it, k, dia){
+  if(it.tipo==='reserva') return it.competencia+'-01';
+  const d=Math.min(dia, ultimoDiaDoMes(k));
+  return k+'-'+String(d).padStart(2,'0');
+}
+/* Já existe lançamento correspondente a este item neste mês? */
+function lancDoItem(it, k){
+  if(it.tipo==='cartao')  return faturaLancada(it.cartao, k);
+  if(it.tipo==='reserva') return faturaLancada(it.cartao, it.competencia);
+  const l = D.lancamentos.find(x=>mesDeCaixa(x)===k && x.descricao===it.desc
+                                  && (x.tipo===(it.tipo==='renda'?'Entrada':'Saída')));
+  return l ? {valor:+l.valor, itens:[l]} : null;
+}
+function montaLanc(it, k, dia){
+  return {data: dataDoItem(it,k,dia),
+          descricao: it.desc,
+          categoria: it.categoria||'Outros',
+          tipo: it.tipo==='renda' ? 'Entrada' : 'Saída',
+          quem: it.quem||'Casal',
+          cartao: it.cartao||null,
+          valor: +it.valor,
+          status: 'Confirmado',
+          protegido: false, beneficio: false,
+          observacao: 'Marcado no painel a partir do previsto',
+          criado_por: USER?.id||null};
+}
+
 /* ---- Amortização de financiamento (tabela Price) ---- */
 /* A taxa publicada no contrato vem arredondada (ex.: 2,19%), e com ela o
    saldo não fecha em zero na última parcela. A taxa real é a que reproduz
@@ -261,13 +311,16 @@ function blocosDoMes(k){
   return ordenados.map(dia=>{
     const ultimo = dia===Math.max(...ordenados);
     const entradas = D.rendas.filter(r=>r.ativo&&!r.protegida&&(+r.dia||1)===dia)
-      .map(r=>({desc:r.descricao,valor:+r.valor,quem:r.quem}));
+      .map(r=>({desc:r.descricao,valor:+r.valor,quem:r.quem,
+                tipo:'renda',categoria:'Salário/Renda'}));
     const saidas = D.fixas.filter(f=>f.ativo&&(+f.dia||1)===dia)
-      .map(f=>({desc:f.descricao,valor:+f.valor,tipo:'fixa'}));
+      .map(f=>({desc:f.descricao,valor:+f.valor,tipo:'fixa',
+                categoria:f.categoria||'Outros',quem:'Casal'}));
     cartoes.forEach(c=>{
       if(!c.ativo || +c.dia_venc!==dia) return;
       const v=faturaCartao(c.nome,k);
-      if(v>0) saidas.push({desc:'Fatura '+c.nome,valor:v,tipo:'cartao',cartao:c.nome});
+      if(v>0) saidas.push({desc:'Fatura '+c.nome+' — parte casal',valor:v,tipo:'cartao',
+                           cartao:c.nome,categoria:'Cartão',quem:'Casal'});
     });
     /* Regra: fatura que vence no dia 1 é paga com o que sobra do último dia do mês anterior. */
     if(ultimo){
@@ -276,7 +329,8 @@ function blocosDoMes(k){
         const prox=addM(k,1);
         const v=faturaCartao(c.nome,prox);
         if(v>0) saidas.push({desc:'Reserva p/ fatura '+c.nome+' (vence 01/'+mLabel(prox).slice(0,2)+')',
-                             valor:v,tipo:'reserva',cartao:c.nome});
+                             valor:v,tipo:'reserva',cartao:c.nome,categoria:'Cartão',
+                             quem:'Casal',competencia:prox});
       });
     }
     const tIn=entradas.reduce((s,x)=>s+x.valor,0);
@@ -599,6 +653,21 @@ window.setSim=(campo,val,doBotao)=>{
 window.simSet=(campo,val)=>{ SIM[campo]=val; };
 /* trocar o mês em foco */
 window.setMes=v=>{ MREF=v; VISAO=null; render(); };
+/* Marcar no painel cria o lançamento; desmarcar apaga. */
+window.marcarItem=async(dia,lado,ix)=>{
+  const b=blocosDoMes(MREF).find(x=>x.dia===dia);
+  if(!b) return;
+  const it=(lado==='in'?b.entradas:b.saidas)[ix];
+  if(!it) return;
+  const ex=lancDoItem(it,MREF);
+  if(ex){
+    for(const l of ex.itens) await remover('lancamentos', l.id);
+    render(); toast('Desmarcado — lançamento removido');
+  }else{
+    const novo=await inserir('lancamentos', montaLanc(it,MREF,dia));
+    if(novo){ render(); toast(it.desc+' lançado · '+BRL(it.valor)); }
+  }
+};
 window.setVisao=v=>{ VISAO=v; render(); };
 window.confirmarCompra=async()=>{
   if(!SIM.desc.trim()) return toast('Dê um nome para a compra antes de confirmar');
@@ -701,6 +770,40 @@ function vPainel(){
     <button class="btn alt" onclick="go('lanc')">Lançar movimento</button>
   </div>
 
+  ${(()=>{
+    const S=saldoConta();
+    if(S.base==null) return `<div class="warn" style="margin-bottom:16px">
+      <b>Saldo em conta não configurado.</b> Rode <b>migracao-saldo.sql</b> e depois
+      confira o saldo abaixo para o app começar a acompanhar.</div>`;
+    return `<div class="panel"><h2>Saldo em conta
+      <small>conferido em ${S.desde.split('-').reverse().join('/')} · ${S.n} lançamento${S.n===1?'':'s'} depois disso</small></h2>
+      <div class="pbody">
+        <div class="kpis" style="margin-bottom:14px">
+          ${kpi('Saldo hoje',BRL(S.atual),'segundo os lançamentos',S.atual<0?'neg':'pos')}
+          ${kpi('Entrou desde então','+'+BRL(S.ent))}
+          ${kpi('Saiu desde então','−'+BRL(S.sai))}
+          ${S.protegido>0?kpi('Disso, é Reports',BRL(S.protegido),'protegido, não é sobra','amb')
+                        :kpi('Ponto de conferência',BRL(S.base),'em '+S.desde.split('-').reverse().join('/'))}
+        </div>
+        <details class="mini-det"><summary><span>Conferir com o extrato do banco</span>
+          <span class="note">ajustar</span></summary>
+          <div class="form" style="margin-top:10px">
+            <div class="fld"><label>Saldo que aparece no banco</label>
+              <input type="number" step="0.01" id="sc_v" placeholder="${(+S.atual).toFixed(2)}"></div>
+            <div class="fld"><label>Data do extrato</label>
+              <input type="date" id="sc_d" value="${hoje()}"></div>
+            <div class="fld"><label>&nbsp;</label>
+              <button class="btn" onclick="conferirSaldo()">Fixar este saldo</button></div>
+          </div>
+          <p class="note" style="margin-top:8px">Ao fixar, o app passa a contar deste ponto:
+          o saldo informado mais os lançamentos posteriores à data. Os lançamentos antigos
+          continuam no histórico, só não entram mais na conta do saldo.
+          ${S.atual!=null?`Hoje o app calcula <b>${BRL(S.atual)}</b> — se o banco mostra outro número,
+          a diferença é lançamento faltando ou sobrando.`:''}</p>
+        </details>
+      </div></div>`;
+  })()}
+
   <div class="kpis">
     ${kpi('Renda',BRL(mes.renda),'em '+mLabel(MREF))}
     ${kpi(passado&&semDados?'Saídas (projetadas)':'Saídas previstas',BRL(mes.out),
@@ -724,17 +827,31 @@ function vPainel(){
         <span class="din">${b.tIn?'+'+BRL(b.tIn):'—'}</span>
         <span class="dout">${b.tOut?'−'+BRL(b.tOut):'—'}</span>
         <span class="dsal ${b.saldo<0?'neg':''}">${BRL(b.saldo)}</span>
-        <span class="dacum ${b.acum<0?'neg':''}">acum. ${BRL(b.acum)}</span>
+        <span class="dacum ${b.acum<0?'neg':''}">acum. ${BRL(b.acum)}${(()=>{
+          const tot=b.entradas.length+b.saidas.length;
+          const fei=[...b.entradas,...b.saidas].filter(x=>lancDoItem(x,MREF)).length;
+          return tot?` · <span class="tag ${fei===tot?'t-ok':'t-g'}">${fei}/${tot}</span>`:'';
+        })()}</span>
       </summary>
       <div class="ddet">
-        ${b.entradas.length?`<div class="dcol"><h5>Entra</h5>
-          ${b.entradas.map(e=>`<div class="dline"><span>${esc(e.desc)}${e.quem?` <span class="tag t-g">${esc(e.quem)}</span>`:''}</span>
-            <b style="color:var(--pos)">${BRL(e.valor)}</b></div>`).join('')}</div>`:''}
-        ${b.saidas.length?`<div class="dcol"><h5>Sai</h5>
-          ${b.saidas.map(x=>`<div class="dline"><span>${esc(x.desc)}
-            ${x.tipo==='reserva'?'<span class="tag t-w">reserva</span>':''}
-            ${x.tipo==='cartao'?'<span class="tag t-i">fatura</span>':''}</span>
-            <b style="color:var(--neg)">${BRL(x.valor)}</b></div>`).join('')}</div>`:''}
+        ${b.entradas.length?`<div class="dcol"><h5>Entra — marque quando receber</h5>
+          ${b.entradas.map((e,ix)=>{const L=lancDoItem(e,MREF);return `
+            <label class="dline chk ${L?'feito':''}">
+              <span><input type="checkbox" ${L?'checked':''}
+                onchange="marcarItem(${b.dia},'in',${ix})">
+                ${esc(e.desc)}${e.quem?` <span class="tag t-g">${esc(e.quem)}</span>`:''}
+                ${L&&Math.abs(L.valor-e.valor)>0.01?`<span class="tag t-w">lançado ${BRL(L.valor)}</span>`:''}</span>
+              <b style="color:var(--pos)">${BRL(e.valor)}</b></label>`;}).join('')}</div>`:''}
+        ${b.saidas.length?`<div class="dcol"><h5>Sai — marque quando pagar</h5>
+          ${b.saidas.map((x,ix)=>{const L=lancDoItem(x,MREF);return `
+            <label class="dline chk ${L?'feito':''}">
+              <span><input type="checkbox" ${L?'checked':''}
+                onchange="marcarItem(${b.dia},'out',${ix})">
+                ${esc(x.desc)}
+                ${x.tipo==='reserva'?'<span class="tag t-w">reserva</span>':''}
+                ${x.tipo==='cartao'?'<span class="tag t-i">fatura</span>':''}
+                ${L&&Math.abs(L.valor-x.valor)>0.01?`<span class="tag t-w">lançado ${BRL(L.valor)}</span>`:''}</span>
+              <b style="color:var(--neg)">${BRL(x.valor)}</b></label>`;}).join('')}</div>`:''}
       </div>
     </details>`).join('')}
   </div>
@@ -1199,6 +1316,14 @@ function vCasa(){
   </tr>`).join('')}
   </tbody></table></div></div>`;
 }
+window.conferirSaldo=async()=>{
+  const v=$('sc_v').value, d=$('sc_d').value;
+  if(v===''||v==null) return toast('Informe o saldo que aparece no banco');
+  if(!d) return toast('Informe a data do extrato');
+  if(await atualizar('config',null,{saldo_conferido:+v, saldo_conferido_em:d})){
+    render(); toast('Saldo fixado em '+BRL(+v)+' a partir de '+d.split('-').reverse().join('/'));
+  }
+};
 window.setCasaMes=v=>{ CASA_MES=v; render(); };
 
 window.addCasaItem=async()=>{
