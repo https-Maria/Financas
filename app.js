@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v26';
+const APP_VER='v27';
 
 /* =====================================================================
    ESTADO
@@ -1727,17 +1727,17 @@ window.go=id=>{CUR=id;render();window.scrollTo(0,0);};
 
 function montarShell(){
   $('root').innerHTML=`<div class="shell">
-    <aside class="rail">
+    <div class="rail"><div class="railin">
       <div class="brand"><b>Financeiro</b><span>${esc(EU||'')}</span></div>
       <nav id="nav">${PAGES.map(([id,l])=>
         `<button data-p="${id}" onclick="go('${id}')" aria-current="${CUR===id}">${l}</button>`).join('')}</nav>
-      <div class="sync"><span class="dot ${SYNC}" id="syncdot"></span><span id="synctxt">Sincronizado</span>
-        <span style="margin-left:auto;opacity:.55">${APP_VER}</span></div>
       <div class="railfoot">
+        <span class="sync"><span class="dot ${SYNC}" id="syncdot"></span><span id="synctxt">Sincronizado</span></span>
+        <span style="flex:1"></span>
         <button onclick="exportar()">Exportar backup</button>
         <button onclick="sair()">Sair</button>
       </div>
-    </aside>
+    </div></div>
     <main class="main" id="main"></main></div>`;
   render();
 }
