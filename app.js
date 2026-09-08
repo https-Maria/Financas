@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v32';
+const APP_VER='v33';
 
 /* =====================================================================
    ESTADO
@@ -281,6 +281,12 @@ function eventosDoDia(k, d){
 const MARCA_PAINEL='Marcado no painel a partir do previsto';
 const veioDoPainel = l => (l.observacao||'')===MARCA_PAINEL;
 const ultimoDiaDoMes = k => new Date(+k.slice(0,4), +k.slice(5,7), 0).getDate();
+/* Data em que o dinheiro sai de fato. Na reserva de fatura que vence dia 1,
+   o pagamento acontece no último dia do mês anterior. */
+function dataEfetiva(it, k, dia){
+  if(it.tipo==='reserva') return k+'-'+String(ultimoDiaDoMes(k)).padStart(2,'0');
+  return dataDoItem(it,k,dia);
+}
 function dataDoItem(it, k, dia){
   if(it.tipo==='reserva') return it.competencia+'-01';
   const d=Math.min(dia, ultimoDiaDoMes(k));
@@ -294,9 +300,12 @@ function lancRelacionado(it, k){
                                      && (x.tipo===(it.tipo==='renda'?'Entrada':'Saída')));
   return ls.length ? {valor:ls.reduce((s,l)=>s+ +l.valor,0), itens:ls} : null;
 }
-/* O item já ACONTECEU? Só conta lançamento confirmado. Um 'Projetado' guarda
-   o valor conhecido da fatura, mas não significa que foi pago. */
-const confirmado = l => l.status==='Confirmado';
+/* O item já ACONTECEU?
+   Vale se você marcou aqui no painel — mesmo adiantado, pagar antes é pagar.
+   Vindo de outra origem (carga inicial, importação), só vale se a data já
+   passou: algo lançado para o mês que vem não pode ter sido pago. */
+const confirmado = l => l.status==='Confirmado' &&
+  (veioDoPainel(l) || String(l.data) <= hoje());
 function lancDoItem(it, k){
   const r = lancRelacionado(it,k);
   if(!r) return null;
@@ -959,16 +968,18 @@ function vPainel(){
       <div class="ddet">
         ${b.entradas.length?`<div class="dcol"><h5>Entra — marque quando receber</h5>
           ${b.entradas.map((e,ix)=>{const L=lancDoItem(e,MREF);
+            const venceu=dataEfetiva(e,MREF,b.dia)<=hoje();
             return `
-            <div class="dline chk ${L?'feito':''}">
+            <div class="dline chk ${L?'feito':''} ${!venceu&&!L?'futuro':''}">
               <span><input type="checkbox" ${L?'checked':''} onchange="marcarItem(${b.dia},'in',${ix})">
                 ${esc(e.desc)}${e.quem?` <span class="tag t-g">${esc(e.quem)}</span>`:''}
                 ${L&&Math.abs(L.valor-e.valor)>0.01?`<span class="tag t-w">lançado ${BRL(L.valor)}</span>`:''}</span>
               <b style="color:var(--pos)">${BRL(e.valor)}</b></div>`;}).join('')}</div>`:''}
         ${b.saidas.length?`<div class="dcol"><h5>Sai — marque quando pagar</h5>
           ${b.saidas.map((x,ix)=>{const L=lancDoItem(x,MREF);
+            const venceu=dataEfetiva(x,MREF,b.dia)<=hoje();
             return `
-            <div class="dline chk ${L?'feito':''}">
+            <div class="dline chk ${L?'feito':''} ${!venceu&&!L?'futuro':''}">
               <span><input type="checkbox" ${L?'checked':''} onchange="marcarItem(${b.dia},'out',${ix})">
                 ${esc(x.desc)}
                 ${x.tipo==='reserva'?'<span class="tag t-w">reserva</span>':''}
