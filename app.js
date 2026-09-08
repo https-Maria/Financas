@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v33';
+const APP_VER='v34';
 
 /* =====================================================================
    ESTADO
@@ -1370,45 +1370,115 @@ function vMetas(){
   const falta=Math.max(0,meta-+c.reserva_atual);
   const prog=meta?Math.min(1,+c.reserva_atual/meta):0;
   const meses=+c.aporte_mensal>0?Math.ceil(falta/+c.aporte_mensal):null;
-  return head('Metas e reserva','Quanto falta para a reserva de emergência e em quanto tempo.')
-  +`<div class="panel"><h2>Reserva de emergência</h2><div class="pbody">
-    <div class="form" style="margin-bottom:16px">
-      <div class="fld"><label>Reserva atual</label><input type="number" step="100" value="${c.reserva_atual}"
-        onchange="setCfg('reserva_atual',+this.value)"></div>
-      <div class="fld"><label>Aporte por mês</label><input type="number" step="50" value="${c.aporte_mensal}"
-        onchange="setCfg('aporte_mensal',+this.value)"></div>
-    </div>
+  const guardadoTotal=(+c.reserva_atual)+D.metas.reduce((s,m)=>s+ +m.guardado,0);
+  const S=saldoConta();
+  /* histórico: tudo que você já guardou, vindo dos lançamentos */
+  const depositos=D.lancamentos.filter(l=>l.categoria==='Reserva' && l.tipo==='Saída')
+    .sort((a,b)=>String(b.data).localeCompare(String(a.data)));
+
+  return head('Metas e reserva','Guardar dinheiro não é gasto: sai da conta e vira reserva. Aqui os dois lados aparecem.')
+  +`<div class="kpis">
+    ${kpi('Guardado no total',BRL(guardadoTotal),'reserva + metas','pos')}
+    ${kpi('Na conta corrente',S.atual!=null?BRL(S.atual):'—','disponível para o mês')}
+    ${kpi('Patrimônio',S.atual!=null?BRL(S.atual+guardadoTotal):BRL(guardadoTotal),'conta + guardado','pos')}
+    ${kpi('Já depositado',BRL(depositos.reduce((s,l)=>s+ +l.valor,0)),depositos.length+' depósito'+(depositos.length===1?'':'s'))}
+  </div>
+
+  <div class="panel"><h2>Reserva de emergência</h2><div class="pbody">
     <div class="bar" style="grid-template-columns:110px 1fr 90px;margin-bottom:14px"><span>Progresso</span>
       <span class="track" style="height:22px"><span class="fill" style="width:${prog*100}%;background:var(--pos)"></span></span>
       <span class="r" style="font-weight:600">${PCT(prog)}</span></div>
-    <div class="kpis" style="margin:0">
+    <div class="kpis" style="margin:0 0 14px">
+      ${kpi('Tem guardado',BRL(c.reserva_atual))}
       ${kpi('Meta (6 meses de custo)',BRL(meta),'fixas + assinaturas')}
       ${kpi('Falta',BRL(falta),'','amb')}
       ${kpi('Meses até lá',meses!==null?meses:'—',meses!==null?'no ritmo atual':'defina um aporte')}
     </div>
+    <div class="kgroup sub">Lançar um depósito na reserva</div>
+    <div class="form">
+      <div class="fld"><label>Quanto guardou</label><input type="number" step="50" id="dp_r" placeholder="0,00"></div>
+      <div class="fld"><label>Quando</label><input type="date" id="dp_rd" value="${hoje()}"></div>
+      <div class="fld"><label>&nbsp;</label><button class="btn" onclick="guardar('reserva',null)">Guardar</button></div>
+    </div>
+    <p class="note" style="margin-top:8px">Soma ao que já está guardado e lança a saída da conta,
+    com categoria <b>Reserva</b>. Assim o saldo em conta baixa e o dinheiro não desaparece.</p>
+    <div class="form" style="margin-top:14px">
+      <div class="fld"><label>Corrigir o total guardado</label><input type="number" step="100" value="${c.reserva_atual}"
+        onchange="setCfg('reserva_atual',+this.value)"></div>
+      <div class="fld"><label>Aporte planejado por mês</label><input type="number" step="50" value="${c.aporte_mensal}"
+        onchange="setCfg('aporte_mensal',+this.value)"></div>
+    </div>
   </div></div>
-  <div class="panel"><h2>Outras metas</h2><div class="pbody">
-    <div class="form" style="margin-bottom:14px">
-      <div class="fld" style="grid-column:span 2"><label>Meta</label><input id="m_n" placeholder="Ex.: Entrada da casa"></div>
+
+  <div class="panel"><h2>Outras metas</h2>
+  ${D.metas.length?`<div class="tw"><table><thead><tr><th>Meta</th><th class="r">Alvo</th>
+      <th class="r">Guardado</th><th class="r">Falta</th><th style="width:290px">Lançar depósito</th><th></th>
+    </tr></thead><tbody>
+    ${D.metas.map(m=>{
+      const p=m.alvo>0?Math.min(1,m.guardado/m.alvo):0;
+      return `<tr>
+      <td><b>${esc(m.nome)}</b>
+        <span class="track" style="display:block;height:5px;margin-top:4px;max-width:150px">
+          <span class="fill" style="width:${p*100}%;background:var(--pos)"></span></span></td>
+      <td class="r">${BRL(m.alvo)}</td>
+      <td class="r"><input type="number" value="${m.guardado}" style="width:100px;padding:3px 5px;text-align:right;border-color:transparent"
+        onchange="setRow('metas','${m.id}','guardado',+this.value)"></td>
+      <td class="r" style="color:${m.guardado>=m.alvo?'var(--pos)':'var(--amber)'}">${
+        m.guardado>=m.alvo?'completa':BRL(m.alvo-m.guardado)}</td>
+      <td><div style="display:flex;gap:5px;align-items:center">
+        <input type="number" step="50" id="dp_${m.id}" placeholder="0,00" style="width:96px;padding:4px 6px">
+        <input type="date" id="dpd_${m.id}" value="${hoje()}" style="width:132px;padding:4px 6px">
+        <button class="btn sm" onclick="guardar('meta','${m.id}')">Guardar</button>
+      </div></td>
+      <td class="r"><button class="btn dgr" onclick="delRow('metas','${m.id}')">excluir</button></td></tr>`;}).join('')}
+    </tbody></table></div>`:'<div class="pbody"><p class="note">Nenhuma meta ainda.</p></div>'}
+    <div class="pbody"><div class="form">
+      <div class="fld" style="grid-column:span 2"><label>Nova meta</label><input id="m_n" placeholder="Ex.: Entrada da casa"></div>
       <div class="fld"><label>Valor alvo</label><input type="number" id="m_a"></div>
       <div class="fld"><label>Já guardado</label><input type="number" id="m_g"></div>
       <div class="fld"><label>&nbsp;</label><button class="btn" onclick="addMeta()">Adicionar</button></div>
-    </div>
-    ${D.metas.length?`<div class="tw"><table><thead><tr><th>Meta</th><th class="r">Alvo</th>
-      <th class="r">Guardado</th><th class="r">Falta</th><th></th></tr></thead><tbody>
-    ${D.metas.map(m=>`<tr><td><b>${esc(m.nome)}</b></td><td class="r">${BRL(m.alvo)}</td>
-      <td class="r"><input type="number" value="${m.guardado}" style="width:104px;padding:3px 5px;text-align:right;border-color:transparent"
-        onchange="setRow('metas','${m.id}','guardado',+this.value)"></td>
-      <td class="r" style="color:var(--amber)">${BRL(Math.max(0,m.alvo-m.guardado))}</td>
-      <td class="r"><button class="btn dgr" onclick="delRow('metas','${m.id}')">excluir</button></td></tr>`).join('')}
-    </tbody></table></div>`:'<p class="note">Nenhuma meta ainda.</p>'}
-  </div></div>`;
+    </div></div>
+  </div>
+
+  ${depositos.length?`<div class="panel"><h2>Depósitos lançados <small>saíram da conta e viraram reserva</small></h2>
+  <div class="tw"><table><thead><tr><th>Data</th><th>Para onde</th><th class="r">Valor</th><th></th></tr></thead><tbody>
+  ${depositos.slice(0,15).map(l=>`<tr>
+    <td class="mono">${String(l.data).split('-').reverse().join('/')}</td>
+    <td>${esc(l.descricao)}</td>
+    <td class="r" style="font-weight:600">${BRL(l.valor)}</td>
+    <td class="r"><button class="btn dgr" onclick="delRow('lancamentos','${l.id}')">excluir</button></td>
+  </tr>`).join('')}
+  </tbody></table></div>
+  <div class="pbody"><p class="note">Excluir aqui apaga só o lançamento, não desconta do total guardado —
+  para isso, corrija o valor na linha da meta.</p></div></div>`:''}`;
 }
 window.addMeta=async()=>{
   const n=$('m_n').value.trim(),a=parseFloat($('m_a').value);
   if(!n||!a) return toast('Preencha nome e valor alvo');
   if(await inserir('metas',{nome:n,alvo:a,guardado:parseFloat($('m_g').value)||0}))
     {render();toast('Meta adicionada');}
+};
+/* Guardar dinheiro: soma no destino e lança a saída da conta. */
+window.guardar=async(tipo,id)=>{
+  const campo = tipo==='reserva' ? 'dp_r' : 'dp_'+id;
+  const campoData = tipo==='reserva' ? 'dp_rd' : 'dpd_'+id;
+  const v=parseFloat($(campo)?.value);
+  const d=$(campoData)?.value || hoje();
+  if(!v || v<=0) return toast('Informe quanto você guardou');
+
+  const nome = tipo==='reserva' ? 'Reserva de emergência'
+                                : (D.metas.find(m=>m.id===id)?.nome || 'Meta');
+  const ok = tipo==='reserva'
+    ? await atualizar('config',null,{reserva_atual:(+cfg().reserva_atual)+v})
+    : await atualizar('metas',id,{guardado:(+D.metas.find(m=>m.id===id).guardado)+v});
+  if(!ok) return;
+
+  await inserir('lancamentos',{
+    data:d, descricao:'Guardado — '+nome, categoria:'Reserva', tipo:'Saída',
+    quem:'Casal', valor:v, status:'Confirmado',
+    protegido:false, beneficio:false,
+    observacao:'Depósito lançado na aba Metas', criado_por:USER?.id||null});
+  render(); toast(BRL(v)+' guardado em '+nome);
 };
 
 /* =====================================================================
