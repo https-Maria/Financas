@@ -11,16 +11,16 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v29';
+const APP_VER='v32';
 
 /* =====================================================================
    ESTADO
    ===================================================================== */
 const TABELAS = ['rendas','fixas','beneficios','cartoes','parcelamentos',
-                 'assinaturas','lancamentos','terceiros','metas','casa_itens','financiamentos','agenda'];
+                 'assinaturas','lancamentos','terceiros','metas','casa_itens','financiamentos','agenda','snapshots','ciclos'];
 let USER=null, GRUPO=null, EU=null;
 let D = {rendas:[],fixas:[],beneficios:[],cartoes:[],parcelamentos:[],
-         assinaturas:[],lancamentos:[],terceiros:[],metas:[],casa_itens:[],financiamentos:[],agenda:[],config:null};
+         assinaturas:[],lancamentos:[],terceiros:[],metas:[],casa_itens:[],financiamentos:[],agenda:[],snapshots:[],ciclos:[],config:null};
 let ONLINE = navigator.onLine, SYNC='off', FALTANDO=[];
 
 /* =====================================================================
@@ -59,7 +59,8 @@ const rendaAtiva = k => D.rendas.filter(r=>r.ativo && !r.protegida &&
   !(r.encerra_em && k && k >= ym(r.encerra_em)));
 const totRenda = k => rendaAtiva(k).reduce((s,r)=>s+ +r.valor,0);
 const totFixas = () => D.fixas.filter(f=>f.ativo).reduce((s,f)=>s+ +f.valor,0);
-const totAssin = () => D.assinaturas.filter(a=>a.projetar).reduce((s,a)=>s+ +a.valor,0);
+const totAssin = (k) => D.assinaturas.filter(a=>a.projetar)
+  .reduce((s,a)=>s + (+a.valor) * (k ? vezesAssinatura(a,k) : 1), 0);
 const totVA    = () => D.beneficios.filter(b=>b.ativo).reduce((s,b)=>s+ +b.valor,0);
 const saldoParc= () => D.parcelamentos.reduce((s,p)=>s+ +p.valor_parcela*p.restantes,0);
 const aReceber = () => D.terceiros.filter(t=>!t.recebido).reduce((s,t)=>s+ +t.valor,0);
@@ -120,6 +121,45 @@ function faturaLancada(nome,k){
   return {valor: ls.reduce((s,l)=>s+ +l.valor,0), itens: ls};
 }
 
+/* ---- Ciclo de fatura: a janela que ela cobre ----
+   A fatura de um mês cobre o período entre o fechamento anterior e o dela.
+   Como as datas de fechamento variam, uma assinatura mensal pode cair duas
+   vezes no mesmo ciclo — ou nenhuma. Foi o que aconteceu com a academia:
+   a fatura de setembro do BB Elo pegou os débitos de 25/07 e de 25/08. */
+const cicloDe = (cartao,k) => D.ciclos.find(c=>c.cartao===cartao && c.competencia===k) || null;
+
+function janelaFatura(cartao,k){
+  const c=cicloDe(cartao,k);
+  if(!c) return null;
+  const ant=cicloDe(cartao,addM(k,-1));
+  if(ant) return {ini:ant.fecha, fim:c.fecha};
+  /* sem o ciclo anterior, assume um mês antes do fechamento atual */
+  const f=new Date(c.fecha+'T12:00:00'); f.setMonth(f.getMonth()-1);
+  return {ini:f.toISOString().slice(0,10), fim:c.fecha, estimada:true};
+}
+
+/* Quantas vezes o dia X aparece dentro de (ini, fim] */
+function vezesNoPeriodo(dia, ini, fim){
+  if(!dia) return 1;
+  let n=0;
+  const a=new Date(ini+'T12:00:00'), b=new Date(fim+'T12:00:00');
+  const d=new Date(a.getFullYear(), a.getMonth(), 1);
+  while(d <= b){
+    const ult=new Date(d.getFullYear(), d.getMonth()+1, 0).getDate();
+    const cob=new Date(d.getFullYear(), d.getMonth(), Math.min(dia,ult), 12);
+    if(cob > a && cob <= b) n++;
+    d.setMonth(d.getMonth()+1);
+  }
+  return n;
+}
+
+/* Quantas cobranças desta assinatura entram na fatura do mês k */
+function vezesAssinatura(a, k){
+  const j=janelaFatura(a.cartao,k);
+  if(!j) return 1;                       // sem ciclo cadastrado: comportamento antigo
+  return vezesNoPeriodo(+a.dia, j.ini, j.fim);
+}
+
 /* Fatura calculada: parcelas devidas + assinaturas projetadas do cartão. */
 function faturaCalculada(nome, k, extra){
   let t=0;
@@ -131,7 +171,8 @@ function faturaCalculada(nome, k, extra){
   };
   D.parcelamentos.forEach(conta);
   if(extra) conta(extra);
-  D.assinaturas.forEach(a=>{ if(a.projetar && (a.cartao||'')===nome) t+= +a.valor; });
+  D.assinaturas.forEach(a=>{ if(a.projetar && (a.cartao||'')===nome)
+    t += (+a.valor) * vezesAssinatura(a,k); });
   return t;
 }
 
@@ -245,13 +286,22 @@ function dataDoItem(it, k, dia){
   const d=Math.min(dia, ultimoDiaDoMes(k));
   return k+'-'+String(d).padStart(2,'0');
 }
-/* Já existe lançamento correspondente a este item neste mês? */
-function lancDoItem(it, k){
+/* Qualquer lançamento ligado ao item — confirmado ou ainda previsto. */
+function lancRelacionado(it, k){
   if(it.tipo==='cartao')  return faturaLancada(it.cartao, k);
   if(it.tipo==='reserva') return faturaLancada(it.cartao, it.competencia);
-  const l = D.lancamentos.find(x=>mesDeCaixa(x)===k && x.descricao===it.desc
-                                  && (x.tipo===(it.tipo==='renda'?'Entrada':'Saída')));
-  return l ? {valor:+l.valor, itens:[l]} : null;
+  const ls = D.lancamentos.filter(x=>mesDeCaixa(x)===k && x.descricao===it.desc
+                                     && (x.tipo===(it.tipo==='renda'?'Entrada':'Saída')));
+  return ls.length ? {valor:ls.reduce((s,l)=>s+ +l.valor,0), itens:ls} : null;
+}
+/* O item já ACONTECEU? Só conta lançamento confirmado. Um 'Projetado' guarda
+   o valor conhecido da fatura, mas não significa que foi pago. */
+const confirmado = l => l.status==='Confirmado';
+function lancDoItem(it, k){
+  const r = lancRelacionado(it,k);
+  if(!r) return null;
+  const feitos = r.itens.filter(confirmado);
+  return feitos.length ? {valor:feitos.reduce((s,l)=>s+ +l.valor,0), itens:feitos} : null;
 }
 function montaLanc(it, k, dia){
   return {data: dataDoItem(it,k,dia),
@@ -437,7 +487,9 @@ async function carregarTudo(){
   setSync('busy');
   try{
     const res = await Promise.all([
-      ...TABELAS.map(t=>sb.from(t).select('*').eq('grupo_id',GRUPO)),
+      ...TABELAS.map(t=>sb.from(t)
+        .select(t==='snapshots'?'id,rotulo,automatico,linhas,criado_em':'*')
+        .eq('grupo_id',GRUPO)),
       sb.from('config').select('*').eq('grupo_id',GRUPO).maybeSingle()
     ]);
 
@@ -710,21 +762,26 @@ window.marcarItem=async(dia,lado,ix)=>{
   if(!b) return;
   const it=(lado==='in'?b.entradas:b.saidas)[ix];
   if(!it) return;
-  const ex=lancDoItem(it,MREF);
-  if(ex){
-    /* Só apaga sem perguntar o que o próprio painel criou. Lançamento que veio
-       da carga inicial ou que você digitou pode ter o valor real da fatura —
-       apagar por engano faz o app cair de volta na estimativa. */
-    if(!ex.itens.every(veioDoPainel)){
-      toast('Este lançamento não foi criado aqui. Para apagar, vá em Lançamentos.', 4200);
-      render(); return;
+  const rel=lancRelacionado(it,MREF);
+  const feito=rel && rel.itens.some(confirmado);
+  if(feito){
+    /* desmarcar: o que o painel criou some; o que veio de outra origem só
+       volta a ser previsão, para não perder o valor real da fatura */
+    for(const l of rel.itens.filter(confirmado)){
+      if(veioDoPainel(l)) await remover('lancamentos', l.id);
+      else await atualizar('lancamentos', l.id, {status:'Projetado'});
     }
-    for(const l of ex.itens) await remover('lancamentos', l.id);
-    render(); toast('Desmarcado — lançamento removido');
-  }else{
-    const novo=await inserir('lancamentos', montaLanc(it,MREF,dia));
-    if(novo){ render(); toast(it.desc+' lançado · '+BRL(it.valor)); }
+    render(); toast('Desmarcado — voltou a ser previsão');
+    return;
   }
+  if(rel){
+    for(const l of rel.itens) await atualizar('lancamentos', l.id, {status:'Confirmado'});
+    render(); toast(it.desc+' confirmado · '+BRL(rel.valor));
+    return;
+  }
+  const criado=await inserir('lancamentos', montaLanc(it,MREF,dia));
+  if(criado){ render(); toast(it.desc+' lançado · '+BRL(it.valor)); }
+
 };
 window.setVisao=v=>{ VISAO=v; render(); };
 window.confirmarCompra=async()=>{
@@ -753,7 +810,7 @@ window.confirmarCompra=async()=>{
 const PAGES=[['painel','Painel'],['compra','Nova compra'],['lanc','Lançamentos'],
   ['parc','Parcelamentos'],['assin','Assinaturas'],['terc','Terceiros'],
   ['cal','Calendário'],['proj','Projeção'],['amort','Amortização'],['casa','Projeções Casa'],
-  ['cad','Cadastros'],['metas','Metas']];
+  ['cad','Cadastros'],['metas','Metas'],['backup','Cópias']];
 let CUR='painel', MREF=ym(hoje()), VISAO=null;  // 'previsto' | 'realizado'
 
 function head(t,p){return `<div class="phead"><h1>${t}</h1><p>${p}</p></div>`
@@ -902,23 +959,17 @@ function vPainel(){
       <div class="ddet">
         ${b.entradas.length?`<div class="dcol"><h5>Entra — marque quando receber</h5>
           ${b.entradas.map((e,ix)=>{const L=lancDoItem(e,MREF);
-            const meu=L&&L.itens.every(veioDoPainel);
             return `
             <div class="dline chk ${L?'feito':''}">
-              <span>${L&&!meu
-                ? `<span class="tick" title="Já existe lançamento para isto. Para desfazer, vá em Lançamentos.">✓</span>`
-                : `<input type="checkbox" ${L?'checked':''} onchange="marcarItem(${b.dia},'in',${ix})">`}
+              <span><input type="checkbox" ${L?'checked':''} onchange="marcarItem(${b.dia},'in',${ix})">
                 ${esc(e.desc)}${e.quem?` <span class="tag t-g">${esc(e.quem)}</span>`:''}
                 ${L&&Math.abs(L.valor-e.valor)>0.01?`<span class="tag t-w">lançado ${BRL(L.valor)}</span>`:''}</span>
               <b style="color:var(--pos)">${BRL(e.valor)}</b></div>`;}).join('')}</div>`:''}
         ${b.saidas.length?`<div class="dcol"><h5>Sai — marque quando pagar</h5>
           ${b.saidas.map((x,ix)=>{const L=lancDoItem(x,MREF);
-            const meu=L&&L.itens.every(veioDoPainel);
             return `
             <div class="dline chk ${L?'feito':''}">
-              <span>${L&&!meu
-                ? `<span class="tick" title="Já existe lançamento para isto. Para desfazer, vá em Lançamentos.">✓</span>`
-                : `<input type="checkbox" ${L?'checked':''} onchange="marcarItem(${b.dia},'out',${ix})">`}
+              <span><input type="checkbox" ${L?'checked':''} onchange="marcarItem(${b.dia},'out',${ix})">
                 ${esc(x.desc)}
                 ${x.tipo==='reserva'?'<span class="tag t-w">reserva</span>':''}
                 ${x.tipo==='cartao'?'<span class="tag t-i">fatura</span>':''}
@@ -941,14 +992,26 @@ function vPainel(){
             ...D.parcelamentos.filter(p=>(p.cartao||'')===n).filter(p=>{
               const i=p.primeira_fatura?ym(p.primeira_fatura):ym(hoje());
               const d=mesesEntre(i,MREF); return d>=0&&d<p.restantes;}).map(p=>({d:p.descricao,v:+p.valor_parcela})),
-            ...D.assinaturas.filter(a=>a.projetar&&(a.cartao||'')===n).map(a=>({d:a.descricao,v:+a.valor}))];
+            ...D.assinaturas.filter(a=>a.projetar&&(a.cartao||'')===n).map(a=>{
+              const vz=vezesAssinatura(a,MREF);
+              return {d:a.descricao+(vz!==1?' — '+vz+' cobranças neste ciclo':''), v:(+a.valor)*vz};
+            }).filter(x=>x.v>0)];
           const terc=D.terceiros.filter(t=>t.cartao===n&&!t.recebido)
             .reduce((s,t)=>s+ +t.valor,0);
+          const jan=janelaFatura(n,MREF);
+          const rep=D.assinaturas.filter(a=>a.projetar&&(a.cartao||'')===n)
+            .map(a=>({a, vz:vezesAssinatura(a,MREF)})).filter(x=>x.vz!==1);
           return `<details class="mini-det"><summary><span>${esc(n)}
             <span class="tag ${real?'t-ok':'t-g'}">${real?'lançada':'estimada'}</span>
-            ${c?`<span class="note">vence dia ${c.dia_venc||'—'}</span>`:''}</span>
+            ${jan?`<span class="note">fecha ${jan.fim.split('-').reverse().slice(0,2).join('/')}</span>`
+                 :(c?`<span class="note">vence dia ${c.dia_venc||'—'}</span>`:'')}
+            ${rep.map(x=>`<span class="tag ${x.vz>1?'t-no':'t-w'}">${x.vz}x ${esc(x.a.descricao)}</span>`).join(' ')}</span>
             <b>${BRL(v)}</b></summary>
             <div style="padding:8px 0 10px">
+              ${jan?`<p class="note" style="margin-bottom:8px">Ciclo de
+                ${jan.ini.split('-').reverse().slice(0,2).join('/')} a
+                ${jan.fim.split('-').reverse().slice(0,2).join('/')}${jan.estimada?' (estimado)':''}.
+                Assinatura cujo dia de cobrança cai duas vezes nesse intervalo entra em dobro.</p>`:''}
               ${real
                 ? `${real.itens.map(l=>`<div class="dline"><span>${esc(l.descricao)}
                      <span class="note">${String(l.data).split('-').reverse().join('/')}</span></span>
@@ -1231,9 +1294,52 @@ function vCad(){
     {l:'Categoria',k:'categoria'},{l:'Dia',k:'dia',tipo:'num'},{l:'Valor',k:'valor',tipo:'num',r:1}],totFixas())}
   ${tabela('Benefícios','beneficios',[{l:'Descrição',k:'descricao'},{l:'Quem',k:'quem'},
     {l:'Dia',k:'dia',tipo:'num'},{l:'Valor',k:'valor',tipo:'num',r:1}],totVA())}
+  <div class="panel"><h2>Ciclos de fatura <small>quando fecha e quando vence, mês a mês</small></h2>
+  ${FALTANDO.includes('ciclos')
+    ? '<div class="pbody"><div class="warn">Rode <b>migracao-ciclos.sql</b> no Supabase para usar esta parte.</div></div>'
+    : `<div class="tw"><table><thead><tr><th>Cartão</th><th>Competência</th>
+        <th class="c">Fecha</th><th class="c">Vence</th><th>Cobranças fora do padrão</th><th></th></tr></thead><tbody>
+    ${D.ciclos.slice().sort((a,b)=>(a.cartao+a.competencia).localeCompare(b.cartao+b.competencia))
+      .map(c=>{
+        const rep=D.assinaturas.filter(a=>a.projetar&&(a.cartao||'')===c.cartao)
+          .map(a=>({a,vz:vezesAssinatura(a,c.competencia)})).filter(x=>x.vz!==1);
+        return `<tr>
+        <td>${esc(c.cartao)}${c.inferido?' <span class="tag t-w">data inferida</span>':''}</td>
+        <td class="mono">${mLabel(c.competencia)}</td>
+        <td class="c"><input type="date" value="${c.fecha}" style="padding:3px 5px;width:130px"
+          onchange="setRow('ciclos','${c.id}','fecha',this.value)"></td>
+        <td class="c"><input type="date" value="${c.vence}" style="padding:3px 5px;width:130px"
+          onchange="setRow('ciclos','${c.id}','vence',this.value)"></td>
+        <td>${rep.length
+          ? rep.map(x=>`<span class="tag ${x.vz>1?'t-no':'t-w'}">${x.vz}x ${esc(x.a.descricao)}</span>`).join(' ')
+          : '<span class="note">uma cobrança de cada</span>'}</td>
+        <td class="r"><button class="btn dgr" onclick="delRow('ciclos','${c.id}')">excluir</button></td></tr>`;}).join('')
+      ||'<tr><td colspan="6" class="note" style="padding:16px;text-align:center">Nenhum ciclo cadastrado.</td></tr>'}
+    </tbody></table></div>
+    <div class="pbody"><div class="form">
+      <div class="fld"><label>Cartão</label><select id="ci_c">
+        ${D.cartoes.filter(x=>x.ativo).map(x=>`<option>${esc(x.nome)}</option>`).join('')}</select></div>
+      <div class="fld"><label>Competência</label><select id="ci_m">
+        ${horizon(14,addM(ym(hoje()),-2)).map(k=>`<option value="${k}">${mLabel(k)}</option>`).join('')}</select></div>
+      <div class="fld"><label>Fecha em</label><input type="date" id="ci_f"></div>
+      <div class="fld"><label>Vence em</label><input type="date" id="ci_v"></div>
+      <div class="fld"><label>&nbsp;</label><button class="btn" onclick="addCiclo()">Adicionar</button></div>
+    </div>
+    <p class="note" style="margin-top:10px">Sem a data de fechamento, o app assume uma cobrança por mês.
+    Com ela, conta quantas vezes o dia de cobrança de cada assinatura cai no intervalo — foi assim que
+    a academia apareceu duas vezes na fatura de setembro do BB Elo.</p>
+    </div>`}
+  </div>
+
   <div class="info">Cenário da casa e simulações ficam na aba <b>Projeções Casa</b>.</div>`;
 }
 window.setCfg=async(k,v)=>{if(await atualizar('config',null,{[k]:v})){render();toast('Atualizado');}};
+window.addCiclo=async()=>{
+  const c=$('ci_c').value, m=$('ci_m').value, f=$('ci_f').value, v=$('ci_v').value;
+  if(!c||!m||!f||!v) return toast('Preencha cartão, competência e as duas datas');
+  if(await inserir('ciclos',{cartao:c,competencia:m,fecha:f,vence:v,inferido:false}))
+    {render();toast('Ciclo de '+c+' em '+mLabel(m)+' cadastrado');}
+};
 window.addCartao=async()=>{
   const n=$('ct_n').value.trim();
   if(!n) return toast('Dê um nome ao cartão');
@@ -1735,10 +1841,77 @@ window.concluirAgenda=async(id,v)=>{
 };
 
 /* =====================================================================
+   CÓPIAS DE SEGURANÇA
+   ===================================================================== */
+function vBackup(){
+  if(FALTANDO.includes('snapshots'))
+    return head('Cópias de segurança','Esta aba precisa da tabela de cópias, que ainda não existe no seu banco.')
+      +`<div class="warn">Rode <b>migracao-backup.sql</b> no Supabase e recarregue.</div>`;
+  const snaps=[...D.snapshots].sort((a,b)=>String(b.criado_em).localeCompare(String(a.criado_em)));
+  const ultima=snaps[0];
+  const qdo=x=>{ const d=new Date(x.criado_em);
+    return String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+
+           ' às '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); };
+  const dias = ultima ? Math.floor((Date.now()-new Date(ultima.criado_em))/86400000) : null;
+
+  return head('Cópias de segurança','O plano gratuito do Supabase não faz backup automático. Estas cópias são a sua rede de proteção.')
+  +(dias!==null && dias>=7
+    ? `<div class="warn" style="margin-bottom:16px"><b>A última cópia tem ${dias} dias.</b>
+       Vale tirar uma nova antes de mexer em qualquer coisa.</div>`
+    : '')
+  +`<div class="panel"><h2>Tirar uma cópia agora</h2><div class="pbody">
+    <div class="form">
+      <div class="fld" style="grid-column:span 2"><label>Para lembrar depois do que é</label>
+        <input id="bk_r" placeholder="Ex.: antes de acertar as faturas de outubro"></div>
+      <div class="fld"><label>&nbsp;</label><button class="btn" onclick="tirarCopia()">Tirar cópia</button></div>
+    </div>
+    <p class="note" style="margin-top:10px">Guarda tudo: renda, contas, cartões, parcelas, lançamentos,
+    terceiros, metas, agenda e configuração. Ficam salvas as 20 mais recentes.</p>
+  </div></div>
+
+  <div class="panel"><h2>Cópias guardadas <small>${snaps.length} de 20</small></h2>
+  <div class="tw"><table><thead><tr>
+    <th>Quando</th><th>O que é</th><th class="r">Linhas</th><th></th>
+  </tr></thead><tbody>
+  ${snaps.map((x,i)=>`<tr>
+    <td class="mono">${qdo(x)}</td>
+    <td>${esc(x.rotulo)}${x.automatico?' <span class="tag t-g">automática</span>':''}${
+      i===0?' <span class="tag t-ok">mais recente</span>':''}</td>
+    <td class="r">${x.linhas}</td>
+    <td class="r"><button class="btn alt sm" onclick="restaurarCopia('${x.id}','${esc(x.rotulo)}')">Restaurar</button></td>
+  </tr>`).join('')||'<tr><td colspan="4" class="note" style="padding:18px;text-align:center">Nenhuma cópia ainda.</td></tr>'}
+  </tbody></table></div></div>
+
+  <div class="panel"><h2>Como isso protege vocês</h2><div class="pbody"><div class="dl">
+    <div class="di"><b>Cópia dentro do banco</b><p>É o desfazer rápido. Restaurar devolve tudo ao
+      estado da foto, e antes disso o app guarda automaticamente como está agora — se a restauração
+      for o erro, dá para voltar dela também.</p></div>
+    <div class="di"><b>Arquivo no seu computador</b><p>O botão <b>Exportar backup</b>, ali em cima,
+      baixa um JSON com tudo. Serve para o caso do projeto no Supabase sumir. Guarde no Git ou
+      em qualquer pasta que você já faça backup.</p></div>
+    <div class="di"><b>Quando tirar uma cópia</b><p>Antes de rodar qualquer SQL, antes de mexer em
+      cadastro em lote, e uma vez por mês depois de fechar as faturas. Leva dois segundos.</p></div>
+  </div></div></div>`;
+}
+window.tirarCopia=async()=>{
+  const r=$('bk_r').value.trim();
+  const {error}=await sb.rpc('criar_snapshot',{p_grupo:GRUPO, p_rotulo:r||null, p_auto:false});
+  if(error) return toast('Erro ao criar cópia: '+error.message, 4200);
+  await carregarTudo(); render(); toast('Cópia guardada');
+};
+window.restaurarCopia=async(id,rotulo)=>{
+  if(!confirm('Restaurar a cópia "'+rotulo+'"?\n\nTudo que mudou depois dela será desfeito.\n'+
+              'O estado atual será guardado antes, então dá para voltar.')) return;
+  const {data,error}=await sb.rpc('restaurar_snapshot',{p_id:id});
+  if(error) return toast('Erro ao restaurar: '+error.message, 4200);
+  await carregarTudo(); render(); toast(data||'Restaurado', 4200);
+};
+
+/* =====================================================================
    SHELL E INICIALIZAÇÃO
    ===================================================================== */
 const VIEWS={painel:vPainel,compra:vCompra,lanc:vLanc,parc:vParc,assin:vAssin,
-             terc:vTerc,cal:vCal,proj:vProj,amort:vAmort,casa:vCasa,cad:vCad,metas:vMetas};
+             terc:vTerc,cal:vCal,proj:vProj,amort:vAmort,casa:vCasa,cad:vCad,metas:vMetas,backup:vBackup};
 
 function render(){
   const m=$('main'); if(!m) return montarShell();
