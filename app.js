@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v38';
+const APP_VER='v39';
 
 /* =====================================================================
    ESTADO
@@ -1246,6 +1246,7 @@ window.addAssin=async()=>{
     {render();toast(n+' adicionada');}
 };
 
+let TERC_ORIG='Pix', GRUPO_ABERTO=null;
 function vTerc(){
   const hj=hoje();
   const dias=t=>t.data_saida?Math.max(0,Math.round((new Date(hj)-new Date(t.data_saida))/86400000)):null;
@@ -1259,6 +1260,36 @@ function vTerc(){
   const pes=[...new Set(abertos.map(t=>t.pessoa))];
   const vencidos=abertos.filter(atrasado);
   const parados=abertos.filter(t=>semPrazo(t) && dias(t)!==null && dias(t)>=30);
+
+  /* Vários registros da mesma pessoa com a mesma descrição são parcelas de
+     um compromisso só. Mostrar dez linhas iguais esconde o que importa:
+     quanto falta ao todo e até quando. */
+  /* tira "Parcela 3/10", "3/10" e o travessão que sobra, no começo ou no fim */
+  const semParcela = d => String(d||'')
+    .replace(/parcela\s*\d+\s*\/\s*\d+/ig,'')
+    .replace(/\b\d+\s*\/\s*\d+\b/g,'')
+    .replace(/^[\s—–-]+|[\s—–-]+$/g,'')
+    .trim();
+  function agrupar(lista){
+    const g=new Map();
+    lista.forEach(t=>{
+      const ch=t.pessoa+'|'+semParcela(t.descricao);
+      if(!g.has(ch)) g.set(ch,[]);
+      g.get(ch).push(t);
+    });
+    return [...g.values()].map(its=>{
+      const comps=its.map(x=>x.competencia).filter(Boolean).sort();
+      return {itens:its, n:its.length,
+              pessoa:its[0].pessoa,
+              descricao:semParcela(its[0].descricao) || its[0].descricao,
+              total:its.reduce((s,x)=>s+ +x.valor,0),
+              origem:its[0].origem||its[0].cartao,
+              cartao:its[0].cartao,
+              ate:comps.length?comps[comps.length-1]:null,
+              recebido:its.every(x=>x.recebido),
+              parcial:its.some(x=>x.recebido)&&!its.every(x=>x.recebido)};
+    });
+  }
 
   const linha=t=>{
     const d=dias(t);
@@ -1277,8 +1308,8 @@ function vTerc(){
               String(t.previsao).split('-').reverse().slice(0,2).join('/')}</span>`
           : t.competencia
             ? `<span class="note">fatura de ${esc(t.competencia)}</span>`
-            : `<span class="tag ${d!==null&&d>=60?'t-no':d!==null&&d>=30?'t-w':'t-g'}">sem prazo${
-                d!==null?' · '+d+' dias':''}</span>`}</td>
+            : `<span class="tag ${d!==null&&d>=90?'t-no':d!==null&&d>=60?'t-no':d!==null&&d>=30?'t-w':'t-g'}">sem prazo${
+                d!==null?' · '+d+' dias':''}${d!==null&&d>=90?' · cobrar':''}</span>`}</td>
       <td class="r" style="font-weight:600;color:${t.recebido?'var(--pos)':'var(--amber)'}">${BRL(t.valor)}</td>
       <td class="r"><button class="btn dgr" onclick="delRow('terceiros','${t.id}')">excluir</button></td></tr>`;
   };
@@ -1318,41 +1349,90 @@ function vTerc(){
       <div class="fld"><label>Quem</label><input id="t_p" placeholder="Ex.: Tia Rose"></div>
       <div class="fld" style="grid-column:span 2"><label>O que é</label>
         <input id="t_d" placeholder="Ex.: Pix emprestado para o conserto"></div>
-      <div class="fld"><label>Saiu de onde</label><select id="t_o">
-        <option>Pix</option><option>Dinheiro</option><option>Transferência</option>
+      <div class="fld"><label>Saiu de onde</label><select id="t_o" onchange="setTercOrig(this.value)">
+        <optgroup label="Fora do cartão">
+          <option ${TERC_ORIG==='Pix'?'selected':''}>Pix</option>
+          <option ${TERC_ORIG==='Dinheiro'?'selected':''}>Dinheiro</option>
+          <option ${TERC_ORIG==='Transferência'?'selected':''}>Transferência</option>
+        </optgroup>
+        <optgroup label="Nos cartões de vocês">
+          ${D.cartoes.filter(c=>c.ativo).map(c=>
+            `<option ${TERC_ORIG===c.nome?'selected':''}>${esc(c.nome)}</option>`).join('')}
+        </optgroup>
       </select></div>
       <div class="fld"><label>Valor</label><input type="number" step="0.01" id="t_v"></div>
-      <div class="fld"><label>Quando saiu</label><input type="date" id="t_ds" value="${hoje()}"></div>
-      <div class="fld"><label>Previsão de volta</label><input type="date" id="t_pv"></div>
+      ${D.cartoes.some(c=>c.nome===TERC_ORIG)
+        ? `<div class="fld"><label>Em qual fatura</label>
+            <select id="t_cp">${mesesDisponiveis().map(m=>
+              `<option value="${mLabel(m)}">${mLabel(m)}</option>`).join('')}</select></div>`
+        : `<div class="fld"><label>Quando saiu</label><input type="date" id="t_ds" value="${hoje()}"></div>
+           <div class="fld"><label>Previsão de volta</label><input type="date" id="t_pv"></div>`}
       <div class="fld"><label>&nbsp;</label><button class="btn" onclick="addTerc()">Registrar</button></div>
     </div>
-    <p class="note" style="margin-top:10px">Deixe a previsão em branco quando não houver prazo combinado.
-    O app conta os dias e destaca quando passa de 30 e de 60.</p>
+    <p class="note" style="margin-top:10px">${D.cartoes.some(c=>c.nome===TERC_ORIG)
+      ? 'Compra de terceiro no cartão: escolha a fatura em que ela cai. O valor é abatido da parte de vocês.'
+      : 'Deixe a previsão em branco quando não houver prazo combinado. O app conta os dias e destaca quando passa de 30, 60 e 90.'}</p>
   </div></div>
 
   <div class="panel"><h2>Nos cartões de vocês <small>compras de terceiros que entram na fatura</small></h2>
   <div class="tw"><table><thead><tr><th class="c">Recebido</th><th>Quem</th><th>O que é</th>
     <th>Cartão</th><th>Competência</th><th class="r">Valor</th><th></th></tr></thead><tbody>
-  ${D.terceiros.filter(noCartao).map(linha).join('')
+  ${agrupar(D.terceiros.filter(noCartao)).map(g=>{
+    const pend=g.itens.filter(x=>!x.recebido);
+    return `<tr class="${g.recebido?'dim':''}">
+      <td class="c">${g.n===1
+        ? `<input type="checkbox" ${g.itens[0].recebido?'checked':''} style="width:auto;cursor:pointer"
+            onchange="receberTerc('${g.itens[0].id}',this.checked)">`
+        : `<span class="tag ${g.recebido?'t-ok':g.parcial?'t-w':'t-g'}">${
+            g.itens.filter(x=>x.recebido).length}/${g.n}</span>`}</td>
+      <td><b>${esc(g.pessoa)}</b></td>
+      <td>${esc(g.descricao)}</td>
+      <td><span class="tag t-i">${esc(g.origem||'—')}</span></td>
+      <td>${g.n>1
+        ? `<span class="tag t-i">${pend.length} de ${g.n} parcelas${
+            g.ate?' até '+g.ate:''}</span>`
+        : (g.itens[0].competencia?`<span class="note">fatura de ${esc(g.itens[0].competencia)}</span>`:'—')}</td>
+      <td class="r" style="font-weight:600;color:${g.recebido?'var(--pos)':'var(--amber)'}">${
+        BRL(pend.reduce((s,x)=>s+ +x.valor,0)||g.total)}${
+        g.n>1?`<span class="note" style="display:block;font-weight:400">${BRL(g.total)} no total</span>`:''}</td>
+      <td class="r">${g.n===1
+        ? `<button class="btn dgr" onclick="delRow('terceiros','${g.itens[0].id}')">excluir</button>`
+        : `<button class="btn alt sm" onclick="abrirGrupo('${esc(g.pessoa)}','${esc(g.descricao)}')">ver as ${g.n}</button>`}</td>
+    </tr>${GRUPO_ABERTO===g.pessoa+'|'+g.descricao
+      ? g.itens.sort((a,b)=>String(a.competencia||'').localeCompare(String(b.competencia||''))).map((x,i)=>`
+        <tr class="sub ${x.recebido?'dim':''}"><td class="c">
+          <input type="checkbox" ${x.recebido?'checked':''} style="width:auto;cursor:pointer"
+            onchange="receberTerc('${x.id}',this.checked)"></td>
+          <td colspan="3" class="note" style="padding-left:28px">parcela ${i+1} de ${g.n}${
+            x.competencia?' · fatura de '+esc(x.competencia):''}</td>
+          <td></td>
+          <td class="r">${BRL(x.valor)}</td>
+          <td class="r"><button class="btn dgr" onclick="delRow('terceiros','${x.id}')">excluir</button></td>
+        </tr>`).join('')
+      : ''}`;}).join('')
     ||'<tr><td colspan="7" class="note" style="padding:18px;text-align:center">Nenhuma compra de terceiro nos cartões.</td></tr>'}
   </tbody></table></div>
   <div class="pbody"><p class="note">Estes vêm das faturas e são abatidos da parte de vocês.
-  Para incluir um novo, use o formulário acima escolhendo o cartão como origem —
-  ou cadastre pelo lançamento da fatura.</p></div></div>`;
+  Enquanto não voltam, ocupam <b>limite dos cartões</b> — hoje ${BRL(porCartao.reduce((s,t)=>s+ +t.valor,0))}
+  do limite de vocês está sustentando compra de outra pessoa.</p></div></div>`;
 }
 window.addTerc=async()=>{
   const p=$('t_p').value.trim(), d=$('t_d').value.trim(), v=parseFloat($('t_v').value);
   if(!p||!d||!v) return toast('Preencha quem, o que é e o valor');
   const origem=$('t_o')?.value||'Pix';
-  const cartoes=new Set(D.cartoes.map(c=>c.nome));
+  TERC_ORIG=origem;
+  const ehCartao=D.cartoes.some(c=>c.nome===origem);
   const ok=await inserir('terceiros',{
-    pessoa:p, descricao:d, valor:v, recebido:false,
-    origem, cartao: cartoes.has(origem)?origem:null,
-    data_saida: $('t_ds')?.value || hoje(),
-    previsao: $('t_pv')?.value || null});
-  if(ok){ render(); toast(p+' deve '+BRL(v)); }
+    pessoa:p, descricao:d, valor:v, recebido:false, origem,
+    cartao: ehCartao?origem:null,
+    competencia: ehCartao ? ($('t_cp')?.value || mLabel(MREF)) : null,
+    data_saida: ehCartao ? null : ($('t_ds')?.value || hoje()),
+    previsao:   ehCartao ? null : ($('t_pv')?.value || null)});
+  if(ok){ render(); toast(p+' deve '+BRL(v)+(ehCartao?' na fatura':'')); }
 };
 /* marcar como recebido guarda também a data */
+window.setTercOrig=v=>{ TERC_ORIG=v; render(); };
+window.abrirGrupo=(p,d)=>{ const ch=p+'|'+d; GRUPO_ABERTO = GRUPO_ABERTO===ch?null:ch; render(); };
 window.receberTerc=async(id,v)=>{
   if(await atualizar('terceiros',id,{recebido:v, recebido_em: v?hoje():null})){
     render(); toast(v?'Marcado como recebido':'Voltou para a lista');
