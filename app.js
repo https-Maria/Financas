@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v34';
+const APP_VER='v38';
 
 /* =====================================================================
    ESTADO
@@ -215,7 +215,10 @@ function totFaturas(k, extra){
 function fluxo(n=24, extra, ini){
   let acc=0;
   return horizon(n,ini).map(k=>{
-    const renda=totRenda(k), fix=totFixas(), cart=totFaturas(k,extra);
+    const av=avulsosDoMes(k);
+    const avIn =av.filter(l=>l.tipo==='Entrada').reduce((s,l)=>s+ +l.valor,0);
+    const avOut=av.filter(l=>l.tipo==='Saída').reduce((s,l)=>s+ +l.valor,0);
+    const renda=totRenda(k)+avIn, fix=totFixas()+avOut, cart=totFaturas(k,extra);
     const real=D.cartoes.some(c=>faturaLancada(c.nome,k));
     const out=fix+cart, sal=renda-out; acc+=sal;
     return {k,renda,fix,cart,real,par:parcelasMes(k,extra),ass:totAssin(),
@@ -228,7 +231,10 @@ const totCasa = () => D.casa_itens.filter(i=>i.ativo).reduce((s,i)=>s+ +i.valor,
 function fluxoCasa(n=24, extra, ini){
   let acc=0;
   return horizon(n,ini).map(k=>{
-    const renda=totRenda(k), fix=totFixas(), cart=totFaturas(k,extra), casa=totCasa();
+    const av=avulsosDoMes(k);
+    const avIn =av.filter(l=>l.tipo==='Entrada').reduce((s,l)=>s+ +l.valor,0);
+    const avOut=av.filter(l=>l.tipo==='Saída').reduce((s,l)=>s+ +l.valor,0);
+    const renda=totRenda(k)+avIn, fix=totFixas()+avOut, cart=totFaturas(k,extra), casa=totCasa();
     const out=fix+cart+casa, sal=renda-out; acc+=sal;
     return {k,renda,fix,cart,casa,par:parcelasMes(k,extra),ass:totAssin(),
             out,sal,acc,pct:renda?out/renda:0};
@@ -294,6 +300,10 @@ function dataDoItem(it, k, dia){
 }
 /* Qualquer lançamento ligado ao item — confirmado ou ainda previsto. */
 function lancRelacionado(it, k){
+  if(it.tipo==='avulso'){
+    const l=D.lancamentos.find(x=>x.id===it.lancId);
+    return l ? {valor:+l.valor, itens:[l]} : null;
+  }
   if(it.tipo==='cartao')  return faturaLancada(it.cartao, k);
   if(it.tipo==='reserva') return faturaLancada(it.cartao, it.competencia);
   const ls = D.lancamentos.filter(x=>mesDeCaixa(x)===k && x.descricao===it.desc
@@ -409,12 +419,35 @@ const anteciparN=(f,N)=>{
 
 /* ---- Fluxo por dia de pagamento ---- */
 /* ---- Fluxo por dia de pagamento ---- */
+/* Lançamentos que não correspondem a nenhum cadastro — compra combinada
+   para pagar dia 20, fiado na mercearia, um extra que caiu. Eles existem só
+   como lançamento, e por isso não apareciam no fluxo por data nem na conta
+   do mês. Aqui eles entram. */
+function avulsosDoMes(k){
+  const nomesFixas = new Set(D.fixas.filter(f=>f.ativo).map(f=>f.descricao));
+  const nomesRendas = new Set(D.rendas.filter(r=>r.ativo).map(r=>r.descricao));
+  const cartoesAtivos = new Set(D.cartoes.filter(c=>c.ativo).map(c=>c.nome));
+  return D.lancamentos.filter(l=>{
+    if(mesDeCaixa(l)!==k) return false;
+    if(l.beneficio || l.protegido) return false;          // VA e Reports têm lugar próprio
+    if(l.categoria==='Cartão' && cartoesAtivos.has(l.cartao)) return false;  // é a fatura
+    if(l.tipo==='Saída'   && nomesFixas.has(l.descricao))  return false;     // é conta fixa
+    if(l.tipo==='Entrada' && nomesRendas.has(l.descricao)) return false;     // é renda
+    return true;
+  });
+}
+
 function blocosDoMes(k){
   const cartoes = D.cartoes.length?D.cartoes:[];
   const dias = new Set();
   D.rendas.filter(r=>r.ativo&&!r.protegida).forEach(r=>dias.add(+r.dia||1));
   D.fixas.filter(f=>f.ativo).forEach(f=>dias.add(+f.dia||1));
   cartoes.forEach(c=>{ if(c.ativo && +c.dia_venc>1) dias.add(+c.dia_venc); });
+  const avulsos = avulsosDoMes(k);
+  avulsos.forEach(l=>{
+    const d=+String(l.data).slice(8,10);
+    if(d>1 && d<ultimoDiaDoMes(k)) dias.add(d);
+  });
   dias.add(31);
   const ordenados=[...dias].filter(d=>d>1).sort((a,b)=>a-b);
 
@@ -443,6 +476,16 @@ function blocosDoMes(k){
                              quem:'Casal',competencia:prox});
       });
     }
+    /* avulsos do dia; no último bloco entram também os do fim do mês */
+    avulsos.forEach(l=>{
+      const d=+String(l.data).slice(8,10);
+      const cai = ultimo ? d>=dia || d>=ultimoDiaDoMes(k) : d===dia;
+      if(!cai) return;
+      const it={desc:l.descricao, valor:+l.valor, tipo:'avulso', lancId:l.id,
+                categoria:l.categoria||'Outros', quem:l.quem||'Casal',
+                cartao:l.cartao||null, status:l.status, dataReal:l.data};
+      (l.tipo==='Entrada'?entradas:saidas).push(it);
+    });
     const tIn=entradas.reduce((s,x)=>s+x.valor,0);
     const tOut=saidas.reduce((s,x)=>s+x.valor,0);
     return {dia,label:ultimo?'Último dia útil':'Dia '+String(dia).padStart(2,'0'),
@@ -777,7 +820,8 @@ window.marcarItem=async(dia,lado,ix)=>{
     /* desmarcar: o que o painel criou some; o que veio de outra origem só
        volta a ser previsão, para não perder o valor real da fatura */
     for(const l of rel.itens.filter(confirmado)){
-      if(veioDoPainel(l)) await remover('lancamentos', l.id);
+      /* o painel só apaga o que ele mesmo criou; o resto vira previsão */
+      if(veioDoPainel(l) && it.tipo!=='avulso') await remover('lancamentos', l.id);
       else await atualizar('lancamentos', l.id, {status:'Projetado'});
     }
     render(); toast('Desmarcado — voltou a ser previsão');
@@ -816,7 +860,7 @@ window.confirmarCompra=async()=>{
 /* =====================================================================
    TELAS
    ===================================================================== */
-const PAGES=[['painel','Painel'],['compra','Nova compra'],['lanc','Lançamentos'],
+const PAGES=[['painel','Painel'],['dash','Dashboard'],['compra','Nova compra'],['lanc','Lançamentos'],
   ['parc','Parcelamentos'],['assin','Assinaturas'],['terc','Terceiros'],
   ['cal','Calendário'],['proj','Projeção'],['amort','Amortização'],['casa','Projeções Casa'],
   ['cad','Cadastros'],['metas','Metas'],['backup','Cópias']];
@@ -973,6 +1017,8 @@ function vPainel(){
             <div class="dline chk ${L?'feito':''} ${!venceu&&!L?'futuro':''}">
               <span><input type="checkbox" ${L?'checked':''} onchange="marcarItem(${b.dia},'in',${ix})">
                 ${esc(e.desc)}${e.quem?` <span class="tag t-g">${esc(e.quem)}</span>`:''}
+                ${e.tipo==='avulso'?`<span class="tag t-i">${
+                  String(e.dataReal).slice(8,10)+'/'+String(e.dataReal).slice(5,7)}</span>`:''}
                 ${L&&Math.abs(L.valor-e.valor)>0.01?`<span class="tag t-w">lançado ${BRL(L.valor)}</span>`:''}</span>
               <b style="color:var(--pos)">${BRL(e.valor)}</b></div>`;}).join('')}</div>`:''}
         ${b.saidas.length?`<div class="dcol"><h5>Sai — marque quando pagar</h5>
@@ -984,6 +1030,8 @@ function vPainel(){
                 ${esc(x.desc)}
                 ${x.tipo==='reserva'?'<span class="tag t-w">reserva</span>':''}
                 ${x.tipo==='cartao'?'<span class="tag t-i">fatura</span>':''}
+                ${x.tipo==='avulso'?`<span class="tag t-g">${
+                  String(x.dataReal).slice(8,10)+'/'+String(x.dataReal).slice(5,7)}</span>`:''}
                 ${L&&Math.abs(L.valor-x.valor)>0.01?`<span class="tag t-w">lançado ${BRL(L.valor)}</span>`:''}</span>
               <b style="color:var(--neg)">${BRL(x.valor)}</b></div>`;}).join('')}</div>`:''}
       </div>
@@ -1023,18 +1071,29 @@ function vPainel(){
                 ${jan.ini.split('-').reverse().slice(0,2).join('/')} a
                 ${jan.fim.split('-').reverse().slice(0,2).join('/')}${jan.estimada?' (estimado)':''}.
                 Assinatura cujo dia de cobrança cai duas vezes nesse intervalo entra em dobro.</p>`:''}
-              ${real
-                ? `${real.itens.map(l=>`<div class="dline"><span>${esc(l.descricao)}
-                     <span class="note">${String(l.data).split('-').reverse().join('/')}</span></span>
-                     <span>${BRL(l.valor)}</span></div>`).join('')}
-                   ${calc?`<div class="dline"><span class="note">Estimativa por parcelas e assinaturas era</span>
-                     <span class="note">${BRL(calc)}</span></div>`:''}
-                   <p class="note" style="margin-top:8px">Valor vindo do que você lançou.
-                     Para corrigir, edite o lançamento em <b>Lançamentos</b>.</p>`
-                : `${itens.map(i=>`<div class="dline"><span>${esc(i.d)}</span><span>${BRL(i.v)}</span></div>`).join('')
-                     ||'<p class="note">Sem parcelas nem assinaturas neste cartão.</p>'}
-                   <p class="note" style="margin-top:8px">Estimativa. Quando lançar o pagamento desta fatura,
-                     o valor real assume o lugar.</p>`}
+              ${/* o que o app conhece da composição — aparece sempre */''}
+              <div class="kgroup sub">O que o app conhece desta fatura</div>
+              ${itens.length
+                ? itens.map(i=>`<div class="dline"><span>${esc(i.d)}</span><span>${BRL(i.v)}</span></div>`).join('')
+                  +`<div class="dline" style="border-top:1px solid var(--rule-soft)">
+                     <span><b>Soma do que é conhecido</b></span><b>${BRL(calc)}</b></div>`
+                : '<p class="note">Nenhuma parcela nem assinatura cadastrada neste cartão.</p>'}
+
+              ${real ? `
+                <div class="kgroup sub" style="margin-top:14px">O valor que você lançou</div>
+                ${real.itens.map(l=>`<div class="dline"><span>${esc(l.descricao)}
+                   <span class="note">${String(l.data).split('-').reverse().join('/')}${
+                     l.status==='Projetado'?' · previsto':''}</span></span>
+                   <span><b>${BRL(l.valor)}</b></span></div>`).join('')}
+                ${Math.abs(real.valor-calc)>0.01?`<div class="dline">
+                  <span class="note">Diferença para o conhecido — compras do dia a dia,
+                    encargos, coisas não cadastradas</span>
+                  <span class="note" style="color:${real.valor>calc?'var(--neg)':'var(--pos)'}">${
+                    (real.valor>calc?'+':'')+BRL(real.valor-calc)}</span></div>`:''}
+                <p class="note" style="margin-top:8px">Este é o valor que vale nas contas.
+                  Para corrigir, edite o lançamento em <b>Lançamentos</b>.</p>`
+              : `<p class="note" style="margin-top:8px">A fatura ainda não foi lançada, então o app usa
+                  esta soma como estimativa. Quando você lançar o valor real, ele assume o lugar.</p>`}
               ${terc?`<div class="dline"><span class="note">Terceiros a receber neste cartão</span>
                 <span class="note" style="color:var(--amber)">${BRL(terc)}</span></div>`:''}
             </div>
@@ -1112,7 +1171,8 @@ function vLanc(){
   ${ls.map(l=>`<tr class="${l.protegido||l.beneficio?'dim':''}">
     <td class="mono">${String(l.data).split('-').reverse().join('/')}</td>
     <td>${esc(l.descricao)}${l.protegido?' <span class="tag t-g">protegido</span>':''}${l.beneficio?' <span class="tag t-g">benefício</span>':''}${
-      mesDeCaixa(l)!==ym(l.data)?` <span class="tag t-w">pago em ${mLabel(mesDeCaixa(l))}</span>`:''}</td>
+      mesDeCaixa(l)!==ym(l.data)?` <span class="tag t-w">sai do caixa em ${mLabel(mesDeCaixa(l))}</span>`:''}
+    ${l.status==='Projetado'?' <span class="tag t-g">previsto</span>':''}</td>
     <td>${esc(l.categoria)}</td><td>${esc(l.quem)}</td>
     <td class="r" style="font-weight:600;color:${l.tipo==='Entrada'?'var(--pos)':'var(--neg)'}">
       ${l.tipo==='Entrada'?'+':'−'} ${BRL(l.valor)}</td>
@@ -1187,42 +1247,118 @@ window.addAssin=async()=>{
 };
 
 function vTerc(){
-  const pes=[...new Set(D.terceiros.map(t=>t.pessoa))];
-  return head('Terceiros','Compras de outras pessoas nos cartões de vocês — dinheiro a recuperar.')
-  +`<div class="kpis">${kpi('A receber',BRL(aReceber()),'','amb')}
+  const hj=hoje();
+  const dias=t=>t.data_saida?Math.max(0,Math.round((new Date(hj)-new Date(t.data_saida))/86400000)):null;
+  const atrasado=t=>!t.recebido && t.previsao && t.previsao<hj;
+  const semPrazo=t=>!t.recebido && !t.previsao;
+  const noCartao=t=>!!t.cartao;
+
+  const abertos=D.terceiros.filter(t=>!t.recebido);
+  const porCartao=abertos.filter(noCartao);
+  const fora=abertos.filter(t=>!noCartao(t));
+  const pes=[...new Set(abertos.map(t=>t.pessoa))];
+  const vencidos=abertos.filter(atrasado);
+  const parados=abertos.filter(t=>semPrazo(t) && dias(t)!==null && dias(t)>=30);
+
+  const linha=t=>{
+    const d=dias(t);
+    return `<tr class="${t.recebido?'dim':''}">
+      <td class="c"><input type="checkbox" ${t.recebido?'checked':''} style="width:auto;cursor:pointer"
+        onchange="receberTerc('${t.id}',this.checked)"></td>
+      <td><b>${esc(t.pessoa)}</b></td>
+      <td>${esc(t.descricao)}</td>
+      <td>${t.origem
+        ? `<span class="tag ${noCartao(t)?'t-i':'t-w'}">${esc(t.origem)}</span>`
+        : (t.cartao?`<span class="tag t-i">${esc(t.cartao)}</span>`:'<span class="note">—</span>')}</td>
+      <td>${t.recebido
+        ? `<span class="tag t-ok">recebido${t.recebido_em?' em '+String(t.recebido_em).split('-').reverse().slice(0,2).join('/'):''}</span>`
+        : t.previsao
+          ? `<span class="tag ${atrasado(t)?'t-no':'t-g'}">${atrasado(t)?'atrasado desde ':'volta em '}${
+              String(t.previsao).split('-').reverse().slice(0,2).join('/')}</span>`
+          : t.competencia
+            ? `<span class="note">fatura de ${esc(t.competencia)}</span>`
+            : `<span class="tag ${d!==null&&d>=60?'t-no':d!==null&&d>=30?'t-w':'t-g'}">sem prazo${
+                d!==null?' · '+d+' dias':''}</span>`}</td>
+      <td class="r" style="font-weight:600;color:${t.recebido?'var(--pos)':'var(--amber)'}">${BRL(t.valor)}</td>
+      <td class="r"><button class="btn dgr" onclick="delRow('terceiros','${t.id}')">excluir</button></td></tr>`;
+  };
+
+  return head('Terceiros','Dinheiro de vocês que está com outra pessoa — no cartão, por Pix ou na mão.')
+  +`<div class="kpis">
+    ${kpi('A receber',BRL(aReceber()),abertos.length+' em aberto','amb')}
     ${kpi('Já recebido',BRL(recebido()),'','pos')}
-    ${kpi('Exposição total',BRL(aReceber()+recebido()))}</div>
+    ${kpi('Fora do cartão',BRL(fora.reduce((s,t)=>s+ +t.valor,0)),'Pix, dinheiro, transferência')}
+    ${kpi('Sem prazo há 30 dias ou mais',BRL(parados.reduce((s,t)=>s+ +t.valor,0)),
+      parados.length?parados.length+' registro'+(parados.length===1?'':'s'):'nenhum',
+      parados.length?'amb':'')}
+  </div>
+
+  ${vencidos.length?`<div class="warn" style="margin-bottom:16px">
+    <b>${vencidos.length} ${vencidos.length===1?'cobrança passou':'cobranças passaram'} do prazo combinado.</b>
+    ${vencidos.map(t=>esc(t.pessoa)+' ('+BRL(t.valor)+')').join(', ')}.</div>`:''}
+
   ${pes.length?`<div class="panel"><h2>Por pessoa</h2><div class="pbody"><div class="bars">
-    ${pes.map(p=>{const v=D.terceiros.filter(t=>t.pessoa===p&&!t.recebido).reduce((s,t)=>s+ +t.valor,0);
-      const mx=Math.max(...pes.map(q=>D.terceiros.filter(t=>t.pessoa===q&&!t.recebido).reduce((s,t)=>s+ +t.valor,0)),1);
+    ${pes.map(p=>{
+      const v=abertos.filter(t=>t.pessoa===p).reduce((s,t)=>s+ +t.valor,0);
+      const mx=Math.max(...pes.map(q=>abertos.filter(t=>t.pessoa===q).reduce((s,t)=>s+ +t.valor,0)),1);
       return `<div class="bar"><span>${esc(p)}</span><span class="track">
         <span class="fill" style="width:${v/mx*100}%"></span></span>
         <span class="r" style="font-weight:600">${BRL(v)}</span></div>`;}).join('')}
   </div></div></div>`:''}
-  <div class="panel"><h2>Detalhe <small>marque quando receber</small></h2>
-  <div class="tw"><table><thead><tr><th class="c">Recebido</th><th>Pessoa</th><th>Descrição</th>
-    <th class="r">Valor</th><th></th></tr></thead><tbody>
-  ${D.terceiros.map(t=>`<tr class="${t.recebido?'dim':''}">
-    <td class="c"><input type="checkbox" ${t.recebido?'checked':''} style="width:auto;cursor:pointer"
-      onchange="setRow('terceiros','${t.id}','recebido',this.checked)"></td>
-    <td><b>${esc(t.pessoa)}</b></td><td>${esc(t.descricao)}</td>
-    <td class="r" style="font-weight:600;color:${t.recebido?'var(--pos)':'var(--amber)'}">${BRL(t.valor)}</td>
-    <td class="r"><button class="btn dgr" onclick="delRow('terceiros','${t.id}')">excluir</button></td></tr>`).join('')
-    ||'<tr><td colspan="5" class="note" style="padding:20px;text-align:center">Nada pendente.</td></tr>'}
+
+  <div class="panel"><h2>Fora do cartão <small>Pix, dinheiro, transferência — com ou sem prazo</small></h2>
+  <div class="tw"><table><thead><tr><th class="c">Recebido</th><th>Quem</th><th>O que é</th>
+    <th>Origem</th><th>Quando volta</th><th class="r">Valor</th><th></th></tr></thead><tbody>
+  ${D.terceiros.filter(t=>!noCartao(t)).map(linha).join('')
+    ||'<tr><td colspan="7" class="note" style="padding:18px;text-align:center">Nada emprestado fora do cartão.</td></tr>'}
   </tbody></table></div>
-  <div class="pbody"><div class="form">
-    <div class="fld"><label>Pessoa</label><input id="t_p" placeholder="Ex.: Mãe"></div>
-    <div class="fld" style="grid-column:span 2"><label>Descrição</label><input id="t_d"></div>
-    <div class="fld"><label>Valor</label><input type="number" step="0.01" id="t_v"></div>
-    <div class="fld"><label>&nbsp;</label><button class="btn" onclick="addTerc()">Adicionar</button></div>
-  </div></div></div>`;
+  <div class="pbody">
+    <div class="kgroup sub">Registrar o que você emprestou</div>
+    <div class="form">
+      <div class="fld"><label>Quem</label><input id="t_p" placeholder="Ex.: Tia Rose"></div>
+      <div class="fld" style="grid-column:span 2"><label>O que é</label>
+        <input id="t_d" placeholder="Ex.: Pix emprestado para o conserto"></div>
+      <div class="fld"><label>Saiu de onde</label><select id="t_o">
+        <option>Pix</option><option>Dinheiro</option><option>Transferência</option>
+      </select></div>
+      <div class="fld"><label>Valor</label><input type="number" step="0.01" id="t_v"></div>
+      <div class="fld"><label>Quando saiu</label><input type="date" id="t_ds" value="${hoje()}"></div>
+      <div class="fld"><label>Previsão de volta</label><input type="date" id="t_pv"></div>
+      <div class="fld"><label>&nbsp;</label><button class="btn" onclick="addTerc()">Registrar</button></div>
+    </div>
+    <p class="note" style="margin-top:10px">Deixe a previsão em branco quando não houver prazo combinado.
+    O app conta os dias e destaca quando passa de 30 e de 60.</p>
+  </div></div>
+
+  <div class="panel"><h2>Nos cartões de vocês <small>compras de terceiros que entram na fatura</small></h2>
+  <div class="tw"><table><thead><tr><th class="c">Recebido</th><th>Quem</th><th>O que é</th>
+    <th>Cartão</th><th>Competência</th><th class="r">Valor</th><th></th></tr></thead><tbody>
+  ${D.terceiros.filter(noCartao).map(linha).join('')
+    ||'<tr><td colspan="7" class="note" style="padding:18px;text-align:center">Nenhuma compra de terceiro nos cartões.</td></tr>'}
+  </tbody></table></div>
+  <div class="pbody"><p class="note">Estes vêm das faturas e são abatidos da parte de vocês.
+  Para incluir um novo, use o formulário acima escolhendo o cartão como origem —
+  ou cadastre pelo lançamento da fatura.</p></div></div>`;
 }
 window.addTerc=async()=>{
-  const p=$('t_p').value.trim(),d=$('t_d').value.trim(),v=parseFloat($('t_v').value);
-  if(!p||!v) return toast('Preencha pessoa e valor');
-  if(await inserir('terceiros',{pessoa:p,descricao:d||'—',valor:v,recebido:false}))
-    {render();toast('Registrado');}
+  const p=$('t_p').value.trim(), d=$('t_d').value.trim(), v=parseFloat($('t_v').value);
+  if(!p||!d||!v) return toast('Preencha quem, o que é e o valor');
+  const origem=$('t_o')?.value||'Pix';
+  const cartoes=new Set(D.cartoes.map(c=>c.nome));
+  const ok=await inserir('terceiros',{
+    pessoa:p, descricao:d, valor:v, recebido:false,
+    origem, cartao: cartoes.has(origem)?origem:null,
+    data_saida: $('t_ds')?.value || hoje(),
+    previsao: $('t_pv')?.value || null});
+  if(ok){ render(); toast(p+' deve '+BRL(v)); }
 };
+/* marcar como recebido guarda também a data */
+window.receberTerc=async(id,v)=>{
+  if(await atualizar('terceiros',id,{recebido:v, recebido_em: v?hoje():null})){
+    render(); toast(v?'Marcado como recebido':'Voltou para a lista');
+  }
+};
+
 
 function vProj(){
   const f=fluxo(24),neg=f.filter(x=>x.sal<0);
@@ -1989,9 +2125,368 @@ window.restaurarCopia=async(id,rotulo)=>{
 };
 
 /* =====================================================================
+   DASHBOARD — tudo calculado a partir do banco, nada fixo no código
+   ===================================================================== */
+
+/* Patrimônio separado: bem financiado não é a mesma coisa que dívida de
+   cartão. O carro vale dinheiro e entra do lado dos ativos. */
+function patrimonio(){
+  const S=saldoConta();
+  const conta = S.atual==null ? 0 : S.atual;
+  const guardado = (+cfg().reserva_atual||0) + D.metas.reduce((s,m)=>s+ +m.guardado,0);
+  const receber = aReceber();
+  const bens = D.financiamentos.filter(f=>f.ativo)
+    .reduce((s,f)=>s+(+f.valor_bem||0),0);
+  const divFin = D.financiamentos.filter(f=>f.ativo)
+    .reduce((s,f)=>s+resumoFin(f).saldo,0);
+  const divCartao = saldoParc();
+  return {conta, guardado, receber, bens,
+          tem: conta+guardado+receber+bens,
+          divFin, divCartao, deve: divFin+divCartao,
+          liquido: conta+guardado+receber+bens-divFin-divCartao,
+          equity: bens-divFin,
+          pctQuitado: bens>0 ? (bens-divFin)/bens : 0,
+          saldoConta:S};
+}
+
+/* Os indicadores que dizem se as contas estão saudáveis. */
+function indicadores(k){
+  /* Uma fonte da verdade: a sobra vem do mesmo fluxo que o painel usa,
+     incluindo os lançamentos avulsos. Recalcular aqui já fez o Dashboard
+     divergir do Painel em R$ 780 uma vez. */
+  const F=fluxo(1,null,k)[0];
+  const renda=F.renda;
+  const fix=F.fix;
+  const fat=F.cart;
+  const parcelasCartao=parcelasMes(k);
+  const financ=D.financiamentos.filter(f=>f.ativo)
+    .reduce((s,f)=>s+(+f.valor_parcela||0),0);
+  const servico=parcelasCartao+financ;
+  const assin=totAssin(k);
+  const sobra=F.sal;
+  const P=patrimonio();
+  const custoMensal=fix+assin;
+  const guardadoMes=D.lancamentos
+    .filter(l=>mesDeCaixa(l)===k && l.categoria==='Reserva' && l.tipo==='Saída')
+    .reduce((s,l)=>s+ +l.valor,0);
+  return {
+    renda, fix, fat, assin, sobra, servico, financ, parcelasCartao,
+    pctSobra: renda?sobra/renda:0,
+    pctFix: renda?fix/renda:0,
+    pctServico: renda?servico/renda:0,
+    pctAssin: renda?assin/renda:0,
+    guardadoMes, pctPoupanca: renda?guardadoMes/renda:0,
+    mesesReserva: custoMensal>0 ? P.guardado/custoMensal : 0,
+    custoMensal, patr:P
+  };
+}
+
+/* Série da dívida: quanto falta em cada mês, separando cartão de financiamento. */
+function serieDivida(n=12, ini){
+  const base=ini||ym(hoje());
+  return horizon(n,base).map(k=>{
+    const cart=D.parcelamentos.reduce((s,p)=>{
+      const i=p.primeira_fatura?ym(p.primeira_fatura):ym(hoje());
+      const d=mesesEntre(i,k);
+      const restam=Math.max(0,p.restantes-Math.max(0,d));
+      return s + restam*(+p.valor_parcela);
+    },0);
+    const fin=D.financiamentos.filter(f=>f.ativo).reduce((s,f)=>{
+      const L=tabelaAmortizacao(f);
+      const pagas=+f.parcelas_pagas + Math.max(0,mesesEntre(ym(hoje()),k));
+      const i=Math.min(pagas, L.length-1);
+      return s + (pagas>=L.length ? 0 : L[i].ini);
+    },0);
+    return {k, cart, fin, total:cart+fin};
+  });
+}
+
+/* Para onde foi o dinheiro, por categoria, no mês. */
+function gastosPorCategoria(k){
+  const m={};
+  const soma=(cat,v)=>{ m[cat]=(m[cat]||0)+v; };
+  D.fixas.filter(f=>f.ativo).forEach(f=>soma(f.categoria||'Outros',+f.valor));
+  D.cartoes.filter(c=>c.ativo).forEach(c=>{
+    const v=venceNoDia1(c.nome)?faturaCartao(c.nome,addM(k,1)):faturaCartao(c.nome,k);
+    if(v>0) soma('Cartão',v);
+  });
+  avulsosDoMes(k).filter(l=>l.tipo==='Saída').forEach(l=>soma(l.categoria||'Outros',+l.valor));
+  return Object.entries(m).map(([cat,v])=>({cat,v})).sort((a,b)=>b.v-a.v);
+}
+
+/* Previsto contra realizado nos meses já fechados. */
+function previstoRealizado(n=3){
+  const atual=ym(hoje());
+  const out=[];
+  for(let i=n;i>=1;i--){
+    const k=addM(atual,-i);
+    const f=fluxo(1,null,k)[0];
+    const r=realizado(k);
+    out.push({k, prevRenda:f.renda, prevSaida:f.out,
+              realRenda:r.ent, realSaida:r.sai,
+              difSaida:r.sai-f.out, temDados:r.n>0});
+  }
+  return out;
+}
+
+/* Observações automáticas: mudam conforme os números. */
+function insights(k){
+  const I=indicadores(k), P=I.patr, out=[];
+  if(I.mesesReserva<3){
+    const alvo=I.custoMensal*3, falta=Math.max(0,alvo-P.guardado);
+    const ritmo=Math.max(200,Math.round(falta/12/50)*50);
+    out.push({t:falta>alvo*0.8?'ruim':'aten', h:'A reserva ainda não cobre 3 meses',
+      p:`Vocês têm <b>${BRL(P.guardado)}</b> guardados e o custo fixo mensal é
+         <b>${BRL(I.custoMensal)}</b>. Para chegar em 3 meses faltam <b>${BRL(falta)}</b> —
+         cerca de <b>${BRL(ritmo)}/mês</b> durante um ano.`});
+  } else {
+    out.push({t:'bom', h:'A reserva cobre '+I.mesesReserva.toFixed(1)+' meses',
+      p:`Com <b>${BRL(P.guardado)}</b> guardados, vocês aguentam
+         ${I.mesesReserva.toFixed(1)} meses de custo fixo sem renda nenhuma.`});
+  }
+  if(I.pctServico>0.30) out.push({t:'ruim', h:'As dívidas passam de 30% da renda',
+    p:`Estão em <b>${PCT(I.pctServico)}</b>, ou ${BRL(I.servico)} por mês.
+       Acima de 30% costuma apertar.`});
+  else out.push({t:'bom', h:'As dívidas cabem na renda',
+    p:`Comprometem <b>${PCT(I.pctServico)}</b>, abaixo dos 30% considerados saudáveis.
+       São ${BRL(I.servico)} por mês.`});
+  if(P.bens>0) out.push({t:'info', h:'Nem toda dívida é igual',
+    p:`Dos ${BRL(P.deve)} que vocês devem, <b>${BRL(P.divFin)}</b> têm um bem atrás que
+       vale ${BRL(P.bens)} — ${PCT(P.pctQuitado)} já é de vocês.
+       A dívida que pesa de verdade são os <b>${BRL(P.divCartao)}</b> de cartão.`});
+  if(P.receber>0){
+    const cobre=P.receber>=P.divCartao;
+    out.push({t:cobre?'info':'aten', h:BRL(P.receber)+' estão na mão de terceiros',
+      p:`Dinheiro de vocês que saiu e não voltou.${cobre
+        ? ` Se voltasse hoje, pagaria <b>toda</b> a dívida de cartão e ainda sobrariam
+            ${BRL(P.receber-P.divCartao)}.`
+        : ` Daria para abater ${PCT(P.receber/P.divCartao)} da dívida de cartão.`}`});
+  }
+  const blocos=blocosDoMes(k);
+  const fraco=blocos.filter(b=>b.saldo<0).sort((a,b)=>a.saldo-b.saldo)[0];
+  if(fraco) out.push({t:'aten', h:'O '+fraco.label.toLowerCase()+' é o ponto frágil do mês',
+    p:`Saem <b>${BRL(fraco.tOut)}</b> e ${fraco.tIn>0?`entram só ${BRL(fraco.tIn)}`:'não entra nada'}.
+       Esse bloco vive do que sobrou do anterior.`});
+  const neg=fluxo(12,null,k).filter(x=>x.sal<0);
+  if(neg.length) out.push({t:'ruim', h:'Mês projetado no vermelho',
+    p:`${neg.map(x=>mLabel(x.k)).join(', ')} ${neg.length===1?'fecha':'fecham'} negativo
+       pela projeção atual.`});
+  return out;
+}
+
+let DASH_PER='mes', DASH_CART='', DASH_QUEM='', DASH_CAT='';
+
+function vDash(){
+  const k=MREF;
+  const I=indicadores(k), P=I.patr;
+  const nMeses = DASH_PER==='mes'?1:DASH_PER==='3'?3:DASH_PER==='6'?6:12;
+  const serie = fluxo(12,null,k);
+  const dividas = serieDivida(12,k);
+  const cats = gastosPorCategoria(k);
+  const pr = previstoRealizado(3);
+  const obs = insights(k);
+  const maxCat = Math.max(...cats.map(c=>c.v),1);
+
+  /* gráfico de linha da sobra */
+  const vs=serie.map(x=>x.sal), mn=Math.min(0,...vs), mx=Math.max(...vs,1);
+  const px=(i)=>20+i*(520/Math.max(1,serie.length-1));
+  const py=(v)=>136-((v-mn)/((mx-mn)||1))*106;
+  const linha=serie.map((x,i)=>px(i)+','+py(x.sal)).join(' ');
+
+  /* gráfico de barras da dívida */
+  const mxD=Math.max(...dividas.map(d=>d.total),1);
+  const lw=Math.min(34,(520/dividas.length)-6);
+
+  return head('Dashboard','Os números que dizem se vocês estão indo bem, e o que fazer com eles.')
+  +`<div class="filtros">
+    <div class="fld"><label>Mês em foco</label>
+      <select onchange="setMes(this.value)">
+        ${mesesDisponiveis().map(m=>`<option value="${m}" ${m===k?'selected':''}>${mLabel(m)}</option>`).join('')}
+      </select></div>
+    <div class="fld"><label>Horizonte dos gráficos</label>
+      <select onchange="setDashPer(this.value)">
+        ${[['mes','Mês a mês, 12 meses'],['3','Próximos 3 meses'],['6','Próximos 6 meses']]
+          .map(([v,l])=>`<option value="${v}" ${DASH_PER===v?'selected':''}>${l}</option>`).join('')}
+      </select></div>
+    <div class="fld"><label>Cartão</label>
+      <select onchange="setDashCart(this.value)">
+        <option value="">Todos</option>
+        ${D.cartoes.filter(c=>c.ativo).map(c=>
+          `<option ${DASH_CART===c.nome?'selected':''}>${esc(c.nome)}</option>`).join('')}
+      </select></div>
+    <div class="fld"><label>Quem</label>
+      <select onchange="setDashQuem(this.value)">
+        <option value="">Todos</option>
+        ${[...new Set(D.rendas.map(r=>r.quem).filter(Boolean))].map(q=>
+          `<option ${DASH_QUEM===q?'selected':''}>${esc(q)}</option>`).join('')}
+      </select></div>
+    <div class="fld"><label>Categoria</label>
+      <select onchange="setDashCat(this.value)">
+        <option value="">Todas</option>
+        ${cats.map(c=>`<option ${DASH_CAT===c.cat?'selected':''}>${esc(c.cat)}</option>`).join('')}
+      </select></div>
+    ${(DASH_CART||DASH_QUEM||DASH_CAT||DASH_PER!=='mes')
+      ? `<button class="btn alt sm" onclick="limparDash()">limpar filtros</button>`:''}
+  </div>
+
+  <div class="kgroup">Patrimônio</div>
+  <div class="patr">
+    <div class="panel"><h2 style="background:var(--pos-bg);color:var(--pos)">O que vocês têm</h2>
+      <div class="lista">
+        <div class="dline"><span>Na conta corrente</span><span>${BRL(P.conta)}</span></div>
+        <div class="dline"><span>Guardado — reserva e metas</span><span>${BRL(P.guardado)}</span></div>
+        <div class="dline"><span>A receber de terceiros</span><span>${BRL(P.receber)}</span></div>
+        ${D.financiamentos.filter(f=>f.ativo).map(f=>`<div class="dline">
+          <span>${esc(f.bem||f.descricao)} <span class="tag t-g">bem</span></span>
+          <span>${BRL(f.valor_bem||0)}</span></div>`).join('')}
+        <div class="dline tot"><span><b>Total</b></span>
+          <b style="color:var(--pos)">${BRL(P.tem)}</b></div>
+      </div></div>
+
+    <div class="panel"><h2 style="background:var(--neg-bg);color:var(--neg)">O que vocês devem</h2>
+      <div class="lista">
+        ${D.financiamentos.filter(f=>f.ativo).map(f=>`<div class="dline">
+          <span>${esc(f.descricao)} <span class="tag t-g">tem o bem atrás</span></span>
+          <span>${BRL(resumoFin(f).saldo)}</span></div>`).join('')}
+        <div class="dline"><span>Parcelas de cartão
+          <span class="tag t-no">sem bem atrás</span></span><span>${BRL(P.divCartao)}</span></div>
+        <div class="dline tot"><span><b>Total</b></span>
+          <b style="color:var(--neg)">${BRL(P.deve)}</b></div>
+      </div></div>
+
+    <div class="panel"><h2>Sobra de verdade</h2>
+      <div class="pbody" style="text-align:center;padding:18px 15px 10px">
+        <div style="font-size:31px;font-weight:700;letter-spacing:-.025em;line-height:1;
+          color:${P.liquido<0?'var(--neg)':'var(--pos)'}">${BRL(P.liquido)}</div>
+        <div class="note" style="margin-top:4px">patrimônio líquido</div>
+      </div>
+      <div class="lista">
+        ${P.bens>0?`<div class="dline"><span>Do bem já é de vocês</span><span>${BRL(P.equity)}</span></div>
+        <div class="dline"><span>Quanto do bem está quitado</span><span>${PCT(P.pctQuitado)}</span></div>`:''}
+        <div class="dline"><span>Dívida sem bem atrás</span>
+          <span style="color:var(--neg)">${BRL(P.divCartao)}</span></div>
+      </div>
+      <div class="pbody"><p class="note">Financiar um bem não é o mesmo que dever no cartão.
+      ${P.equity>0?'O bem vale mais do que falta pagar, então ele soma.':''}</p></div>
+    </div>
+  </div>
+
+  <div class="kgroup">Indicadores de ${mLabel(k)}</div>
+  <div class="kpis">
+    ${kpi('Sobra do mês',BRL(I.sobra),PCT(I.pctSobra)+' da renda',I.sobra<0?'neg':'pos')}
+    ${kpi('Comprometimento da renda',PCT(I.pctServico),'saudável é até 30%',
+      I.pctServico>0.30?'neg':I.pctServico>0.25?'amb':'pos')}
+    ${kpi('Reserva de emergência',I.mesesReserva.toFixed(1)+' meses','o mínimo é 3',
+      I.mesesReserva<1?'neg':I.mesesReserva<3?'amb':'pos')}
+    ${kpi('Taxa de poupança',PCT(I.pctPoupanca),
+      I.guardadoMes>0?BRL(I.guardadoMes)+' este mês':'nada guardado este mês',
+      I.pctPoupanca>=0.1?'pos':I.pctPoupanca>0?'amb':'neg')}
+    ${kpi('Dívida sem bem atrás',BRL(P.divCartao),
+      I.renda?PCT(P.divCartao/I.renda)+' de uma renda':'')}
+    ${P.bens>0?kpi('Bem quitado',PCT(P.pctQuitado),
+      D.financiamentos.filter(f=>f.ativo).map(f=>f.parcelas_pagas+' de '+f.total_parcelas).join(' · '),'pos'):''}
+  </div>
+
+  <div class="grid2">
+    <div class="panel"><h2>Para onde vai cada real<small>${mLabel(k)}</small></h2><div class="pbody">
+      ${[['Contas fixas',I.fix,I.pctFix,'var(--steel)'],
+         ['Dívidas',I.servico,I.pctServico,'var(--neg)'],
+         ['Assinaturas',I.assin,I.pctAssin,'var(--amber)'],
+         ['Sobra',I.sobra,I.pctSobra,'var(--pos)']].map(([n,v,p,cor])=>`
+        <div class="medida"><span class="nome">${n}<b>${PCT(p)}</b></span>
+          <span class="track" style="height:22px">
+            <span class="fill" style="width:${Math.min(100,Math.max(0,p*100))}%;background:${cor}"></span>
+            ${n==='Dívidas'?'<span class="lim" style="left:30%"></span>':''}
+            <span class="lbl">${BRL(v)}</span></span></div>`).join('')}
+      <p class="note" style="margin-top:10px">A marca escura na barra de dívidas são os 30%
+      considerados saudáveis. O dia a dia não aparece porque não está cadastrado —
+      ele sai da sobra.</p>
+    </div></div>
+
+    <div class="panel"><h2>O que os números dizem<small>${obs.length} observações</small></h2>
+      ${obs.map(o=>`<div class="ins ${o.t}"><span class="mk"></span>
+        <div><h4>${o.h}</h4><p>${o.p}</p></div></div>`).join('')}
+    </div>
+  </div>
+
+  <div class="grid2">
+    <div class="panel"><h2>Sobra mês a mês<small>12 meses à frente</small></h2><div class="pbody">
+      <svg width="100%" height="176" viewBox="0 0 560 176" preserveAspectRatio="none" role="img">
+        <line x1="20" y1="${py(0)}" x2="540" y2="${py(0)}" stroke="var(--rule)"/>
+        <polyline points="${linha}" fill="none" stroke="var(--pos)" stroke-width="2.4"/>
+        <polyline points="${linha} ${px(serie.length-1)},${py(mn)} ${px(0)},${py(mn)}"
+          fill="var(--pos)" opacity=".08" stroke="none"/>
+        ${serie.map((x,i)=>x.sal<0?`<circle cx="${px(i)}" cy="${py(x.sal)}" r="3.5" fill="var(--neg)"/>`:'').join('')}
+        <circle cx="${px(0)}" cy="${py(serie[0].sal)}" r="4" fill="var(--pos)"/>
+        <text x="${px(0)}" y="${py(serie[0].sal)-9}" font-size="11" fill="var(--pos)"
+          font-weight="700" text-anchor="middle">${(serie[0].sal/1000).toFixed(1)}k</text>
+        <g font-size="10" fill="var(--muted)" text-anchor="middle">
+          ${serie.map((x,i)=>i%2===0?`<text x="${px(i)}" y="160">${mLabel(x.k).slice(0,2)}</text>`:'').join('')}
+        </g>
+      </svg>
+      <p class="note">Cresce conforme os parcelamentos terminam. Pontos vermelhos são meses negativos.</p>
+    </div></div>
+
+    <div class="panel"><h2>Dívida caindo<small>cartões e financiamento</small></h2><div class="pbody">
+      <svg width="100%" height="176" viewBox="0 0 560 176" role="img">
+        <line x1="20" y1="140" x2="540" y2="140" stroke="var(--rule)"/>
+        ${dividas.map((d,i)=>{
+          const x=20+i*(520/dividas.length);
+          const hf=(d.fin/mxD)*110, hc=(d.cart/mxD)*110;
+          return `<rect x="${x}" y="${140-hf-hc}" width="${lw}" height="${hf}" fill="var(--steel)"/>
+                  <rect x="${x}" y="${140-hc}" width="${lw}" height="${hc}" fill="var(--amber)"/>`;
+        }).join('')}
+        <text x="${20+lw/2}" y="${140-(dividas[0].total/mxD)*110-6}" font-size="11"
+          fill="var(--steel)" font-weight="700" text-anchor="middle">${(dividas[0].total/1000).toFixed(1)}k</text>
+        <g font-size="10" fill="var(--muted)" text-anchor="middle">
+          ${dividas.map((d,i)=>i%2===0?`<text x="${20+i*(520/dividas.length)+lw/2}" y="160">${mLabel(d.k).slice(0,2)}</text>`:'').join('')}
+        </g>
+      </svg>
+      <div class="legenda">
+        <span><i style="background:var(--steel)"></i>financiamento</span>
+        <span><i style="background:var(--amber)"></i>parcelas de cartão</span>
+      </div>
+    </div></div>
+  </div>
+
+  <div class="grid2">
+    <div class="panel"><h2>Onde o dinheiro foi<small>por categoria, ${mLabel(k)}</small></h2>
+    <div class="tw"><table><thead><tr><th>Categoria</th><th class="r">Valor</th>
+      <th class="r">% da renda</th><th style="width:110px"></th></tr></thead><tbody>
+      ${cats.map(c=>`<tr${DASH_CAT&&DASH_CAT!==c.cat?' class="dim"':''}>
+        <td>${esc(c.cat)}</td><td class="r">${BRL(c.v)}</td>
+        <td class="r">${I.renda?PCT(c.v/I.renda):'—'}</td>
+        <td><span class="track" style="height:7px;display:block">
+          <span class="fill" style="width:${c.v/maxCat*100}%;background:var(--steel)"></span></span></td>
+      </tr>`).join('')||'<tr><td colspan="4" class="note" style="padding:16px;text-align:center">Sem gastos no mês.</td></tr>'}
+    </tbody></table></div></div>
+
+    <div class="panel"><h2>Previsto e realizado<small>meses já fechados</small></h2>
+    <div class="tw"><table><thead><tr><th>Mês</th><th class="r">Renda prevista</th>
+      <th class="r">Renda real</th><th class="r">Saídas previstas</th>
+      <th class="r">Saídas reais</th><th class="r">Diferença</th></tr></thead><tbody>
+      ${pr.map(x=>`<tr><td><b>${mLabel(x.k)}</b></td>
+        <td class="r">${BRL(x.prevRenda)}</td>
+        <td class="r">${x.temDados?BRL(x.realRenda):'—'}</td>
+        <td class="r">${BRL(x.prevSaida)}</td>
+        <td class="r">${x.temDados?BRL(x.realSaida):'—'}</td>
+        <td class="r" style="color:${!x.temDados?'var(--muted)':x.difSaida>0?'var(--neg)':'var(--pos)'}">
+          ${x.temDados?(x.difSaida>0?'+':'')+BRL(x.difSaida):'sem lançamentos'}</td></tr>`).join('')}
+    </tbody></table></div>
+    <div class="pbody"><p class="note">Saída real maior que a prevista costuma ser o dia a dia,
+    que não está cadastrado. É o principal buraco de informação do sistema.</p></div></div>
+  </div>`;
+}
+window.setDashPer=v=>{ DASH_PER=v; render(); };
+window.setDashCart=v=>{ DASH_CART=v; render(); };
+window.setDashQuem=v=>{ DASH_QUEM=v; render(); };
+window.setDashCat=v=>{ DASH_CAT=v; render(); };
+window.limparDash=()=>{ DASH_PER='mes'; DASH_CART=''; DASH_QUEM=''; DASH_CAT=''; render(); };
+
+/* =====================================================================
    SHELL E INICIALIZAÇÃO
    ===================================================================== */
-const VIEWS={painel:vPainel,compra:vCompra,lanc:vLanc,parc:vParc,assin:vAssin,
+const VIEWS={painel:vPainel,dash:vDash,compra:vCompra,lanc:vLanc,parc:vParc,assin:vAssin,
              terc:vTerc,cal:vCal,proj:vProj,amort:vAmort,casa:vCasa,cad:vCad,metas:vMetas,backup:vBackup};
 
 function render(){
