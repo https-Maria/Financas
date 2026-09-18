@@ -103,6 +103,35 @@ button{cursor:pointer;border:none;background:none}
 .kpi .s{font-size:11.5px;color:var(--muted);display:block;margin-top:3px}
 .v.pos{color:var(--pos)} .v.neg{color:var(--neg)} .v.amb{color:var(--amber)}
 
+/* ---------- dashboard ---------- */
+.filtros{background:var(--panel);border:1px solid var(--rule);border-radius:3px;
+  padding:12px 15px;margin-bottom:14px;display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
+.filtros .fld{min-width:148px}
+.patr{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px}
+.patr .panel>h2{background:var(--steel-bg)}
+.lista .dline{padding:8px 15px;border-bottom:1px solid var(--rule-soft)}
+.lista .dline:last-child{border-bottom:none}
+.lista .dline.tot{border-top:2px solid var(--rule);border-bottom:none;font-size:14px}
+.medida{display:grid;grid-template-columns:104px 1fr;gap:12px;align-items:center;padding:7px 0}
+.medida .nome{font-size:12.5px}
+.medida .nome b{display:block;font-size:15px;margin-top:1px}
+.medida .track{position:relative;border-radius:2px;overflow:hidden}
+.medida .lim{position:absolute;top:0;bottom:0;width:2px;background:var(--ink);opacity:.45}
+.medida .lbl{position:absolute;right:7px;top:50%;transform:translateY(-50%);
+  font-size:11px;color:var(--muted);font-weight:600}
+.ins{display:flex;gap:11px;padding:12px 15px;border-bottom:1px solid var(--rule-soft)}
+.ins:last-child{border-bottom:none}
+.ins .mk{width:5px;border-radius:3px;flex:0 0 5px}
+.ins.bom .mk{background:var(--pos)} .ins.aten .mk{background:var(--amber)}
+.ins.ruim .mk{background:var(--neg)} .ins.info .mk{background:var(--steel)}
+.ins h4{font-size:12.5px;font-weight:700;margin-bottom:2px}
+.ins p{font-size:12.5px;color:var(--muted);line-height:1.5}
+.ins p b{color:var(--ink);font-weight:600}
+.legenda{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;padding-top:9px;
+  border-top:1px solid var(--rule-soft)}
+.legenda span{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--muted)}
+.legenda i{width:9px;height:9px;border-radius:2px;display:block}
+@media(max-width:860px){ .patr{grid-template-columns:1fr} }
 /* ---------- calendário ---------- */
 .cal{padding:14px}
 .chead{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:6px}
@@ -322,6 +351,6 @@ input:focus,select:focus{border-color:var(--steel);outline:none;box-shadow:0 0 0
 <div id="root"><div class="gate"><div class="gatebox"><h1>Carregando…</h1>
 <p class="sub">Conectando ao banco de dados.</p></div></div></div>
 <div class="toast" id="toast"></div>
-<script type="module" src="app.js?v=34"></script>
+<script type="module" src="app.js?v=38"></script>
 </body>
 </html>
