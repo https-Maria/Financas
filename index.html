@@ -56,6 +56,26 @@ button{cursor:pointer;border:none;background:none}
   border:none;border-bottom:none}
 .railfoot button:hover{color:var(--barra-txt);text-decoration:underline}
 
+/* engrenagem e menus suspensos */
+.brand .eng{margin-left:auto;background:rgba(255,255,255,.12);border:none;color:#fff;
+  width:30px;height:30px;border-radius:4px;font-size:15px;cursor:pointer;line-height:1;
+  flex:0 0 30px}
+.brand .eng:hover{background:rgba(255,255,255,.24)}
+.rail button.mais .seta{font-size:10px;opacity:.75;margin-left:2px}
+.ddmenu{position:absolute;z-index:40;background:var(--panel);border:1px solid var(--rule);
+  border-radius:4px;padding:6px;margin-top:4px;min-width:196px;
+  box-shadow:0 6px 20px rgba(13,23,22,.16)}
+.ddmenu.dir{right:18px}
+.ddmenu button{display:block;width:100%;text-align:left;font-size:13px;padding:7px 12px;
+  border:none;background:none;border-radius:3px;color:var(--ink);cursor:pointer}
+.ddmenu button:hover{background:var(--surface)}
+.ddmenu button[aria-current="true"]{background:var(--steel-bg);color:var(--steel);font-weight:700}
+.ddmenu .sep{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;
+  color:var(--muted);font-weight:700;padding:8px 12px 4px}
+.ddmenu .sep:first-child{padding-top:4px}
+#menus{position:relative}
+@media(max-width:620px){ .ddmenu{left:0;right:0;min-width:0} .ddmenu.dir{right:0} }
+
 .main{max-width:1180px;margin:0 auto;padding:18px 18px 56px}
 .page{display:none}
 .page.on{display:block}
@@ -352,6 +372,6 @@ input:focus,select:focus{border-color:var(--steel);outline:none;box-shadow:0 0 0
 <div id="root"><div class="gate"><div class="gatebox"><h1>Carregando…</h1>
 <p class="sub">Conectando ao banco de dados.</p></div></div></div>
 <div class="toast" id="toast"></div>
-<script type="module" src="app.js?v=39"></script>
+<script type="module" src="app.js?v=42"></script>
 </body>
 </html>
