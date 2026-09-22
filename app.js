@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v42';
+const APP_VER='v44';
 
 /* =====================================================================
    ESTADO
@@ -96,6 +96,17 @@ function saldoConta(){
 }
 
 /* parcelas devidas num mês, a partir da primeira fatura de cada dívida */
+/* Em que meses esta parcela cai. Normalmente é mensal e consecutiva a partir
+   da primeira fatura — mas o cartão às vezes pula um mês, e aí a lista real
+   fica guardada em `competencias`. */
+function mesesDaParcela(p){
+  if(Array.isArray(p.competencias) && p.competencias.length)
+    return p.competencias.slice(0, p.restantes);
+  const ini=p.primeira_fatura?ym(p.primeira_fatura):ym(hoje());
+  return Array.from({length:+p.restantes||0},(_,i)=>addM(ini,i));
+}
+const parcelaCaiEm=(p,k)=>mesesDaParcela(p).includes(k);
+
 function parcelasMes(k, extra){
   let t=0;
   const conta=(p)=>{
@@ -171,9 +182,7 @@ function faturaCalculada(nome, k, extra){
   let t=0;
   const conta=p=>{
     if((p.cartao||'')!==nome) return;
-    const ini=p.primeira_fatura?ym(p.primeira_fatura):ym(hoje());
-    const idx=mesesEntre(ini,k);
-    if(idx>=0 && idx<p.restantes) t+= +p.valor_parcela;
+    if(parcelaCaiEm(p,k)) t+= +p.valor_parcela;
   };
   D.parcelamentos.forEach(conta);
   if(extra) conta(extra);
@@ -871,13 +880,13 @@ window.confirmarCompra=async()=>{
 const PAGES=[['painel','Painel'],['dash','Dashboard'],['compra','Nova compra'],['lanc','Lançamentos'],
   ['parc','Parcelamentos'],['assin','Assinaturas'],['terc','Terceiros'],
   ['cal','Calendário'],['proj','Projeção'],['amort','Amortização'],['casa','Projeções Casa'],
-  ['cad','Cadastros'],['metas','Metas'],['backup','Cópias'],['log','Atividade']];
+  ['cad','Cadastros'],['metas','Metas'],['backup','Cópias'],['log','Atividade'],['fatura','Fatura']];
 
 /* O menu mostra só o dia a dia. O resto fica agrupado atrás de "Mais",
    e o que é manutenção vai para a engrenagem. */
 const MENU_FIXO=['painel','dash','lanc','cal','metas'];
 const MENU_MAIS=[
-  ['Compromissos',['parc','assin','terc']],
+  ['Compromissos',['fatura','parc','assin','terc']],
   ['Análise',     ['proj','amort','casa']],
   ['Simular',     ['compra']]];
 const MENU_CONFIG=['cad','backup','log'];
@@ -1067,9 +1076,8 @@ function vPainel(){
           if(!v) return '';
           const c=D.cartoes.find(x=>x.nome===n);
           const itens=[
-            ...D.parcelamentos.filter(p=>(p.cartao||'')===n).filter(p=>{
-              const i=p.primeira_fatura?ym(p.primeira_fatura):ym(hoje());
-              const d=mesesEntre(i,MREF); return d>=0&&d<p.restantes;}).map(p=>({d:p.descricao,v:+p.valor_parcela})),
+            ...D.parcelamentos.filter(p=>(p.cartao||'')===n && parcelaCaiEm(p,MREF))
+              .map(p=>({d:p.descricao,v:+p.valor_parcela})),
             ...D.assinaturas.filter(a=>a.projetar&&(a.cartao||'')===n).map(a=>{
               const vz=vezesAssinatura(a,MREF);
               return {d:a.descricao+(vz!==1?' — '+vz+' cobranças neste ciclo':''), v:(+a.valor)*vz};
@@ -1233,15 +1241,25 @@ function vParc(){
   <div class="tw"><table><thead><tr><th>Dívida</th><th>Cartão</th><th class="r">Parcela</th>
     <th class="c">Faltam</th><th class="r">Saldo</th><th>Termina</th><th></th></tr></thead><tbody>
   ${D.parcelamentos.map(p=>{
-    const ini=p.primeira_fatura?ym(p.primeira_fatura):ym(hoje());
-    const fim=addM(ini,Math.max(0,p.restantes-1));
-    return `<tr><td><b>${esc(p.descricao)}</b>${p.origem==='simulacao_confirmada'?' <span class="tag t-i">simulada</span>':''}</td>
+    const meses=mesesDaParcela(p);
+    const irregular=Array.isArray(p.competencias)&&p.competencias.length;
+    const fim=meses.length?meses[meses.length-1]:null;
+    return `<tr><td><b>${esc(p.descricao)}</b>${p.origem==='simulacao_confirmada'?' <span class="tag t-i">simulada</span>':''}
+      ${irregular?' <span class="tag t-w">meses definidos</span>':''}</td>
     <td>${esc(p.cartao||'—')}</td><td class="r">${BRL(p.valor_parcela)}</td>
     <td class="c"><input type="number" min="0" value="${p.restantes}" style="width:56px;padding:3px 5px;text-align:center"
       onchange="setRow('parcelamentos','${p.id}','restantes',Math.max(0,+this.value))"></td>
     <td class="r"><b>${BRL(p.valor_parcela*p.restantes)}</b></td>
-    <td>${p.restantes>0?mLabel(fim):'—'}</td>
-    <td class="r"><button class="btn dgr" onclick="delRow('parcelamentos','${p.id}')">excluir</button></td></tr>`;}).join('')
+    <td>${fim?mLabel(fim):'—'}</td>
+    <td class="r"><button class="btn dgr" onclick="delRow('parcelamentos','${p.id}')">excluir</button></td></tr>
+    <tr class="sub"><td colspan="7" style="padding:4px 15px 10px">
+      <span class="note">Meses em que cai:</span>
+      <input value="${meses.map(m=>mLabel(m)).join(', ')}" style="width:min(420px,70%);padding:3px 7px;margin-left:6px"
+        onchange="setCompetencias('${p.id}',this.value)"
+        title="Escreva MM/AAAA separando por vírgula. Deixe em branco para voltar ao mês a mês.">
+      ${irregular?'<span class="note" style="margin-left:8px">este parcelamento pula mês</span>'
+                 :'<span class="note" style="margin-left:8px">mensais consecutivas</span>'}
+    </td></tr>`;}).join('')
     ||'<tr><td colspan="7" class="note" style="padding:20px;text-align:center">Nenhum parcelamento. Use "Nova compra" para simular e adicionar.</td></tr>'}
   </tbody></table></div>
   <div class="pbody"><button class="btn" onclick="go('compra')">Simular nova compra</button></div></div>`;
@@ -1465,6 +1483,11 @@ window.addTerc=async()=>{
 };
 /* marcar como recebido guarda também a data */
 window.setTercOrig=v=>{ TERC_ORIG=v; render(); };
+window.setPlano=(campo,v)=>{
+  if(campo==='vida') PLANO_VIDA=+v; else if(campo==='caixa') PLANO_CAIXA=+v; else if(campo==='colchao') PLANO_COLCHAO=+v;
+  render();
+};
+window.setPlanoAberto=(k,aberto)=>{ PLANO_ABERTO = aberto?k:null; };
 window.abrirGrupo=(p,d)=>{ const ch=p+'|'+d; GRUPO_ABERTO = GRUPO_ABERTO===ch?null:ch; render(); };
 window.receberTerc=async(id,v)=>{
   if(await atualizar('terceiros',id,{recebido:v, recebido_em: v?hoje():null})){
@@ -1521,7 +1544,8 @@ function vCad(){
     ${kpi('Benefícios',BRL(totVA()))}${kpi('Sobra estrutural',BRL(totRenda()-totFixas()),'antes de cartões','pos')}</div>
   <div class="panel"><h2>Cartões <small>o dia de vencimento define em qual bloco a fatura cai no painel</small></h2>
   <div class="tw"><table><thead><tr><th class="c">Ativo</th><th>Cartão</th><th>Titular</th>
-    <th class="c">Vence dia</th><th class="r">Fatura de ${mLabel(MREF)}</th><th></th></tr></thead><tbody>
+    <th class="c">Vence dia</th><th class="r">Limite</th>
+    <th class="r">Fatura de ${mLabel(MREF)}</th><th></th></tr></thead><tbody>
   ${D.cartoes.map(c=>{
     const real=faturaLancada(c.nome,MREF), v=faturaCartao(c.nome,MREF);
     return `<tr class="${c.ativo?'':'dim'}">
@@ -1534,14 +1558,18 @@ function vCad(){
     <td class="c"><input type="number" min="1" max="31" value="${c.dia_venc||''}"
       style="width:60px;padding:3px 5px;text-align:center"
       onchange="setRow('cartoes','${c.id}','dia_venc',this.value?+this.value:null)"></td>
+    <td class="r"><input type="number" step="100" value="${c.limite||''}" placeholder="—"
+      style="width:104px;padding:3px 5px;text-align:right"
+      onchange="setRow('cartoes','${c.id}','limite',this.value?+this.value:null)"></td>
     <td class="r">${v?BRL(v):'—'} ${v?`<span class="tag ${real?'t-ok':'t-g'}">${real?'lançada':'estimada'}</span>`:''}</td>
     <td class="r"><button class="btn dgr" onclick="delRow('cartoes','${c.id}')">excluir</button></td></tr>`;}).join('')
-    ||'<tr><td colspan="6" class="note" style="padding:16px;text-align:center">Nenhum cartão cadastrado.</td></tr>'}
+    ||'<tr><td colspan="7" class="note" style="padding:16px;text-align:center">Nenhum cartão cadastrado.</td></tr>'}
   </tbody></table></div>
   <div class="pbody"><div class="form">
     <div class="fld"><label>Novo cartão</label><input id="ct_n" placeholder="Ex.: Nubank"></div>
     <div class="fld"><label>Titular</label><input id="ct_t" placeholder="Maria ou Jéssica"></div>
     <div class="fld"><label>Vence dia</label><input type="number" min="1" max="31" id="ct_d"></div>
+    <div class="fld"><label>Limite</label><input type="number" step="100" id="ct_l" placeholder="opcional"></div>
     <div class="fld"><label>&nbsp;</label><button class="btn" onclick="addCartao()">Adicionar</button></div>
   </div>
   <p class="note" style="margin-top:10px">Cartão com vencimento no <b>dia 1</b> é tratado como pago com a sobra
@@ -1594,6 +1622,26 @@ function vCad(){
   <div class="info">Cenário da casa e simulações ficam na aba <b>Projeções Casa</b>.</div>`;
 }
 window.setCfg=async(k,v)=>{if(await atualizar('config',null,{[k]:v})){render();toast('Atualizado');}};
+/* Meses irregulares: aceita "10/2026, 12/2026". Em branco, volta ao mês a mês. */
+window.setCompetencias=async(id,txt)=>{
+  const t=String(txt||'').trim();
+  if(!t){
+    if(await atualizar('parcelamentos',id,{competencias:null})){ render(); toast('Voltou a contar mês a mês'); }
+    return;
+  }
+  const meses=t.split(/[,;]/).map(x=>x.trim()).filter(Boolean).map(x=>{
+    let m=x.match(/^(\d{2})\/(\d{4})$/); if(m) return m[2]+'-'+m[1];
+    m=x.match(/^(\d{4})-(\d{2})$/);      if(m) return x;
+    return null;
+  });
+  if(meses.some(m=>!m)) return toast('Use MM/AAAA, separando por vírgula', 4200);
+  const p=D.parcelamentos.find(x=>x.id===id);
+  if(p && meses.length!==+p.restantes)
+    return toast('Você listou '+meses.length+' meses mas faltam '+p.restantes+' parcelas', 4600);
+  if(await atualizar('parcelamentos',id,{competencias:meses})){
+    render(); toast(meses.length+(meses.length===1?' mês definido':' meses definidos'));
+  }
+};
 window.addCiclo=async()=>{
   const c=$('ci_c').value, m=$('ci_m').value, f=$('ci_f').value, v=$('ci_v').value;
   if(!c||!m||!f||!v) return toast('Preencha cartão, competência e as duas datas');
@@ -1604,8 +1652,10 @@ window.addCartao=async()=>{
   const n=$('ct_n').value.trim();
   if(!n) return toast('Dê um nome ao cartão');
   const d=parseInt($('ct_d').value);
+  const lim=parseFloat($('ct_l')?.value);
   if(await inserir('cartoes',{nome:n,titular:$('ct_t').value.trim()||null,
-      dia_venc:isNaN(d)?null:d,ativo:true})){render();toast(n+' adicionado');}
+      dia_venc:isNaN(d)?null:d, limite:isNaN(lim)?null:lim,
+      ativo:true})){render();toast(n+' adicionado');}
 };
 window.addCad=async(tab)=>{
   const novo={rendas:{descricao:'Nova renda',valor:0,dia:5,quem:'Casal',ativo:true},
@@ -1846,6 +1896,85 @@ window.addCasaItem=async()=>{
    AMORTIZAÇÃO — plano de pagamento dos financiamentos
    ===================================================================== */
 let FIN_SEL=null, FIN_PROX=0, FIN_ULT=6, FIN_DATA=null;
+/* =====================================================================
+   PLANO DE ANTECIPAÇÃO COM FLUXO DE CAIXA REAL
+   Simula dia a dia, usando os mesmos dados que alimentam o Painel — não
+   um número por mês. "Vida" é uma suposição de gasto do dia a dia que o
+   app não rastreia (por pedido da usuária); os outros números vêm todos
+   do banco: blocosDoMes() já inclui rendas, fixas, faturas e qualquer
+   13º/férias que tenha sido lançado como um avulso de data futura.
+   ===================================================================== */
+let PLANO_VIDA=1800, PLANO_CAIXA=500, PLANO_COLCHAO=300, PLANO_HORIZ=18, PLANO_ABERTO=null;
+const ym2 = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+
+function planoAntecipacaoSeguro(fin, vida, caixaAlvo, colchao, horizM){
+  const L=tabelaAmortizacao(fin), i=taxaEfetiva(fin), diaria=Math.pow(1+i,1/30)-1;
+  const PMT=+fin.valor_parcela;
+  const vencMap={}; L.forEach(l=>vencMap[l.k]=l.venc);
+  let pend=L.filter(l=>!l.paga).map(l=>l.k);
+  function vp(k,pagamento){
+    const dias=Math.max(0,Math.round((vencMap[k]-pagamento)/86400000));
+    return PMT/Math.pow(1+diaria,dias);
+  }
+  const kIni=ym(hoje());
+  const meses=horizon(horizM,kIni);
+  const dias=[];
+  meses.forEach(k=>{
+    const blocos=blocosDoMes(k);
+    const nDias=ultimoDiaDoMes(k);
+    const porDia={};
+    blocos.forEach(b=>{
+      /* o bloco do último dia útil pode vir marcado como dia 31 mesmo em mês de 30 —
+         precisa cair no dia real, senão esse dinheiro some da simulação. */
+      const d=Math.min(b.dia, nDias);
+      porDia[d]=(porDia[d]||0)+b.saldo;
+    });
+    const [ay,am]=k.split('-').map(Number);
+    for(let d=1; d<=nDias; d++){
+      const data=new Date(ay,am-1,d);
+      if(k===kIni && data<new Date(new Date().setHours(0,0,0,0))) continue; // não reprocessa o passado
+      dias.push({data, delta:(porDia[d]||0)-vida/nDias, k});
+    }
+  });
+  const n=dias.length;
+  const acum=[0]; dias.forEach(dd=>acum.push(acum[acum.length-1]+dd.delta));
+  const LOOKAHEAD=30;
+  function folgaFutura(idx){
+    const fim=Math.min(n, idx+1+LOOKAHEAD); let m=0;
+    for(let j=idx+1;j<=fim;j++){ const rel=acum[j]-acum[idx+1]; if(rel<m) m=rel; }
+    return m;
+  }
+  let saldo = saldoConta().atual ?? (+cfg().saldo_conferido||0);
+  const pagamentos=[], caixinhas=[]; let cMesKey=null;
+  let pior = dias[0] ? {data:dias[0].data, saldo} : {data:new Date(), saldo};
+  for(let idx=0; idx<n && pend.length; idx++){
+    const dd=dias[idx];
+    saldo+=dd.delta;
+    if(saldo<pior.saldo) pior={data:dd.data, saldo};
+    const f=folgaFutura(idx);
+    while(pend.length){
+      const k=pend[pend.length-1], v=vp(k,dd.data);
+      if(saldo-colchao+f>=v){ saldo-=v; pend.pop(); pagamentos.push({data:dd.data,parcela:k,valor:v}); }
+      else break;
+    }
+    if(caixaAlvo>0 && cMesKey!==dd.k && saldo-colchao+f>=caixaAlvo){
+      saldo-=caixaAlvo; caixinhas.push({data:dd.data,valor:caixaAlvo}); cMesKey=dd.k;
+    }
+  }
+  const totalAntecipado=pagamentos.reduce((s,p)=>s+p.valor,0);
+  const totalEconomia=pagamentos.reduce((s,p)=>s+(PMT-p.valor),0);
+  const totalCaixinha=caixinhas.reduce((s,c)=>s+c.valor,0);
+  const porMes=new Map();
+  const pega=(k,ref)=>{ if(!porMes.has(k)) porMes.set(k,{k,ref,antecipa:[],caixinha:0}); return porMes.get(k); };
+  pagamentos.forEach(p=>{ const k=ym2(p.data); pega(k,p.data).antecipa.push(p); });
+  caixinhas.forEach(c=>{ const k=ym2(c.data); pega(k,c.data).caixinha+=c.valor; });
+  const mesesOut=[...porMes.values()].sort((a,b)=>a.k.localeCompare(b.k));
+  return {pagamentos, caixinhas, totalAntecipado, totalEconomia, totalCaixinha,
+    restam:pend.length, pior,
+    quitadoEm: pend.length===0 ? pagamentos[pagamentos.length-1]?.data : null,
+    meses:mesesOut, horizonteEsgotado: pend.length>0 && dias.length===n};
+}
+
 function vAmort(){
   if(FALTANDO.includes('financiamentos'))
     return head('Amortização','Esta aba precisa de uma tabela que ainda não existe no seu banco.');
@@ -2011,6 +2140,61 @@ function vAmort(){
         em ${fmtD(R.ultima)}. Você paga mais cedo e ganha o desconto, mas não encurta o prazo.</p>`}
     </div></div>`;
   })()}
+
+  <div class="panel"><h2>Plano com fluxo de caixa real<small>dia a dia, não só o total do mês</small></h2>
+  ${(()=>{
+    const P=planoAntecipacaoSeguro(f, PLANO_VIDA, PLANO_CAIXA, PLANO_COLCHAO, PLANO_HORIZ);
+    const perigo = P.pior.saldo < PLANO_COLCHAO*0.5;
+    return `<div class="pbody">
+      <p class="note" style="margin-bottom:14px">Usa o mesmo cálculo do Painel — renda, contas fixas,
+      faturas e qualquer lançamento futuro que você já tenha registrado (13º, férias). "Vida" é a única
+      suposição: o app não rastreia gasolina, mercado e lazer por pedido seu, então você ajusta aqui.</p>
+
+      <div class="form" style="margin-bottom:6px">
+        <div class="fld"><label>Vida (gasolina, mercado, lazer) — ${BRL(PLANO_VIDA)}</label>
+          <input type="range" min="1000" max="3000" step="50" value="${PLANO_VIDA}"
+            oninput="setPlano('vida',this.value)"></div>
+        <div class="fld"><label>Caixinha por mês — ${BRL(PLANO_CAIXA)}</label>
+          <input type="range" min="0" max="1000" step="50" value="${PLANO_CAIXA}"
+            oninput="setPlano('caixa',this.value)"></div>
+        <div class="fld"><label>Colchão mínimo na conta — ${BRL(PLANO_COLCHAO)}</label>
+          <input type="range" min="100" max="800" step="50" value="${PLANO_COLCHAO}"
+            oninput="setPlano('colchao',this.value)"></div>
+      </div>
+
+      ${perigo?`<div class="warn" style="margin-bottom:14px">O pior momento deste plano chega perto de
+        zero: ${BRL(P.pior.saldo)} em ${fmtD(P.pior.data)}. Considere um colchão maior.</div>`:''}
+
+      <div class="kpis" style="margin-bottom:14px">
+        ${kpi('Carro quitado em', P.quitadoEm?fmtD(P.quitadoEm):(P.horizonteEsgotado?'não quita em '+PLANO_HORIZ+' meses':'—'),
+          P.quitadoEm?'':'aumente o horizonte ou o ritmo', P.quitadoEm?'pos':'amb')}
+        ${kpi('Economia em juros', BRL(P.totalEconomia),'','pos')}
+        ${kpi('Total antecipado', BRL(P.totalAntecipado))}
+        ${kpi('Guardado na caixinha', BRL(P.totalCaixinha))}
+        ${kpi('Pior momento do plano', BRL(P.pior.saldo), fmtD(P.pior.data), P.pior.saldo<PLANO_COLCHAO?'amb':'pos')}
+      </div>
+
+      <div class="kgroup">Mês a mês</div>
+      ${P.meses.map(m=>{
+        const aberto = PLANO_ABERTO===m.k;
+        const extra = avulsosDoMes(m.k).filter(l=>l.tipo==='Entrada').reduce((s,l)=>s+ +l.valor,0);
+        return `<details class="mini-det" ${aberto?'open':''} ontoggle="setPlanoAberto('${m.k}',this.open)">
+          <summary><span>${mLabel(m.k)}
+            ${extra>0?`<span class="tag t-w">+ ${BRL(extra)} extra</span>`:''}
+            ${m.antecipa.length?`<span class="tag t-ok">${m.antecipa.length} parcela${m.antecipa.length===1?'':'s'}</span>`:''}
+            ${!m.antecipa.length&&!extra?'<span class="tag t-g">só a parcela normal</span>':''}</span></summary>
+          <div style="padding:8px 0">
+            ${m.antecipa.map(p=>`<div class="dline"><span class="note">dia ${p.data.getDate()} · antecipa parcela ${p.parcela}</span>
+              <span style="color:var(--pos);font-weight:600">${BRL(p.valor)}</span></div>`).join('')}
+            ${m.caixinha>0?`<div class="dline"><span class="note">Caixinha</span><span>${BRL(m.caixinha)}</span></div>`:''}
+          </div></details>`;
+      }).join('')}
+      <p class="note" style="margin-top:12px">O plano nunca deixa a conta cair abaixo do colchão, olhando
+      30 dias à frente — não só o saldo de hoje. É por isso que ele às vezes espera um pouco antes de
+      antecipar, mesmo quando parece ter sobra no total do mês.</p>
+    </div>`;
+  })()}
+  </div>
 
   <div class="panel"><h2>Tabela de amortização <small>parcela a parcela</small></h2>
   <div class="tw"><table><thead><tr>
@@ -2299,9 +2483,7 @@ function serieDivida(n=12, ini){
   const base=ini||ym(hoje());
   return horizon(n,base).map(k=>{
     const cart=D.parcelamentos.reduce((s,p)=>{
-      const i=p.primeira_fatura?ym(p.primeira_fatura):ym(hoje());
-      const d=mesesEntre(i,k);
-      const restam=Math.max(0,p.restantes-Math.max(0,d));
+      const restam=mesesDaParcela(p).filter(m=>m>=k).length;
       return s + restam*(+p.valor_parcela);
     },0);
     const fin=D.financiamentos.filter(f=>f.ativo).reduce((s,f)=>{
@@ -2482,15 +2664,6 @@ const DETECTORES=[
        não consegue prever porque não está cadastrado.`};
 },
 
-/* --- fôlego --- */
-(c)=>{
-  const F=folego();
-  if(F.meses>=3) return null;
-  return {t:F.meses<1?'ruim':'aten', rel:F.meses<1?80:50,
-    h:'Vocês aguentariam '+F.meses.toFixed(1)+' '+(F.meses<2?'mês':'meses')+' sem renda',
-    p:`Tem ${BRL(F.liquido)} disponível e o custo que não para é ${BRL(F.custo)} por mês.`};
-},
-
 /* --- dívida cara sobrando dinheiro --- */
 (c)=>{
   const {I,P}=c;
@@ -2545,6 +2718,67 @@ function insights(k, quantos){
     try{ const r=det(ctx); if(r) achados.push(r); }catch(e){ /* um detector que falha não derruba os outros */ }
   }
   return achados.sort((a,b)=>b.rel-a.rel).slice(0, quantos||5);
+}
+
+/* ---- Curva do saldo dia a dia ----
+   Mostra o ponto mais baixo do mês, que é quando o cheque especial entra. */
+function curvaDiaria(k){
+  const n=ultimoDiaDoMes(k);
+  const S=saldoConta();
+  const blocos=blocosDoMes(k);
+  /* ponto de partida: o saldo de hoje, ou o do fim do mês anterior */
+  let saldo = (k===ym(hoje()) && S.atual!=null) ? S.atual
+            : (S.base!=null ? S.base : 0);
+  const porDia={};
+  blocos.forEach(b=>{
+    const d=Math.min(b.dia,n);
+    porDia[d]=porDia[d]||{ent:0,sai:0,itens:[]};
+    porDia[d].ent+=b.tIn; porDia[d].sai+=b.tOut;
+    porDia[d].itens.push(...b.entradas.map(x=>({...x,sinal:1})),
+                         ...b.saidas.map(x=>({...x,sinal:-1})));
+  });
+  const linha=[];
+  for(let d=1; d<=n; d++){
+    const m=porDia[d];
+    if(m) saldo += m.ent - m.sai;
+    linha.push({dia:d, saldo, ent:m?m.ent:0, sai:m?m.sai:0, itens:m?m.itens:[]});
+  }
+  const min=linha.reduce((a,b)=>b.saldo<a.saldo?b:a);
+  const max=linha.reduce((a,b)=>b.saldo>a.saldo?b:a);
+  return {linha, min, max, inicio:linha[0].saldo, fim:linha[n-1].saldo};
+}
+
+/* ---- Limite dos cartões ---- */
+function usoDosLimites(k){
+  return D.cartoes.filter(c=>c.ativo && +c.limite>0).map(c=>{
+    const fatura=venceNoDia1(c.nome)?faturaCartao(c.nome,addM(k,1)):faturaCartao(c.nome,k);
+    const parcelasFuturas=D.parcelamentos.filter(p=>(p.cartao||'')===c.nome)
+      .reduce((s,p)=>s+mesesDaParcela(p).filter(m=>m>k).length*(+p.valor_parcela),0);
+    const terceiros=D.terceiros.filter(t=>t.cartao===c.nome && !t.recebido)
+      .reduce((s,t)=>s+ +t.valor,0);
+    const usado=fatura+parcelasFuturas;
+    return {nome:c.nome, limite:+c.limite, fatura, parcelasFuturas, terceiros,
+            usado, livre:Math.max(0,+c.limite-usado), pct:(+c.limite)?usado/(+c.limite):0};
+  }).sort((a,b)=>b.pct-a.pct);
+}
+
+/* ---- Comparação com meses anteriores ---- */
+function comparativo(k, n){
+  const meses=[]; const q=n||6;
+  for(let i=q;i>=1;i--){
+    const m=addM(k,-i);
+    const f=fluxo(1,null,m)[0];
+    const r=realizado(m);
+    meses.push({k:m, prev:f.out, real:r.sai, temDados:r.n>0, sobra:f.sal});
+  }
+  const atual=fluxo(1,null,k)[0];
+  const comDados=meses.filter(m=>m.temDados);
+  const mediaReal=comDados.length?comDados.reduce((s,m)=>s+m.real,0)/comDados.length:null;
+  const mediaPrev=meses.reduce((s,m)=>s+m.prev,0)/meses.length;
+  return {meses, atual, mediaReal, mediaPrev,
+          desvio: mediaPrev? (atual.out-mediaPrev)/mediaPrev : 0,
+          melhor: meses.reduce((a,b)=>b.sobra>a.sobra?b:a, meses[0]),
+          pior:   meses.reduce((a,b)=>b.sobra<a.sobra?b:a, meses[0])};
 }
 
 /* ---- Apoio à decisão ----
@@ -2756,30 +2990,108 @@ function vDash(){
     const sobra=Math.max(0,Math.round(I.sobra/100)*100);
     const app=sobra>=200?ondeAplicar(sobra):[];
     return `<div class="kgroup">Apoio à decisão</div>
-    <div class="grid2">
-      <div class="panel"><h2>Quanto tempo vocês aguentam<small>se a renda parar hoje</small></h2>
-        <div class="pbody">
-          <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:12px">
-            <span style="font-size:34px;font-weight:700;letter-spacing:-.025em;line-height:1;
-              color:${F.meses<1?'var(--neg)':F.meses<3?'var(--amber)':'var(--pos)'}">
-              ${F.meses.toFixed(1)}</span>
-            <span style="font-size:14px;color:var(--muted)">${F.meses===1?'mês':'meses'} de fôlego</span>
-          </div>
-          <span class="track" style="height:10px;display:block;margin-bottom:12px">
-            <span class="fill" style="width:${Math.min(100,F.meses/6*100)}%;
-              background:${F.meses<1?'var(--neg)':F.meses<3?'var(--amber)':'var(--pos)'}"></span></span>
-          <div class="tw"><table class="mini"><tbody>
-            <tr><td>Dinheiro disponível</td><td class="r">${BRL(F.liquido)}</td></tr>
-            <tr><td>Custo que não para</td><td class="r">${BRL(F.custo)} por mês</td></tr>
-            <tr><td>Para chegar em 3 meses</td><td class="r">${
-              F.meses>=3?'já chegou':'faltam '+BRL(F.custo*3-F.liquido)}</td></tr>
-            <tr><td>Para chegar em 6 meses</td><td class="r">${
-              F.meses>=6?'já chegou':'faltam '+BRL(F.custo*6-F.liquido)}</td></tr>
-          </tbody></table></div>
-          <p class="note" style="margin-top:10px">Conta conta fixa, assinaturas e a parcela do
-          financiamento — o que continua chegando mesmo sem renda.</p>
-        </div></div>
 
+    ${(()=>{
+      const C=curvaDiaria(k);
+      const larg=520, alt=120;
+      const vs=C.linha.map(x=>x.saldo);
+      const mn=Math.min(0,...vs), mx=Math.max(...vs,1);
+      const px=i=>20+i*(larg/(C.linha.length-1||1));
+      const py=v=>alt+14-((v-mn)/((mx-mn)||1))*alt;
+      const pts=C.linha.map((x,i)=>px(i)+','+py(x.saldo)).join(' ');
+      const iMin=C.linha.indexOf(C.min);
+      return `<div class="panel"><h2>Saldo dia a dia<small>${mLabel(k)}</small></h2><div class="pbody">
+        <svg width="100%" height="168" viewBox="0 0 560 168" preserveAspectRatio="none" role="img">
+          <line x1="20" y1="${py(0)}" x2="540" y2="${py(0)}" stroke="var(--rule)"/>
+          <polyline points="${pts}" fill="none" stroke="var(--steel)" stroke-width="2.2"/>
+          <polyline points="${pts} ${px(C.linha.length-1)},${py(mn)} ${px(0)},${py(mn)}"
+            fill="var(--steel)" opacity=".08" stroke="none"/>
+          <circle cx="${px(iMin)}" cy="${py(C.min.saldo)}" r="4.5"
+            fill="${C.min.saldo<0?'var(--neg)':'var(--amber)'}"/>
+          <text x="${px(iMin)}" y="${py(C.min.saldo)+(C.min.saldo<mx/2?-10:18)}" font-size="11"
+            fill="${C.min.saldo<0?'var(--neg)':'var(--amber)'}" font-weight="700" text-anchor="middle"
+            >dia ${C.min.dia} · ${BRL(C.min.saldo)}</text>
+          <g font-size="10" fill="var(--muted)" text-anchor="middle">
+            ${[1,5,10,15,20,25,C.linha.length].map(d=>
+              `<text x="${px(d-1)}" y="160">${d}</text>`).join('')}
+          </g>
+        </svg>
+        <div class="tw"><table class="mini"><tbody>
+          <tr><td>Começa o mês com</td><td class="r">${BRL(C.inicio)}</td></tr>
+          <tr><td><b>Ponto mais baixo</b></td>
+            <td class="r"><b style="color:${C.min.saldo<0?'var(--neg)':'inherit'}">${BRL(C.min.saldo)}</b>
+              <span class="note">no dia ${C.min.dia}</span></td></tr>
+          <tr><td>Termina com</td><td class="r">${BRL(C.fim)}</td></tr>
+        </tbody></table></div>
+        <p class="note" style="margin-top:10px">${C.min.saldo<0
+          ? `Entre o dia ${C.min.dia} e a próxima entrada a conta fica negativa em
+             ${BRL(Math.abs(C.min.saldo))}. É aí que o cheque especial entra.`
+          : `O mês não fica negativo em nenhum dia. A menor folga é no dia ${C.min.dia}.`}</p>
+      </div></div>`;
+    })()}
+
+    ${(()=>{
+      const U=usoDosLimites(k);
+      if(!U.length) return `<div class="panel"><h2>Limite dos cartões</h2><div class="pbody">
+        <p class="note">Nenhum cartão tem limite cadastrado. Preencha em
+        <b>Cadastros → Cartões</b> para ver quanto de cada um está ocupado.</p></div></div>`;
+      const totL=U.reduce((s,x)=>s+x.limite,0), totU=U.reduce((s,x)=>s+x.usado,0);
+      const totT=U.reduce((s,x)=>s+x.terceiros,0);
+      return `<div class="panel"><h2>Limite dos cartões<small>${PCT(totU/totL)} ocupado</small></h2>
+        <div class="pbody">
+        ${U.map(x=>`<div class="medida" style="grid-template-columns:118px 1fr">
+          <span class="nome">${esc(x.nome)}<b>${PCT(x.pct)}</b></span>
+          <span class="track" style="height:22px">
+            <span class="fill" style="width:${Math.min(100,x.pct*100)}%;background:${
+              x.pct>0.8?'var(--neg)':x.pct>0.5?'var(--amber)':'var(--steel)'}"></span>
+            <span class="lbl">${BRL(x.usado)} de ${BRL(x.limite)}</span></span></div>`).join('')}
+        <div class="tw" style="margin-top:12px"><table class="mini"><tbody>
+          <tr><td>Livre no total</td><td class="r">${BRL(totL-totU)}</td></tr>
+          ${totT>0?`<tr><td>Disso, sustentando compra de terceiro</td>
+            <td class="r" style="color:var(--amber)">${BRL(totT)}</td></tr>`:''}
+        </tbody></table></div>
+        <p class="note" style="margin-top:10px">Conta a fatura do mês mais as parcelas que ainda
+        vão cair. ${totT>0?`Os ${BRL(totT)} de terceiros ocupam limite de vocês enquanto não voltam.`:''}</p>
+      </div></div>`;
+    })()}
+
+    ${(()=>{
+      const K=comparativo(k,6);
+      const comDados=K.meses.filter(m=>m.temDados);
+      return `<div class="panel"><h2>Comparando com os meses anteriores<small>últimos 6</small></h2>
+        <div class="pbody">
+        ${K.mediaReal!=null?`<div class="kpis" style="margin:0 0 12px">
+          ${kpi('Saídas deste mês',BRL(K.atual.out),
+            (K.desvio>0?'+':'')+PCT(K.desvio)+' da média prevista',
+            Math.abs(K.desvio)<0.1?'':K.desvio>0?'amb':'pos')}
+          ${kpi('Média realizada',BRL(K.mediaReal),comDados.length+' meses com lançamento')}
+          ${kpi('Melhor mês',mLabel(K.melhor.k),'sobrou '+BRL(K.melhor.sobra),'pos')}
+          ${kpi('Mês mais apertado',mLabel(K.pior.k),'sobrou '+BRL(K.pior.sobra),'amb')}
+        </div>`:''}
+        <div class="tw"><table><thead><tr><th>Mês</th><th class="r">Saídas previstas</th>
+          <th class="r">Saídas reais</th><th class="r">Sobra</th><th style="width:110px"></th></tr></thead><tbody>
+        ${K.meses.map(m=>{
+          const mxS=Math.max(...K.meses.map(x=>x.prev),K.atual.out,1);
+          return `<tr><td><b>${mLabel(m.k)}</b></td>
+          <td class="r">${BRL(m.prev)}</td>
+          <td class="r">${m.temDados?BRL(m.real):'<span class="note">sem lançamentos</span>'}</td>
+          <td class="r" style="color:${m.sobra<0?'var(--neg)':'inherit'}">${BRL(m.sobra)}</td>
+          <td><span class="track" style="height:7px;display:block">
+            <span class="fill" style="width:${m.prev/mxS*100}%;background:var(--steel)"></span></span></td>
+        </tr>`;}).join('')}
+        <tr style="border-top:2px solid var(--rule)"><td><b>${mLabel(k)}</b>
+          <span class="tag t-i">este mês</span></td>
+          <td class="r"><b>${BRL(K.atual.out)}</b></td>
+          <td class="r"><span class="note">em andamento</span></td>
+          <td class="r"><b>${BRL(K.atual.sal)}</b></td>
+          <td><span class="track" style="height:7px;display:block">
+            <span class="fill" style="width:${K.atual.out/Math.max(...K.meses.map(x=>x.prev),K.atual.out,1)*100}%;
+              background:var(--amber)"></span></span></td></tr>
+        </tbody></table></div>
+      </div></div>`;
+    })()}
+
+    <div class="grid2">
       <div class="panel"><h2>Meses que vão apertar<small>próximos 12</small></h2>
         <div class="pbody">
           ${crit.length
@@ -3073,9 +3385,185 @@ window.setLog=(campo,v)=>{
 window.limparLog=()=>{ LOG_TAB=LOG_ACAO=LOG_QUEM=LOG_BUSCA=''; LOG_PER='30'; render(); };
 
 /* =====================================================================
+   FATURA — detalhe de um cartão num mês
+   ===================================================================== */
+let FAT_CART=null;
+
+/* Move a parcela deste mês para o seguinte, empurrando as que vêm depois.
+   É o que acontece quando o cartão pula uma fatura. */
+window.pularMes=async(pid,k)=>{
+  const p=D.parcelamentos.find(x=>x.id===pid); if(!p) return;
+  const meses=mesesDaParcela(p);
+  if(!meses.includes(k)) return;
+  const novos=meses.map(m=> m>=k ? addM(m,1) : m);
+  if(await atualizar('parcelamentos',pid,{competencias:novos})){
+    render(); toast(esc(p.descricao)+' passou para '+mLabel(addM(k,1)));
+  }
+};
+/* Traz de volta: desfaz o pulo mais recente deste mês. */
+window.voltarMes=async(pid,k)=>{
+  const p=D.parcelamentos.find(x=>x.id===pid); if(!p) return;
+  const meses=mesesDaParcela(p);
+  const novos=meses.map(m=> m>k ? addM(m,-1) : m);
+  if(await atualizar('parcelamentos',pid,{competencias:novos})){
+    render(); toast(esc(p.descricao)+' voltou para '+mLabel(k));
+  }
+};
+window.setFatCart=v=>{ FAT_CART=v; render(); };
+
+function vFatura(){
+  const ativos=D.cartoes.filter(c=>c.ativo);
+  if(!ativos.length) return head('Fatura','Nenhum cartão cadastrado.');
+  const c = ativos.find(x=>x.nome===FAT_CART) || ativos[0];
+  const n = c.nome;
+  const k = MREF;
+  const comp = venceNoDia1(n) ? addM(k,1) : k;   /* qual competência esta fatura é */
+  const jan = janelaFatura(n,comp);
+  const ciclo = cicloDe(n,comp);
+  const real = faturaLancada(n,comp);
+  const calc = faturaCalculada(n,comp);
+  const valor = faturaCartao(n,comp);
+
+  const parcelas = D.parcelamentos.filter(p=>(p.cartao||'')===n && parcelaCaiEm(p,comp));
+  const assinaturas = D.assinaturas.filter(a=>a.projetar && (a.cartao||'')===n)
+    .map(a=>({a, vz:vezesAssinatura(a,comp)})).filter(x=>x.vz>0);
+  const terceiros = D.terceiros.filter(t=>t.cartao===n && !t.recebido &&
+    (!t.competencia || t.competencia===mLabel(comp)));
+  const avulsos = D.lancamentos.filter(l=>l.cartao===n && ym(l.data)===comp &&
+    l.categoria!=='Cartão');
+  const somaParc = parcelas.reduce((s,p)=>s+ +p.valor_parcela,0);
+  const somaAssin = assinaturas.reduce((s,x)=>s+(+x.a.valor)*x.vz,0);
+  const somaTerc = terceiros.reduce((s,t)=>s+ +t.valor,0);
+  const conhecido = somaParc+somaAssin;
+  const naoIdentificado = real ? real.valor-conhecido : null;
+  const proximas = D.parcelamentos.filter(p=>(p.cartao||'')===n && +p.restantes>0
+    && !parcelaCaiEm(p,comp) && mesesDaParcela(p).some(m=>m>comp));
+
+  return head('Fatura','O que compõe a fatura de cada cartão, item por item.')
+  +`<div class="filtros">
+    <div class="fld"><label>Cartão</label>
+      <select onchange="setFatCart(this.value)">
+        ${ativos.map(x=>`<option ${x.nome===n?'selected':''}>${esc(x.nome)}</option>`).join('')}
+      </select></div>
+    <div class="fld"><label>Mês em foco</label>
+      <select onchange="setMes(this.value)">
+        ${mesesDisponiveis().map(m=>`<option value="${m}" ${m===k?'selected':''}>${mLabel(m)}</option>`).join('')}
+      </select></div>
+  </div>
+
+  <div class="kpis">
+    ${kpi('Total da fatura',BRL(valor),real?'valor lançado':'estimado pelos cadastros',
+      real?'pos':'amb')}
+    ${kpi('O que o app conhece',BRL(conhecido),
+      parcelas.length+' parcela'+(parcelas.length===1?'':'s')+' · '+
+      assinaturas.length+' assinatura'+(assinaturas.length===1?'':'s'))}
+    ${naoIdentificado!=null?kpi('Compras do dia a dia',BRL(naoIdentificado),
+      'diferença entre o lançado e o conhecido',naoIdentificado<0?'pos':'')
+      :kpi('Ainda não lançada','—','o valor real vai substituir a estimativa')}
+    ${kpi('De terceiros',BRL(somaTerc),
+      somaTerc>0?'abatido da parte de vocês':'nenhum',somaTerc>0?'amb':'')}
+  </div>
+
+  ${ciclo?`<div class="info" style="margin-bottom:16px">
+    Ciclo de <b>${jan?jan.ini.split('-').reverse().slice(0,2).join('/'):'?'}</b>
+    a <b>${ciclo.fecha.split('-').reverse().slice(0,2).join('/')}</b>,
+    vence em <b>${ciclo.vence.split('-').reverse().slice(0,2).join('/')}</b>.
+    ${ciclo.inferido?' <span class="tag t-w">data inferida</span>':''}
+    ${venceNoDia1(n)?' Como vence no dia 1, é paga com a sobra do último dia do mês anterior.':''}
+  </div>`:`<div class="warn" style="margin-bottom:16px">
+    Sem ciclo cadastrado para ${mLabel(comp)}. O app assume uma cobrança por assinatura.
+    Cadastre em <b>Cadastros → Ciclos de fatura</b> para acertar.</div>`}
+
+  <div class="panel"><h2>Parcelamentos <small>${BRL(somaParc)}</small></h2>
+  ${parcelas.length?`<div class="tw"><table><thead><tr><th>Compra</th>
+    <th class="c">Parcela</th><th class="r">Valor</th><th>Meses em que cai</th><th></th>
+  </tr></thead><tbody>
+  ${parcelas.map(p=>{
+    const ms=mesesDaParcela(p);
+    const qual=ms.indexOf(comp)+1;
+    const total=+p.total_parcelas||ms.length;
+    const jaPagas=total-(+p.restantes);
+    return `<tr><td><b>${esc(p.descricao)}</b>
+      ${Array.isArray(p.competencias)&&p.competencias.length?' <span class="tag t-w">meses definidos</span>':''}</td>
+      <td class="c">${jaPagas+qual} de ${total}</td>
+      <td class="r">${BRL(p.valor_parcela)}</td>
+      <td class="note">${ms.map(m=>mLabel(m)).join(' · ')}</td>
+      <td class="r"><button class="btn alt sm" onclick="pularMes('${p.id}','${comp}')"
+        title="O cartão não cobrou esta parcela neste mês">não caiu aqui →</button></td></tr>`;}).join('')}
+  </tbody></table></div>
+  <div class="pbody"><p class="note">Se o cartão pulou uma fatura, clique em
+  <b>não caiu aqui</b>: a parcela passa para o mês seguinte e as posteriores acompanham.
+  Foi o que aconteceu com o Folheados Omy, que teve parcela 1 em agosto e parcela 2 só em outubro.</p></div>`
+  :'<div class="pbody"><p class="note">Nenhuma parcela neste ciclo.</p></div>'}
+  </div>
+
+  ${proximas.length?`<div class="panel"><h2>Parcelas que caem depois
+    <small>não entram nesta fatura</small></h2>
+    <div class="tw"><table><thead><tr><th>Compra</th><th class="r">Valor</th>
+      <th>Próximo mês</th><th></th></tr></thead><tbody>
+    ${proximas.map(p=>{
+      const prox=mesesDaParcela(p).filter(m=>m>comp)[0];
+      return `<tr><td>${esc(p.descricao)}</td><td class="r">${BRL(p.valor_parcela)}</td>
+      <td>${mLabel(prox)}</td>
+      <td class="r"><button class="btn alt sm" onclick="voltarMes('${p.id}','${comp}')"
+        title="Na verdade esta parcela caiu nesta fatura">caiu aqui ←</button></td></tr>`;}).join('')}
+    </tbody></table></div>
+    <div class="pbody"><p class="note">Se alguma dessas apareceu nesta fatura, clique em
+    <b>caiu aqui</b> para trazê-la de volta.</p></div></div>`:''}
+
+  <div class="panel"><h2>Assinaturas <small>${BRL(somaAssin)}</small></h2>
+  ${assinaturas.length?`<div class="tw"><table><thead><tr><th>Assinatura</th>
+    <th class="c">Dia da cobrança</th><th class="c">Vezes no ciclo</th><th class="r">Valor</th>
+  </tr></thead><tbody>
+  ${assinaturas.map(x=>`<tr><td>${esc(x.a.descricao)}</td>
+    <td class="c">${x.a.dia||'—'}</td>
+    <td class="c">${x.vz>1?`<span class="tag t-no">${x.vz}x</span>`:x.vz}</td>
+    <td class="r">${BRL((+x.a.valor)*x.vz)}${x.vz>1?
+      `<span class="note" style="display:block">${BRL(x.a.valor)} cada</span>`:''}</td></tr>`).join('')}
+  </tbody></table></div>`
+  :'<div class="pbody"><p class="note">Nenhuma assinatura neste cartão.</p></div>'}
+  </div>
+
+  ${terceiros.length?`<div class="panel"><h2>De terceiros <small>${BRL(somaTerc)}</small></h2>
+    <div class="tw"><table><thead><tr><th>Quem</th><th>O que é</th><th class="r">Valor</th>
+    </tr></thead><tbody>
+    ${terceiros.map(t=>`<tr><td><b>${esc(t.pessoa)}</b></td><td>${esc(t.descricao)}</td>
+      <td class="r">${BRL(t.valor)}</td></tr>`).join('')}
+    </tbody></table></div>
+    <div class="pbody"><p class="note">Está na fatura mas não é gasto de vocês.</p></div></div>`:''}
+
+  ${avulsos.length?`<div class="panel"><h2>Outros lançamentos neste cartão</h2>
+    <div class="tw"><table><thead><tr><th>Data</th><th>Descrição</th>
+      <th class="r">Valor</th></tr></thead><tbody>
+    ${avulsos.map(l=>`<tr><td class="mono">${String(l.data).split('-').reverse().join('/')}</td>
+      <td>${esc(l.descricao)}${l.tipo==='Entrada'?' <span class="tag t-ok">crédito</span>':''}</td>
+      <td class="r" style="color:${l.tipo==='Entrada'?'var(--pos)':'inherit'}">${
+        l.tipo==='Entrada'?'− ':''}${BRL(l.valor)}</td></tr>`).join('')}
+    </tbody></table></div></div>`:''}
+
+  <div class="panel"><h2>Fechando a conta</h2>
+  <div class="tw"><table class="mini"><tbody>
+    <tr><td>Parcelamentos</td><td class="r">${BRL(somaParc)}</td></tr>
+    <tr><td>Assinaturas</td><td class="r">${BRL(somaAssin)}</td></tr>
+    <tr><td><b>O app conhece</b></td><td class="r"><b>${BRL(conhecido)}</b></td></tr>
+    ${real?`<tr><td>Valor lançado por você</td><td class="r"><b>${BRL(real.valor)}</b></td></tr>
+      <tr><td class="note">Diferença — compras do dia a dia, encargos</td>
+        <td class="r note" style="color:${naoIdentificado>0?'var(--neg)':'var(--pos)'}">${
+          (naoIdentificado>0?'+':'')+BRL(naoIdentificado)}</td></tr>`
+    :`<tr><td class="note">Ainda não lançada: o app usa a estimativa</td>
+        <td class="r note">${BRL(calc)}</td></tr>`}
+    <tr style="border-top:2px solid var(--rule)"><td><b>Vale nas contas</b></td>
+      <td class="r"><b style="font-size:16px">${BRL(valor)}</b></td></tr>
+  </tbody></table></div>
+  <div class="pbody"><p class="note">Para corrigir o total, edite o lançamento da fatura em
+  <b>Lançamentos</b>. Para corrigir a composição, use os botões acima ou os cadastros.</p></div>
+  </div>`;
+}
+
+/* =====================================================================
    SHELL E INICIALIZAÇÃO
    ===================================================================== */
-const VIEWS={painel:vPainel,dash:vDash,compra:vCompra,lanc:vLanc,parc:vParc,assin:vAssin,
+const VIEWS={painel:vPainel,dash:vDash,fatura:vFatura,compra:vCompra,lanc:vLanc,parc:vParc,assin:vAssin,
              terc:vTerc,cal:vCal,proj:vProj,amort:vAmort,casa:vCasa,cad:vCad,metas:vMetas,backup:vBackup,log:vLog};
 
 function render(){
