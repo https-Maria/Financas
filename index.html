@@ -123,6 +123,43 @@ button{cursor:pointer;border:none;background:none}
 .kpi .s{font-size:11.5px;color:var(--muted);display:block;margin-top:3px}
 .v.pos{color:var(--pos)} .v.neg{color:var(--neg)} .v.amb{color:var(--amber)}
 
+/* ---------- plano com fluxo de caixa (mesma cara da página interativa) ---------- */
+.hero-plano{background:var(--steel);border-radius:16px 16px 6px 16px;color:#fff;
+  padding:22px 22px;margin-bottom:14px}
+.hero-plano .rot{font-size:12.5px;opacity:.78}
+.hero-plano .val{font-size:28px;font-weight:800;letter-spacing:-.02em;line-height:1.1;margin-top:3px}
+.hero-plano .sub{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+  gap:12px 20px;margin-top:14px}
+.hero-plano .sub div{font-size:11.5px;opacity:.85}
+.hero-plano .sub b{display:block;font-size:15px;font-weight:700;opacity:1;margin-top:1px}
+
+.sliders-plano{display:grid;gap:16px;margin-bottom:4px}
+@media(min-width:560px){.sliders-plano{grid-template-columns:1fr 1fr 1fr}}
+.sl-plano label{display:flex;flex-direction:column;gap:2px;font-size:12px;font-weight:600;
+  color:var(--muted);margin-bottom:7px}
+.sl-plano label span{font-weight:800;color:var(--steel);font-size:14.5px}
+.sl-plano input[type=range]{width:100%;-webkit-appearance:none;height:6px;border-radius:3px;
+  background:var(--rule-soft);outline:none;margin:0}
+.sl-plano input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:19px;height:19px;
+  border-radius:50%;background:var(--steel);border:3px solid #fff;cursor:pointer;
+  box-shadow:0 1px 4px rgba(0,0,0,.25)}
+.sl-plano input[type=range]::-moz-range-thumb{width:19px;height:19px;border-radius:50%;
+  background:var(--steel);border:3px solid #fff;cursor:pointer}
+.sl-plano .faixa{display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-top:3px}
+
+.mesplano{background:var(--panel);border:1px solid var(--rule);border-radius:10px;
+  margin-bottom:7px;overflow:hidden}
+.mesplano button.cabplano{width:100%;text-align:left;background:none;border:none;color:var(--ink);
+  font:inherit;padding:11px 14px;display:flex;align-items:center;gap:10px;cursor:pointer}
+.mesplano button.cabplano:hover{background:var(--steel-bg)}
+.mesplano .nomeMesP{font-weight:700;font-size:13.5px;min-width:52px}
+.mesplano .resumoP{flex:1;font-size:11.5px;color:var(--muted);display:flex;gap:6px;flex-wrap:wrap}
+.mesplano .setaP{transition:transform .18s ease;color:var(--muted);flex:0 0 auto}
+.mesplano.aberto .setaP{transform:rotate(90deg)}
+.mesplano .corpoP{max-height:0;overflow:hidden;transition:max-height .22s ease}
+.mesplano.aberto .corpoP{max-height:420px}
+.mesplano .corpoInP{padding:2px 14px 13px}
+
 /* ---------- dashboard ---------- */
 .filtros{background:var(--panel);border:1px solid var(--rule);border-radius:3px;
   padding:12px 15px;margin-bottom:14px;display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
@@ -372,6 +409,6 @@ input:focus,select:focus{border-color:var(--steel);outline:none;box-shadow:0 0 0
 <div id="root"><div class="gate"><div class="gatebox"><h1>Carregando…</h1>
 <p class="sub">Conectando ao banco de dados.</p></div></div></div>
 <div class="toast" id="toast"></div>
-<script type="module" src="app.js?v=44"></script>
+<script type="module" src="app.js?v=45"></script>
 </body>
 </html>
