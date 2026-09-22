@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v44';
+const APP_VER='v45';
 
 /* =====================================================================
    ESTADO
@@ -1487,7 +1487,10 @@ window.setPlano=(campo,v)=>{
   if(campo==='vida') PLANO_VIDA=+v; else if(campo==='caixa') PLANO_CAIXA=+v; else if(campo==='colchao') PLANO_COLCHAO=+v;
   render();
 };
-window.setPlanoAberto=(k,aberto)=>{ PLANO_ABERTO = aberto?k:null; };
+window.togglePlanoMes=(k)=>{
+  if(PLANO_ABERTOS.has(k)) PLANO_ABERTOS.delete(k); else PLANO_ABERTOS.add(k);
+  render();
+};
 window.abrirGrupo=(p,d)=>{ const ch=p+'|'+d; GRUPO_ABERTO = GRUPO_ABERTO===ch?null:ch; render(); };
 window.receberTerc=async(id,v)=>{
   if(await atualizar('terceiros',id,{recebido:v, recebido_em: v?hoje():null})){
@@ -1904,7 +1907,8 @@ let FIN_SEL=null, FIN_PROX=0, FIN_ULT=6, FIN_DATA=null;
    do banco: blocosDoMes() já inclui rendas, fixas, faturas e qualquer
    13º/férias que tenha sido lançado como um avulso de data futura.
    ===================================================================== */
-let PLANO_VIDA=1800, PLANO_CAIXA=500, PLANO_COLCHAO=300, PLANO_HORIZ=18, PLANO_ABERTO=null;
+let PLANO_VIDA=1800, PLANO_CAIXA=500, PLANO_COLCHAO=300, PLANO_HORIZ=18;
+const PLANO_ABERTOS=new Set();
 const ym2 = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
 
 function planoAntecipacaoSeguro(fin, vida, caixaAlvo, colchao, horizM){
@@ -2141,58 +2145,77 @@ function vAmort(){
     </div></div>`;
   })()}
 
-  <div class="panel"><h2>Plano com fluxo de caixa real<small>dia a dia, não só o total do mês</small></h2>
+  <div class="painel-plano">
   ${(()=>{
     const P=planoAntecipacaoSeguro(f, PLANO_VIDA, PLANO_CAIXA, PLANO_COLCHAO, PLANO_HORIZ);
     const perigo = P.pior.saldo < PLANO_COLCHAO*0.5;
-    return `<div class="pbody">
-      <p class="note" style="margin-bottom:14px">Usa o mesmo cálculo do Painel — renda, contas fixas,
-      faturas e qualquer lançamento futuro que você já tenha registrado (13º, férias). "Vida" é a única
-      suposição: o app não rastreia gasolina, mercado e lazer por pedido seu, então você ajusta aqui.</p>
-
-      <div class="form" style="margin-bottom:6px">
-        <div class="fld"><label>Vida (gasolina, mercado, lazer) — ${BRL(PLANO_VIDA)}</label>
-          <input type="range" min="1000" max="3000" step="50" value="${PLANO_VIDA}"
-            oninput="setPlano('vida',this.value)"></div>
-        <div class="fld"><label>Caixinha por mês — ${BRL(PLANO_CAIXA)}</label>
-          <input type="range" min="0" max="1000" step="50" value="${PLANO_CAIXA}"
-            oninput="setPlano('caixa',this.value)"></div>
-        <div class="fld"><label>Colchão mínimo na conta — ${BRL(PLANO_COLCHAO)}</label>
-          <input type="range" min="100" max="800" step="50" value="${PLANO_COLCHAO}"
-            oninput="setPlano('colchao',this.value)"></div>
+    return `<div class="hero-plano">
+      <div class="rot">Carro quitado em</div>
+      <div class="val">${P.quitadoEm?fmtD(P.quitadoEm):(P.horizonteEsgotado?'não quita em '+PLANO_HORIZ+' meses':'—')}</div>
+      <div class="sub">
+        <div>Economia em juros<b>${BRL(P.totalEconomia)}</b></div>
+        <div>Total antecipado<b>${BRL(P.totalAntecipado)}</b></div>
+        <div>Guardado na caixinha<b>${BRL(P.totalCaixinha)}</b></div>
+        <div>Pior momento<b>${BRL(P.pior.saldo)}</b></div>
       </div>
+    </div>
 
-      ${perigo?`<div class="warn" style="margin-bottom:14px">O pior momento deste plano chega perto de
-        zero: ${BRL(P.pior.saldo)} em ${fmtD(P.pior.data)}. Considere um colchão maior.</div>`:''}
-
-      <div class="kpis" style="margin-bottom:14px">
-        ${kpi('Carro quitado em', P.quitadoEm?fmtD(P.quitadoEm):(P.horizonteEsgotado?'não quita em '+PLANO_HORIZ+' meses':'—'),
-          P.quitadoEm?'':'aumente o horizonte ou o ritmo', P.quitadoEm?'pos':'amb')}
-        ${kpi('Economia em juros', BRL(P.totalEconomia),'','pos')}
-        ${kpi('Total antecipado', BRL(P.totalAntecipado))}
-        ${kpi('Guardado na caixinha', BRL(P.totalCaixinha))}
-        ${kpi('Pior momento do plano', BRL(P.pior.saldo), fmtD(P.pior.data), P.pior.saldo<PLANO_COLCHAO?'amb':'pos')}
+    <div class="panel"><h2>Ajuste o plano<small>simula dia a dia, os dados vêm do Painel</small></h2>
+      <div class="pbody">
+        <p class="note" style="margin-bottom:14px">Usa o mesmo cálculo do Painel — renda, contas fixas,
+        faturas e qualquer lançamento futuro já registrado (13º, férias). "Vida" é a única suposição:
+        o app não rastreia gasolina, mercado e lazer por pedido seu.</p>
+        <div class="sliders-plano">
+          <div class="sl-plano">
+            <label>Vida — gasolina, mercado, lazer <span>${BRL(PLANO_VIDA)}</span></label>
+            <input type="range" min="1000" max="3000" step="50" value="${PLANO_VIDA}"
+              oninput="setPlano('vida',this.value)">
+            <div class="faixa"><span>1.000</span><span>3.000</span></div>
+          </div>
+          <div class="sl-plano">
+            <label>Caixinha por mês <span>${BRL(PLANO_CAIXA)}</span></label>
+            <input type="range" min="0" max="1000" step="50" value="${PLANO_CAIXA}"
+              oninput="setPlano('caixa',this.value)">
+            <div class="faixa"><span>0</span><span>1.000</span></div>
+          </div>
+          <div class="sl-plano">
+            <label>Colchão mínimo na conta <span>${BRL(PLANO_COLCHAO)}</span></label>
+            <input type="range" min="100" max="800" step="50" value="${PLANO_COLCHAO}"
+              oninput="setPlano('colchao',this.value)">
+            <div class="faixa"><span>100</span><span>800</span></div>
+          </div>
+        </div>
+        ${perigo?`<div class="warn" style="margin-top:14px">O pior momento deste plano chega perto de
+          zero: ${BRL(P.pior.saldo)} em ${fmtD(P.pior.data)}. Considere um colchão maior.</div>`:''}
       </div>
+    </div>
 
-      <div class="kgroup">Mês a mês</div>
+    <div class="panel"><h2>Mês a mês</h2><div class="pbody" style="padding-bottom:8px">
       ${P.meses.map(m=>{
-        const aberto = PLANO_ABERTO===m.k;
+        const aberto = PLANO_ABERTOS.has(m.k);
         const extra = avulsosDoMes(m.k).filter(l=>l.tipo==='Entrada').reduce((s,l)=>s+ +l.valor,0);
-        return `<details class="mini-det" ${aberto?'open':''} ontoggle="setPlanoAberto('${m.k}',this.open)">
-          <summary><span>${mLabel(m.k)}
-            ${extra>0?`<span class="tag t-w">+ ${BRL(extra)} extra</span>`:''}
-            ${m.antecipa.length?`<span class="tag t-ok">${m.antecipa.length} parcela${m.antecipa.length===1?'':'s'}</span>`:''}
-            ${!m.antecipa.length&&!extra?'<span class="tag t-g">só a parcela normal</span>':''}</span></summary>
-          <div style="padding:8px 0">
+        return `<div class="mesplano ${aberto?'aberto':''}">
+          <button class="cabplano" onclick="togglePlanoMes('${m.k}')">
+            <span class="nomeMesP">${mLabel(m.k)}</span>
+            <span class="resumoP">
+              ${extra>0?`<span class="tag t-w">+ ${BRL(extra)} extra</span>`:''}
+              ${m.antecipa.length?`<span class="tag t-ok">${m.antecipa.length} parcela${m.antecipa.length===1?'':'s'}</span>`:''}
+              ${!m.antecipa.length&&!extra?'<span class="tag t-g">só a parcela normal</span>':''}
+            </span>
+            <span class="setaP">&#8250;</span>
+          </button>
+          <div class="corpoP"><div class="corpoInP">
             ${m.antecipa.map(p=>`<div class="dline"><span class="note">dia ${p.data.getDate()} · antecipa parcela ${p.parcela}</span>
               <span style="color:var(--pos);font-weight:600">${BRL(p.valor)}</span></div>`).join('')}
             ${m.caixinha>0?`<div class="dline"><span class="note">Caixinha</span><span>${BRL(m.caixinha)}</span></div>`:''}
-          </div></details>`;
+            ${!m.antecipa.length&&!m.caixinha?`<div class="dline"><span class="note">Só a parcela normal do carro, ${BRL(f.valor_parcela)}</span></div>`:''}
+          </div></div>
+        </div>`;
       }).join('')}
-      <p class="note" style="margin-top:12px">O plano nunca deixa a conta cair abaixo do colchão, olhando
-      30 dias à frente — não só o saldo de hoje. É por isso que ele às vezes espera um pouco antes de
-      antecipar, mesmo quando parece ter sobra no total do mês.</p>
-    </div>`;
+      <p class="note" style="margin-top:8px">O plano nunca deixa a conta cair abaixo do colchão, olhando
+      30 dias à frente — não só o saldo de hoje. É por isso que às vezes espera antes de antecipar,
+      mesmo quando parece ter sobra no total do mês.</p>
+    </div></div>`;
   })()}
   </div>
 
