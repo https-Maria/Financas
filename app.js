@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v45';
+const APP_VER='v49';
 
 /* =====================================================================
    ESTADO
@@ -894,11 +894,25 @@ const rotulo=id=>(PAGES.find(p=>p[0]===id)||[,id])[1];
 let MENU_ABERTO=null;
 let CUR='painel', MREF=ym(hoje()), VISAO=null;  // 'previsto' | 'realizado'
 
-function head(t,p){return `<div class="phead"><h1>${t}</h1><p>${p}</p></div>`
-  +(FALTANDO.length?`<div class="warn" style="margin-bottom:16px"><b>Banco desatualizado.</b>
-     ${FALTANDO.length===1?'A tabela':'As tabelas'} <b>${FALTANDO.join(', ')}</b>
-     ${FALTANDO.length===1?'ainda não existe':'ainda não existem'} no Supabase.
-     Rode <b>migracao-casa.sql</b> no SQL Editor e recarregue. Até lá, esta parte fica vazia.</div>`:'');}
+/* qual script resolve cada tabela que pode estar faltando */
+const MIGRACAO_DE = {
+  casa_itens:'migracao-casa.sql', financiamentos:'migracao-financiamento.sql',
+  agenda:'migracao-agenda.sql', snapshots:'migracao-backup.sql',
+  ciclos:'migracao-ciclos.sql', auditoria:'migracao-auditoria.sql',
+};
+function head(t,p){
+  /* Tabelas que têm migração própria (casa, financiamento, agenda, cópias,
+     ciclos, atividade) já mostram o aviso certo na aba que realmente precisa
+     delas — cada uma checa FALTANDO.includes('sua_tabela') no próprio corpo.
+     Aqui, no cabeçalho comum a toda tela, só avisa de tabelas SEM esse
+     tratamento próprio — senão faltar 'auditoria' faria até o Painel, que
+     não usa auditoria pra nada, mostrar um aviso sobre ela. */
+  const faltandoGeral = FALTANDO.filter(t=>!MIGRACAO_DE[t]);
+  return `<div class="phead"><h1>${t}</h1><p>${p}</p></div>`
+  +(faltandoGeral.length?`<div class="warn" style="margin-bottom:16px"><b>Banco desatualizado.</b>
+     ${faltandoGeral.length===1?'A tabela':'As tabelas'} <b>${faltandoGeral.join(', ')}</b>
+     ${faltandoGeral.length===1?'ainda não existe':'ainda não existem'} no Supabase.
+     Rode <b>schema.sql</b> no SQL Editor e recarregue. Até lá, esta parte fica vazia.</div>`:'');}
 function kpi(k,v,s,cls){return `<div class="kpi"><span class="k">${k}</span>
   <span class="v ${cls||''}">${v}</span>${s?`<span class="s">${s}</span>`:''}</div>`;}
 function bar(l,v,lim){const w=Math.min(100,v*100),
@@ -1487,9 +1501,35 @@ window.setPlano=(campo,v)=>{
   if(campo==='vida') PLANO_VIDA=+v; else if(campo==='caixa') PLANO_CAIXA=+v; else if(campo==='colchao') PLANO_COLCHAO=+v;
   render();
 };
-window.togglePlanoMes=(k)=>{
-  if(PLANO_ABERTOS.has(k)) PLANO_ABERTOS.delete(k); else PLANO_ABERTOS.add(k);
+window.addEvento=(finId,tipo)=>{
+  if(!PLANO_EVENTOS[finId]) PLANO_EVENTOS[finId]=[];
+  const hj=hoje();
+  PLANO_EVENTOS[finId].push({id:'ev'+(++PLANO_ID), tipo, data:hj,
+    valor: tipo==='guardar'?500:0, parcelas: tipo==='antecipar'?1:0,
+    controla: tipo==='antecipar'?'parcelas':'valor'});
   render();
+};
+window.delEvento=(finId,id)=>{
+  PLANO_EVENTOS[finId]=(PLANO_EVENTOS[finId]||[]).filter(e=>e.id!==id);
+  render();
+};
+window.setEvento=(finId,id,campo,v)=>{
+  const ev=(PLANO_EVENTOS[finId]||[]).find(e=>e.id===id); if(!ev) return;
+  if(campo==='tipo'){ ev.tipo=v; ev.controla = v==='antecipar'?'parcelas':'valor'; }
+  else if(campo==='data'){ ev.data=v; }
+  else if(campo==='valor'){ ev.valor=+v||0; ev.controla='valor'; }
+  else if(campo==='parcelas'){ ev.parcelas=Math.max(0,+v||0); ev.controla='parcelas'; }
+  render();
+};
+window.gerarSugestaoPlano=(finId)=>{
+  const fin=D.financiamentos.find(x=>x.id===finId); if(!fin) return;
+  const auto=sugestaoAutomatica(fin, PLANO_VIDA, PLANO_COLCHAO, PLANO_HORIZ);
+  PLANO_EVENTOS[finId]=auto;
+  render(); toast('Sugestão gerada — edite ou exclua o que quiser');
+};
+window.limparPlano=(finId)=>{
+  if(!confirm('Apagar todos os eventos deste financiamento?')) return;
+  PLANO_EVENTOS[finId]=[]; render();
 };
 window.abrirGrupo=(p,d)=>{ const ch=p+'|'+d; GRUPO_ABERTO = GRUPO_ABERTO===ch?null:ch; render(); };
 window.receberTerc=async(id,v)=>{
@@ -1804,7 +1844,8 @@ function vCasa(){
       : `Cabe. No pior mês (${mLabel(pior.k)}) ainda sobram ${BRL(pior.sal)}, com ${PCT(maxPct)} da renda comprometida.`;
 
   if(FALTANDO.includes('casa_itens'))
-    return head('Projeções Casa','Esta aba precisa de uma tabela que ainda não existe no seu banco.');
+    return head('Projeções Casa','Esta aba precisa de uma tabela que ainda não existe no seu banco.')
+      +'<div class="warn">Rode <b>'+MIGRACAO_DE.casa_itens+'</b> no SQL Editor e recarregue.</div>';
   return head('Projeções Casa','Suas contas de hoje e como ficariam assumindo a casa. Nada aqui afeta o painel nem a projeção geral.')
   +`<div class="kpis">
     ${kpi('Custo da casa por mês',BRL(total),itens.filter(i=>i.ativo).length+' itens')}
@@ -1898,7 +1939,7 @@ window.addCasaItem=async()=>{
 /* =====================================================================
    AMORTIZAÇÃO — plano de pagamento dos financiamentos
    ===================================================================== */
-let FIN_SEL=null, FIN_PROX=0, FIN_ULT=6, FIN_DATA=null;
+let FIN_SEL=null;
 /* =====================================================================
    PLANO DE ANTECIPAÇÃO COM FLUXO DE CAIXA REAL
    Simula dia a dia, usando os mesmos dados que alimentam o Painel — não
@@ -1907,11 +1948,103 @@ let FIN_SEL=null, FIN_PROX=0, FIN_ULT=6, FIN_DATA=null;
    do banco: blocosDoMes() já inclui rendas, fixas, faturas e qualquer
    13º/férias que tenha sido lançado como um avulso de data futura.
    ===================================================================== */
-let PLANO_VIDA=1800, PLANO_CAIXA=500, PLANO_COLCHAO=300, PLANO_HORIZ=18;
-const PLANO_ABERTOS=new Set();
+let PLANO_VIDA=1800, PLANO_COLCHAO=300, PLANO_HORIZ=18;
+let PLANO_EVENTOS={};   /* { finId: [{id,tipo,data,valor,parcelas,controla}] } — a lista que a usuária monta */
+let PLANO_ID=0;
 const ym2 = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
 
-function planoAntecipacaoSeguro(fin, vida, caixaAlvo, colchao, horizM){
+/* Cada linha é um evento que a usuária controla — quando, quanto, pra onde.
+   Roda em ordem de data: quem vem primeiro consome as parcelas mais caras (do
+   fim do contrato) primeiro. Depois, soma isso ao fluxo real do Painel dia a
+   dia, pra mostrar exatamente onde o saldo passa e onde ele fura o colchão —
+   sem travar nada, só avisando. */
+function ordemParcelas(fin){
+  const L=tabelaAmortizacao(fin);
+  return L.filter(l=>!l.paga).map(l=>l.k);   // crescente: 11,12,...,36 — o fim é o mais caro de antecipar
+}
+function custoParcela(fin, k, data){
+  const L=tabelaAmortizacao(fin), i=taxaEfetiva(fin), diaria=Math.pow(1+i,1/30)-1;
+  const item=L.find(l=>l.k===k);
+  const dias=Math.max(0, Math.round((item.venc-data)/86400000));
+  return (+fin.valor_parcela)/Math.pow(1+diaria,dias);
+}
+
+/* Resolve os eventos em ordem de data: pra cada 'antecipar', decide quais
+   parcelas ele compra (dado valor OU quantidade — o que a usuária travou) e
+   registra o valor/quantidade reais. 'guardar' só passa direto. */
+function resolverEventos(fin, eventos){
+  const pend=[...ordemParcelas(fin)];
+  const L=tabelaAmortizacao(fin), i=taxaEfetiva(fin), diaria=Math.pow(1+i,1/30)-1;
+  const vencMap={}; L.forEach(l=>vencMap[l.k]=l.venc);
+  function vp(k,data){
+    const dias=Math.max(0,Math.round((vencMap[k]-data)/86400000));
+    return (+fin.valor_parcela)/Math.pow(1+diaria,dias);
+  }
+  const ordenados=[...eventos].sort((a,b)=>a.data-b.data || String(a.id).localeCompare(String(b.id)));
+  const resolvidos=[];
+  for(const ev of ordenados){
+    if(ev.tipo==='guardar'){
+      resolvidos.push({...ev, valorReal:+ev.valor||0, compradas:[]});
+      continue;
+    }
+    const compradas=[]; let custo=0;
+    if(ev.controla==='parcelas'){
+      const alvo=Math.max(0,+ev.parcelas||0);
+      for(let c=0;c<alvo && pend.length;c++){
+        const k=pend.pop(); const v=vp(k,ev.data);
+        compradas.push({parcela:k,valor:v}); custo+=v;
+      }
+    } else {
+      const alvo=Math.max(0,+ev.valor||0);
+      while(pend.length){
+        const k=pend[pend.length-1]; const v=vp(k,ev.data);
+        if(custo+v>alvo) break;
+        pend.pop(); compradas.push({parcela:k,valor:v}); custo+=v;
+      }
+    }
+    resolvidos.push({...ev, valorReal:custo, parcelasReais:compradas.length, compradas});
+  }
+  return {resolvidos, restam:pend.length,
+    quitadoEm: pend.length===0 ? resolvidos.filter(e=>e.compradas.length).pop()?.data : null};
+}
+
+/* Constrói a curva de saldo dia a dia — o fluxo real do Painel, menos "vida",
+   menos os eventos resolvidos em suas datas. Não decide nada, só mostra a
+   consequência do que está na lista. */
+function curvaComEventos(fin, eventos, vida, horizM){
+  const {resolvidos, restam, quitadoEm} = resolverEventos(fin, eventos);
+  const kIni=ym(hoje());
+  const meses=horizon(horizM,kIni);
+  const porData=new Map();
+  resolvidos.forEach(ev=>{
+    const t=ev.data.getTime();
+    porData.set(t, (porData.get(t)||0) - (ev.valorReal||0));
+  });
+  const dias=[]; let saldo=saldoConta().atual ?? (+cfg().saldo_conferido||0);
+  let pior={data:null,saldo};
+  meses.forEach(k=>{
+    const blocos=blocosDoMes(k);
+    const nDias=ultimoDiaDoMes(k);
+    const porDia={};
+    blocos.forEach(b=>{ const d=Math.min(b.dia,nDias); porDia[d]=(porDia[d]||0)+b.saldo; });
+    const [ay,am]=k.split('-').map(Number);
+    for(let d=1; d<=nDias; d++){
+      const data=new Date(ay,am-1,d);
+      if(k===kIni && data<new Date(new Date().setHours(0,0,0,0))) continue;
+      let delta=(porDia[d]||0)-vida/nDias;
+      delta += porData.get(data.getTime())||0;
+      saldo+=delta;
+      if(pior.data===null || saldo<pior.saldo) pior={data,saldo};
+      dias.push({data, saldo, k});
+    }
+  });
+  return {curva:dias, pior, resolvidos, restam, quitadoEm};
+}
+
+/* Ponto de partida editável: o antigo motor guloso, olhando 30 dias à frente
+   pra nunca sugerir algo que fure o colchão. A usuária edita ou apaga depois —
+   isso não é mais a palavra final, é só um rascunho. */
+function sugestaoAutomatica(fin, vida, colchao, horizM){
   const L=tabelaAmortizacao(fin), i=taxaEfetiva(fin), diaria=Math.pow(1+i,1/30)-1;
   const PMT=+fin.valor_parcela;
   const vencMap={}; L.forEach(l=>vencMap[l.k]=l.venc);
@@ -1927,16 +2060,11 @@ function planoAntecipacaoSeguro(fin, vida, caixaAlvo, colchao, horizM){
     const blocos=blocosDoMes(k);
     const nDias=ultimoDiaDoMes(k);
     const porDia={};
-    blocos.forEach(b=>{
-      /* o bloco do último dia útil pode vir marcado como dia 31 mesmo em mês de 30 —
-         precisa cair no dia real, senão esse dinheiro some da simulação. */
-      const d=Math.min(b.dia, nDias);
-      porDia[d]=(porDia[d]||0)+b.saldo;
-    });
+    blocos.forEach(b=>{ const d=Math.min(b.dia,nDias); porDia[d]=(porDia[d]||0)+b.saldo; });
     const [ay,am]=k.split('-').map(Number);
     for(let d=1; d<=nDias; d++){
       const data=new Date(ay,am-1,d);
-      if(k===kIni && data<new Date(new Date().setHours(0,0,0,0))) continue; // não reprocessa o passado
+      if(k===kIni && data<new Date(new Date().setHours(0,0,0,0))) continue;
       dias.push({data, delta:(porDia[d]||0)-vida/nDias, k});
     }
   });
@@ -1949,39 +2077,31 @@ function planoAntecipacaoSeguro(fin, vida, caixaAlvo, colchao, horizM){
     return m;
   }
   let saldo = saldoConta().atual ?? (+cfg().saldo_conferido||0);
-  const pagamentos=[], caixinhas=[]; let cMesKey=null;
-  let pior = dias[0] ? {data:dias[0].data, saldo} : {data:new Date(), saldo};
+  const eventos=[]; let cMesKey=null;
   for(let idx=0; idx<n && pend.length; idx++){
     const dd=dias[idx];
     saldo+=dd.delta;
-    if(saldo<pior.saldo) pior={data:dd.data, saldo};
     const f=folgaFutura(idx);
+    let feitos=0;
     while(pend.length){
       const k=pend[pend.length-1], v=vp(k,dd.data);
-      if(saldo-colchao+f>=v){ saldo-=v; pend.pop(); pagamentos.push({data:dd.data,parcela:k,valor:v}); }
-      else break;
+      if(saldo-colchao+f>=v){ saldo-=v; pend.pop(); feitos++; } else break;
     }
-    if(caixaAlvo>0 && cMesKey!==dd.k && saldo-colchao+f>=caixaAlvo){
-      saldo-=caixaAlvo; caixinhas.push({data:dd.data,valor:caixaAlvo}); cMesKey=dd.k;
+    if(feitos) eventos.push({id:'ev'+(++PLANO_ID), tipo:'antecipar', data:dd.data.toISOString().slice(0,10),
+      parcelas:feitos, valor:0, controla:'parcelas'});
+    if(dd.k!==cMesKey && saldo-colchao+f>=500){
+      saldo-=500; cMesKey=dd.k;
+      eventos.push({id:'ev'+(++PLANO_ID), tipo:'guardar', data:dd.data.toISOString().slice(0,10),
+        valor:500, parcelas:0, controla:'valor'});
     }
   }
-  const totalAntecipado=pagamentos.reduce((s,p)=>s+p.valor,0);
-  const totalEconomia=pagamentos.reduce((s,p)=>s+(PMT-p.valor),0);
-  const totalCaixinha=caixinhas.reduce((s,c)=>s+c.valor,0);
-  const porMes=new Map();
-  const pega=(k,ref)=>{ if(!porMes.has(k)) porMes.set(k,{k,ref,antecipa:[],caixinha:0}); return porMes.get(k); };
-  pagamentos.forEach(p=>{ const k=ym2(p.data); pega(k,p.data).antecipa.push(p); });
-  caixinhas.forEach(c=>{ const k=ym2(c.data); pega(k,c.data).caixinha+=c.valor; });
-  const mesesOut=[...porMes.values()].sort((a,b)=>a.k.localeCompare(b.k));
-  return {pagamentos, caixinhas, totalAntecipado, totalEconomia, totalCaixinha,
-    restam:pend.length, pior,
-    quitadoEm: pend.length===0 ? pagamentos[pagamentos.length-1]?.data : null,
-    meses:mesesOut, horizonteEsgotado: pend.length>0 && dias.length===n};
+  return eventos;
 }
 
 function vAmort(){
   if(FALTANDO.includes('financiamentos'))
-    return head('Amortização','Esta aba precisa de uma tabela que ainda não existe no seu banco.');
+    return head('Amortização','Esta aba precisa de uma tabela que ainda não existe no seu banco.')
+      +'<div class="warn">Rode <b>'+MIGRACAO_DE.financiamentos+'</b> no SQL Editor e recarregue.</div>';
   const fins=D.financiamentos.filter(f=>f.ativo);
   if(!fins.length)
     return head('Amortização','Nenhum financiamento cadastrado.')
@@ -1990,7 +2110,6 @@ function vAmort(){
   const f = fins.find(x=>x.id===FIN_SEL) || fins[0];
   const R = resumoFin(f);
   const fmtD = d => d ? String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+d.getFullYear() : '—';
-  const P = anteciparPlano(f,{prox:FIN_PROX,ult:FIN_ULT,data:FIN_DATA});
   const pctPago = R.pagas/(+f.total_parcelas);
 
   return head('Amortização','Como a dívida se comporta ao longo do contrato e quanto custa antecipar.')
@@ -2027,195 +2146,150 @@ function vAmort(){
     ${f.observacao?`<p class="note" style="margin-top:10px">${esc(f.observacao)}</p>`:''}
   </div></div>
 
-  <div class="panel"><h2>Simular antecipação <small>nada é gravado; é só simulação</small></h2>
-    <div class="pbody">
-      <div class="form" style="margin-bottom:10px">
-        <div class="fld"><label>Das próximas a vencer</label>
-          <input type="number" min="0" max="${R.restantes}" value="${FIN_PROX}" oninput="setProx(+this.value)">
-          <span class="note">${FIN_PROX?'parcelas '+P.itens.filter(x=>x.ponta==='próxima').map(x=>x.k).join(', '):'nenhuma'}</span>
-        </div>
-        <div class="fld"><label>Das últimas do contrato</label>
-          <input type="number" min="0" max="${R.restantes}" value="${FIN_ULT}" oninput="setUlt(+this.value)">
-          <span class="note">${FIN_ULT?'parcelas '+P.itens.filter(x=>x.ponta==='última').map(x=>x.k).join(', '):'nenhuma'}</span>
-        </div>
-        <div class="fld"><label>Dia do pagamento</label>
-          <input type="date" value="${P.pagamento.toISOString().slice(0,10)}" onchange="setFinData(this.value)">
-        </div>
-        <div class="fld"><label>Total escolhido</label>
-          <div style="padding:7px 0;font-weight:600;font-size:15px">${P.n} de ${R.restantes}</div>
-        </div>
-      </div>
-      <div class="qbtns" style="margin-bottom:14px">
-        <button class="qbtn" onclick="setAntec(0,3)">3 do fim</button>
-        <button class="qbtn" onclick="setAntec(0,6)">6 do fim</button>
-        <button class="qbtn" onclick="setAntec(0,12)">12 do fim</button>
-        <button class="qbtn" onclick="setAntec(1,2)">1 agora + 2 do fim</button>
-        <button class="qbtn" onclick="setAntec(3,0)">3 próximas</button>
-        <button class="qbtn" onclick="setAntec(0,${R.restantes})">quitar tudo</button>
-        <button class="qbtn" onclick="setAntec(0,0)">limpar</button>
-      </div>
-
-      <div class="verdict ${P.economia>0?'ok':'warn'}" style="border:1px solid var(--rule);border-radius:3px;margin-bottom:14px">
-        ${P.n===0?'Escolha quantas parcelas quer antecipar de cada ponta.'
-        :`Antecipando ${[P.prox?P.prox+' das próximas':'',P.ult?P.ult+' do fim':''].filter(Boolean).join(' e ')},
-          você paga <b>${BRL(P.custo)}</b> em vez de ${BRL(P.nominal)} — economia de <b>${BRL(P.economia)}</b>.
-          ${P.qtdRestante?`Sobram ${P.qtdRestante} parcelas, até ${fmtD(P.novaUltima)}.`:'O contrato fica quitado.'}`}
-      </div>
-
-      <div class="tw"><table class="mini"><tbody>
-        <tr><td>Se pagar no vencimento</td><td class="r">${BRL(P.nominal)}</td></tr>
-        <tr><td>Pagando em ${fmtD(P.pagamento)}</td><td class="r"><b>${BRL(P.custo)}</b></td></tr>
-        <tr><td><b>Economia</b></td><td class="r"><b style="color:var(--pos)">${BRL(P.economia)}</b></td></tr>
-        <tr><td>Desconto médio por parcela</td><td class="r">${P.n?BRL(P.economia/P.n):'—'}</td></tr>
-        <tr><td>Parcelas que sobram</td><td class="r">${P.qtdRestante}</td></tr>
-        <tr><td>Contrato termina em</td><td class="r">${P.novaUltima?fmtD(P.novaUltima):'quitado'}</td></tr>
-      </tbody></table></div>
-
-      ${P.itens.length?`<details class="mini-det" style="margin-top:10px"><summary>
-        <span>Ver as ${P.n} parcelas escolhidas</span><b>${BRL(P.custo)}</b></summary>
-        <div class="tw"><table class="mini"><thead><tr>
-          <th class="c">Nº</th><th>Vence</th><th>Ponta</th><th class="r">Faltam</th>
-          <th class="r">Valor hoje</th><th class="r">Desconto</th></tr></thead><tbody>
-        ${P.itens.map(x=>`<tr><td class="c">${x.k}</td><td class="mono">${fmtD(x.venc)}</td>
-          <td><span class="tag ${x.ponta==='última'?'t-ok':'t-i'}">${x.ponta}</span></td>
-          <td class="r">${x.dias} dias</td><td class="r">${BRL(x.vp)}</td>
-          <td class="r" style="color:var(--pos)">${BRL(x.desconto)}</td></tr>`).join('')}
-        </tbody></table></div></details>`:''}
-
-      <p class="note" style="margin-top:10px">Antecipar as <b>últimas</b> economiza mais, porque são as que
-      carregam mais juros. Antecipar as <b>próximas</b> economiza menos, mas alivia o caixa dos meses seguintes —
-      veja a diferença na tabela abaixo. O desconto é calculado a valor presente pela taxa do contrato;
-      o valor exato do banco pode variar alguns centavos.</p>
-    </div></div>
-
+    <div class="painel-plano">
   ${(()=>{
-    if(!P.n) return `<div class="panel"><h2>O que muda no seu caixa</h2>
-      <div class="pbody"><p class="note">Escolha parcelas acima para ver o efeito.</p></div></div>`;
-    const mesPag = ym(P.pagamento.toISOString().slice(0,10));
-    const F = fluxo(24,null,MREF);
-    const linhaPag = F.find(x=>x.k===mesPag);
-    /* parcelas antecipadas que venceriam no próprio mês do pagamento:
-       essas você pagaria de qualquer jeito naquele mês */
-    const noMesmoMes = P.itens.filter(it=>ym(it.venc.toISOString().slice(0,10))===mesPag);
-    const jaSairiaNoMes = noMesmoMes.length * (+f.valor_parcela);
-    const desembolsoExtra = P.custo - jaSairiaNoMes;
-    const sobraAntes = linhaPag ? linhaPag.sal : null;
-    const sobraDepois = linhaPag ? linhaPag.sal - desembolsoExtra : null;
-    const mesesAMenos = P.ult;   /* só as do fim encurtam o contrato */
-    return `
-    <div class="panel"><h2>O que muda no seu caixa</h2><div class="pbody">
-      <div class="warn" style="margin-bottom:14px">
-        <b>Antecipar não pula meses.</b> Você continua pagando ${BRL(f.valor_parcela)} todo mês
-        do jeito que está — o que muda é que o contrato acaba antes, e você paga menos juros.
-        ${noMesmoMes.length?`E as ${noMesmoMes.length} ${noMesmoMes.length===1?'parcela que vence':'parcelas que vencem'}
-          em ${mLabel(mesPag)} ${noMesmoMes.length===1?'sairia':'sairiam'} desse mês de qualquer forma:
-          antecipar só adianta o pagamento e rende o desconto.`:''}
-      </div>
+    const eventos=(PLANO_EVENTOS[f.id]||[]).map(e=>({...e, data:new Date(e.data+'T12:00:00')}));
+    if(!eventos.length){
+      return `<div class="panel"><h2>Nenhum evento ainda</h2><div class="pbody">
+        <p class="note" style="margin-bottom:12px">Monte sua própria lista: quando você antecipa,
+        quanto, ou quando guarda na caixinha. O app mostra o efeito real, dia a dia — sem decidir
+        por você.</p>
+        <button class="btn" onclick="gerarSugestaoPlano('${f.id}')">Começar com uma sugestão</button>
+        <button class="btn alt" onclick="addEvento('${f.id}','antecipar')">Adicionar do zero</button>
+      </div></div>`;
+    }
+    const R=curvaComEventos(f, eventos, PLANO_VIDA, PLANO_HORIZ);
+    const temPerigo = R.curva.some(d=>d.saldo<PLANO_COLCHAO);
 
-      <div class="kgroup">Em ${mLabel(mesPag)}, o mês do pagamento</div>
-      <div class="tw"><table class="mini"><tbody>
-        <tr><td>Sobra prevista do mês</td><td class="r">${linhaPag?BRL(sobraAntes):'fora da janela'}</td></tr>
-        <tr><td>Você desembolsa para antecipar</td><td class="r" style="color:var(--neg)">−${BRL(P.custo)}</td></tr>
-        ${jaSairiaNoMes?`<tr><td class="note">Desse valor, já sairia neste mês</td>
-          <td class="r note">+${BRL(jaSairiaNoMes)}</td></tr>
-        <tr><td>Desembolso extra de verdade</td><td class="r" style="color:var(--neg)">−${BRL(desembolsoExtra)}</td></tr>`:''}
-        <tr style="border-top:2px solid var(--rule)">
-          <td><b>Sobra depois de antecipar</b></td>
-          <td class="r"><b style="font-size:16px;color:${sobraDepois<0?'var(--neg)':'var(--pos)'}">${
-            linhaPag?BRL(sobraDepois):'—'}</b></td></tr>
-      </tbody></table></div>
-      ${linhaPag&&sobraDepois<0?`<div class="verdict bad" style="margin-top:12px;border:1px solid var(--rule);border-radius:3px">
-        Não cabe: ${mLabel(mesPag)} ficaria negativo em ${BRL(Math.abs(sobraDepois))}.</div>`
-      :linhaPag?`<p class="note" style="margin-top:10px">Sobram ${BRL(sobraDepois)} nesse mês.
-        Os meses seguintes não mudam — a parcela continua saindo normalmente.</p>`:''}
+    const C=R.curva;
+    const vs=C.map(x=>x.saldo);
+    const mn=Math.min(0,PLANO_COLCHAO,...vs), mx=Math.max(...vs,PLANO_COLCHAO+100);
+    const larg=760, alt=170;
+    const px=idx=>20+idx*((larg-30)/Math.max(1,C.length-1));
+    const py=v=>alt-((v-mn)/((mx-mn)||1))*(alt-16)+8;
+    const pts=C.map((x,idx)=>px(idx)+','+py(x.saldo)).join(' ');
+    const marcas=R.resolvidos.map(ev=>{
+      const idx=C.findIndex(x=>x.data.getTime()===ev.data.getTime());
+      if(idx<0) return '';
+      const cor = ev.tipo==='guardar' ? 'var(--amber)' : 'var(--pos)';
+      const emPerigo = C[idx].saldo < PLANO_COLCHAO;
+      return `<circle cx="${px(idx)}" cy="${py(C[idx].saldo)}" r="3.5" fill="${emPerigo?'var(--neg)':cor}"/>`;
+    }).join('');
+    let ultimoK=null; const rotulosX=[];
+    C.forEach((x,idx)=>{ if(x.k!==ultimoK){ rotulosX.push({idx,k:x.k}); ultimoK=x.k; } });
 
-      <div class="kgroup" style="margin-top:20px">O que você ganha</div>
-      <div class="tw"><table class="mini"><tbody>
-        <tr><td>Economia em juros</td><td class="r"><b style="color:var(--pos)">${BRL(P.economia)}</b></td></tr>
-        <tr><td>Parcelas que somem do fim</td><td class="r">${mesesAMenos||'nenhuma'}</td></tr>
-        <tr><td>Contrato terminava em</td><td class="r">${fmtD(R.ultima)}</td></tr>
-        <tr><td>Passa a terminar em</td><td class="r"><b>${P.novaUltima?fmtD(P.novaUltima):'quitado agora'}</b></td></tr>
-        <tr><td>Parcelas restantes</td><td class="r">${R.restantes} → <b>${P.qtdRestante}</b></td></tr>
-      </tbody></table></div>
-      ${mesesAMenos?`<p class="note" style="margin-top:10px">A folga real de ${BRL(f.valor_parcela)} por mês
-        só chega em ${fmtD(P.novaUltima)}, quando o contrato acabar — ${mesesAMenos}
-        ${mesesAMenos===1?'mês':'meses'} antes do previsto.</p>`
-      :`<p class="note" style="margin-top:10px">Antecipando só as próximas, o contrato continua terminando
-        em ${fmtD(R.ultima)}. Você paga mais cedo e ganha o desconto, mas não encurta o prazo.</p>`}
-    </div></div>`;
-  })()}
-
-  <div class="painel-plano">
-  ${(()=>{
-    const P=planoAntecipacaoSeguro(f, PLANO_VIDA, PLANO_CAIXA, PLANO_COLCHAO, PLANO_HORIZ);
-    const perigo = P.pior.saldo < PLANO_COLCHAO*0.5;
     return `<div class="hero-plano">
       <div class="rot">Carro quitado em</div>
-      <div class="val">${P.quitadoEm?fmtD(P.quitadoEm):(P.horizonteEsgotado?'não quita em '+PLANO_HORIZ+' meses':'—')}</div>
+      <div class="val">${R.quitadoEm?fmtD(R.quitadoEm):(R.restam+' parcelas ainda sem evento')}</div>
       <div class="sub">
-        <div>Economia em juros<b>${BRL(P.totalEconomia)}</b></div>
-        <div>Total antecipado<b>${BRL(P.totalAntecipado)}</b></div>
-        <div>Guardado na caixinha<b>${BRL(P.totalCaixinha)}</b></div>
-        <div>Pior momento<b>${BRL(P.pior.saldo)}</b></div>
+        <div>Economia em juros<b>${BRL(R.resolvidos.filter(e=>e.tipo==='antecipar').reduce((s,e)=>s+(e.parcelasReais*(+f.valor_parcela)-e.valorReal),0))}</b></div>
+        <div>Total antecipado<b>${BRL(R.resolvidos.filter(e=>e.tipo==='antecipar').reduce((s,e)=>s+e.valorReal,0))}</b></div>
+        <div>Guardado na caixinha<b>${BRL(R.resolvidos.filter(e=>e.tipo==='guardar').reduce((s,e)=>s+e.valorReal,0))}</b></div>
+        <div>Pior momento<b style="color:${R.pior.saldo<0?'#FFB4A8':'#fff'}">${BRL(R.pior.saldo)}</b></div>
       </div>
     </div>
 
-    <div class="panel"><h2>Ajuste o plano<small>simula dia a dia, os dados vêm do Painel</small></h2>
+    ${temPerigo?`<div class="warn" style="margin-bottom:14px">
+      <b>Essa lista fura o colchão em algum momento.</b> Os pontos vermelhos no gráfico e as linhas
+      marcadas embaixo mostram onde — ajuste a data, o valor, ou tire uma linha pra corrigir.</div>`:''}
+
+    <div class="panel"><h2>Fluxo de caixa<small>consequência real da sua lista, dia a dia</small></h2>
       <div class="pbody">
-        <p class="note" style="margin-bottom:14px">Usa o mesmo cálculo do Painel — renda, contas fixas,
-        faturas e qualquer lançamento futuro já registrado (13º, férias). "Vida" é a única suposição:
-        o app não rastreia gasolina, mercado e lazer por pedido seu.</p>
-        <div class="sliders-plano">
-          <div class="sl-plano">
-            <label>Vida — gasolina, mercado, lazer <span>${BRL(PLANO_VIDA)}</span></label>
-            <input type="range" min="1000" max="3000" step="50" value="${PLANO_VIDA}"
-              oninput="setPlano('vida',this.value)">
-            <div class="faixa"><span>1.000</span><span>3.000</span></div>
-          </div>
-          <div class="sl-plano">
-            <label>Caixinha por mês <span>${BRL(PLANO_CAIXA)}</span></label>
-            <input type="range" min="0" max="1000" step="50" value="${PLANO_CAIXA}"
-              oninput="setPlano('caixa',this.value)">
-            <div class="faixa"><span>0</span><span>1.000</span></div>
-          </div>
-          <div class="sl-plano">
-            <label>Colchão mínimo na conta <span>${BRL(PLANO_COLCHAO)}</span></label>
-            <input type="range" min="100" max="800" step="50" value="${PLANO_COLCHAO}"
-              oninput="setPlano('colchao',this.value)">
-            <div class="faixa"><span>100</span><span>800</span></div>
-          </div>
+        <svg width="100%" height="${alt+34}" viewBox="0 0 ${larg} ${alt+34}" preserveAspectRatio="none" role="img">
+          <line x1="14" y1="${py(PLANO_COLCHAO)}" x2="${larg-10}" y2="${py(PLANO_COLCHAO)}"
+            stroke="var(--amber)" stroke-dasharray="4 3" stroke-width="1"/>
+          <line x1="14" y1="${py(0)}" x2="${larg-10}" y2="${py(0)}" stroke="var(--rule)" stroke-width="1"/>
+          <polyline points="${pts}" fill="none" stroke="var(--steel)" stroke-width="1.6"/>
+          ${marcas}
+          ${rotulosX.filter((_,i)=>i%2===0).map(r=>
+            `<text x="${px(r.idx)}" y="${alt+22}" font-size="9" fill="var(--muted)" text-anchor="middle">${mLabel(r.k).slice(0,3)}</text>`
+          ).join('')}
+        </svg>
+        <div class="legenda" style="margin-top:2px">
+          <span><i style="background:var(--pos)"></i>antecipa</span>
+          <span><i style="background:var(--amber)"></i>guarda</span>
+          <span><i style="background:var(--neg)"></i>fura o colchão</span>
+          <span style="color:var(--amber)">┄ colchão (${BRL(PLANO_COLCHAO)})</span>
         </div>
-        ${perigo?`<div class="warn" style="margin-top:14px">O pior momento deste plano chega perto de
-          zero: ${BRL(P.pior.saldo)} em ${fmtD(P.pior.data)}. Considere um colchão maior.</div>`:''}
       </div>
     </div>
 
-    <div class="panel"><h2>Mês a mês</h2><div class="pbody" style="padding-bottom:8px">
-      ${P.meses.map(m=>{
-        const aberto = PLANO_ABERTOS.has(m.k);
-        const extra = avulsosDoMes(m.k).filter(l=>l.tipo==='Entrada').reduce((s,l)=>s+ +l.valor,0);
-        return `<div class="mesplano ${aberto?'aberto':''}">
-          <button class="cabplano" onclick="togglePlanoMes('${m.k}')">
-            <span class="nomeMesP">${mLabel(m.k)}</span>
-            <span class="resumoP">
-              ${extra>0?`<span class="tag t-w">+ ${BRL(extra)} extra</span>`:''}
-              ${m.antecipa.length?`<span class="tag t-ok">${m.antecipa.length} parcela${m.antecipa.length===1?'':'s'}</span>`:''}
-              ${!m.antecipa.length&&!extra?'<span class="tag t-g">só a parcela normal</span>':''}
-            </span>
-            <span class="setaP">&#8250;</span>
-          </button>
-          <div class="corpoP"><div class="corpoInP">
-            ${m.antecipa.map(p=>`<div class="dline"><span class="note">dia ${p.data.getDate()} · antecipa parcela ${p.parcela}</span>
-              <span style="color:var(--pos);font-weight:600">${BRL(p.valor)}</span></div>`).join('')}
-            ${m.caixinha>0?`<div class="dline"><span class="note">Caixinha</span><span>${BRL(m.caixinha)}</span></div>`:''}
-            ${!m.antecipa.length&&!m.caixinha?`<div class="dline"><span class="note">Só a parcela normal do carro, ${BRL(f.valor_parcela)}</span></div>`:''}
-          </div></div>
-        </div>`;
-      }).join('')}
-      <p class="note" style="margin-top:8px">O plano nunca deixa a conta cair abaixo do colchão, olhando
-      30 dias à frente — não só o saldo de hoje. É por isso que às vezes espera antes de antecipar,
-      mesmo quando parece ter sobra no total do mês.</p>
-    </div></div>`;
+    <div class="panel"><h2>Seus eventos<small>edite valor ou parcelas — um trava o outro</small></h2>
+    <div class="tw"><table><thead><tr>
+      <th style="width:96px">Tipo</th><th style="width:126px">Data</th><th class="r">Valor</th>
+      <th class="r" style="width:92px">Parcelas</th><th>Quais</th><th></th>
+    </tr></thead><tbody>
+    ${eventos.slice().sort((a,b)=>a.data-b.data).map(ev=>{
+      const res=R.resolvidos.find(r=>r.id===ev.id);
+      const emPerigo = res && C.find(x=>x.data.getTime()===ev.data.getTime())?.saldo < PLANO_COLCHAO;
+      return `<tr style="${emPerigo?'background:var(--neg-bg)':''}">
+        <td><select onchange="setEvento('${f.id}','${ev.id}','tipo',this.value)">
+          <option value="antecipar" ${ev.tipo==='antecipar'?'selected':''}>Antecipar</option>
+          <option value="guardar" ${ev.tipo==='guardar'?'selected':''}>Guardar</option>
+        </select></td>
+        <td><input type="date" value="${ev.data.toISOString().slice(0,10)}"
+          onchange="setEvento('${f.id}','${ev.id}','data',this.value)"></td>
+        <td class="r"><input type="number" min="0" step="10" value="${(res?.valorReal ?? ev.valor ?? 0).toFixed(2)}"
+          style="width:100px;text-align:right;${ev.controla==='valor'?'font-weight:700':''}"
+          onchange="setEvento('${f.id}','${ev.id}','valor',this.value)"></td>
+        <td class="r">${ev.tipo==='antecipar'
+          ? `<input type="number" min="0" max="30" step="1" value="${res?.parcelasReais ?? ev.parcelas ?? 0}"
+              style="width:56px;text-align:center;${ev.controla==='parcelas'?'font-weight:700':''}"
+              onchange="setEvento('${f.id}','${ev.id}','parcelas',this.value)">`
+          : '<span class="note">—</span>'}</td>
+        <td>${res&&res.compradas&&res.compradas.length
+          ? res.compradas.map(c=>`<span class="tag t-g">${c.parcela}</span>`).join(' ')
+          : (ev.tipo==='guardar'?'<span class="note">caixinha</span>':'<span class="note">nenhuma</span>')}
+          ${emPerigo?' <span class="tag t-no">fura o colchão</span>':''}</td>
+        <td class="r"><button class="btn dgr" onclick="delEvento('${f.id}','${ev.id}')">excluir</button></td>
+      </tr>`;
+    }).join('')}
+    </tbody></table></div>
+    <div class="pbody">
+      <button class="btn" onclick="addEvento('${f.id}','antecipar')">+ antecipar parcela</button>
+      <button class="btn alt" onclick="addEvento('${f.id}','guardar')">+ guardar na caixinha</button>
+      <button class="btn alt" onclick="gerarSugestaoPlano('${f.id}')">recomeçar com sugestão automática</button>
+      <button class="btn alt" onclick="limparPlano('${f.id}')">limpar tudo</button>
+    </div>
+    </div>
+
+    <div class="panel"><h2>Ajustes gerais</h2><div class="pbody">
+      <p class="note" style="margin-bottom:14px">"Vida" é a única suposição do app — gasolina, mercado
+      e lazer não são rastreados por pedido seu. O colchão só marca a linha no gráfico; ele não trava
+      seus eventos, só avisa quando alguma data fica abaixo dele.</p>
+      <div class="sliders-plano">
+        <div class="sl-plano">
+          <label>Vida — gasolina, mercado, lazer <span>${BRL(PLANO_VIDA)}</span></label>
+          <input type="range" min="1000" max="3000" step="50" value="${PLANO_VIDA}"
+            oninput="setPlano('vida',this.value)">
+          <div class="faixa"><span>1.000</span><span>3.000</span></div>
+        </div>
+        <div class="sl-plano">
+          <label>Colchão mínimo (linha de referência) <span>${BRL(PLANO_COLCHAO)}</span></label>
+          <input type="range" min="100" max="800" step="50" value="${PLANO_COLCHAO}"
+            oninput="setPlano('colchao',this.value)">
+          <div class="faixa"><span>100</span><span>800</span></div>
+        </div>
+      </div>
+    </div></div>
+
+    <div class="panel"><h2>Mês a mês</h2>
+    <div class="tw"><table><thead><tr><th>Mês</th><th class="r">Renda</th>
+      <th class="r">Comprometido</th><th class="r">Eventos do mês</th><th class="r">Sobra livre</th>
+    </tr></thead><tbody>
+    ${horizon(PLANO_HORIZ,ym(hoje())).map(k=>{
+      const bl=blocosDoMes(k);
+      const renda=bl.reduce((s,b)=>s+b.tIn,0), comprometido=bl.reduce((s,b)=>s+b.tOut,0);
+      const doMes=R.resolvidos.filter(e=>ym2(e.data)===k);
+      const gastoMes=doMes.reduce((s,e)=>s+(e.valorReal||0),0);
+      const sobra=renda-comprometido-PLANO_VIDA-gastoMes;
+      if(!doMes.length && renda===0 && comprometido===0) return '';
+      return `<tr><td>${mLabel(k)}</td><td class="r">${BRL(renda)}</td><td class="r">${BRL(comprometido)}</td>
+        <td class="r">${doMes.length?doMes.map(e=>e.tipo==='antecipar'?e.parcelasReais+'x':'caixinha').join(', '):'—'}
+          ${gastoMes?` (${BRL(gastoMes)})`:''}</td>
+        <td class="r" style="color:${sobra<0?'var(--neg)':'inherit'}"><b>${BRL(sobra)}</b></td></tr>`;
+    }).join('')}
+    </tbody></table></div></div>`;
   })()}
   </div>
 
@@ -2237,10 +2311,6 @@ function vAmort(){
   </tbody></table></div></div>`;
 }
 window.setFin=v=>{ FIN_SEL=v; render(); };
-window.setProx=v=>{ FIN_PROX=Math.max(0,v||0); render(); };
-window.setUlt =v=>{ FIN_ULT =Math.max(0,v||0); render(); };
-window.setAntec=(p,u)=>{ FIN_PROX=Math.max(0,p||0); FIN_ULT=Math.max(0,u||0); render(); };
-window.setFinData=v=>{ FIN_DATA=v||null; render(); };
 
 /* =====================================================================
    CALENDÁRIO
@@ -3606,6 +3676,7 @@ function montarShell(){
       <div id="menus"></div>
       <div class="railfoot">
         <span class="sync"><span class="dot ${SYNC}" id="syncdot"></span><span id="synctxt">Sincronizado</span></span>
+        <span style="color:var(--barra-sub);font-size:11px;opacity:.7">${APP_VER}</span>
         <span style="flex:1"></span>
         <button onclick="exportar()">Exportar backup</button>
         <button onclick="sair()">Sair</button>
