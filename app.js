@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v49';
+const APP_VER='v51';
 
 /* =====================================================================
    ESTADO
@@ -1192,17 +1192,72 @@ function vPainel(){
 const CATS=['Salário/Renda','Moradia','Transporte','Combustível','Investimento','Telefonia',
   'Saúde','Compras','Cartão','Assinaturas','Alimentação','Lazer','Reserva','Reports','Outros'];
 
+/* =====================================================================
+   FILTRO UNIVERSAL — o mesmo padrão em toda tabela do app.
+   Um objeto de estado por tela, e duas funções: desenhar a barra e
+   aplicar o filtro numa lista. ===================================================================== */
+let FILTROS={};
+function filtroDe(tela){ if(!FILTROS[tela]) FILTROS[tela]={busca:'',tipo:'',cat:''}; return FILTROS[tela]; }
+window.setFiltro=(tela,campo,v)=>{ filtroDe(tela)[campo]=v; render(); };
+window.limparFiltro=(tela)=>{ FILTROS[tela]={busca:'',tipo:'',cat:''}; render(); };
+
+/* opts: {placeholder, tipos:[[valor,rotulo],...], categorias:[...]} — tipos e categorias opcionais */
+function barraFiltro(tela, opts){
+  const f=filtroDe(tela);
+  const ativo = f.busca || f.tipo || f.cat;
+  const tipos = opts.tipos||[];
+  const cats = opts.categorias||[];
+  return `<div class="filtrobar">
+    <div class="filtrobusca">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <label for="fb_${tela}" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Buscar</label>
+      <input id="fb_${tela}" type="text" value="${esc(f.busca)}" placeholder="${esc(opts.placeholder||'Buscar…')}"
+        oninput="setFiltro('${tela}','busca',this.value)">
+    </div>
+    <div class="filtrochips">
+      ${tipos.length?`<button class="fchip ${!f.tipo?'on':''}" onclick="setFiltro('${tela}','tipo','')">Todos</button>
+        ${tipos.map(([v,r])=>`<button class="fchip ${f.tipo===v?'on':''}"
+          onclick="setFiltro('${tela}','tipo','${v}')">${esc(r)}</button>`).join('')}`:''}
+      ${cats.length?`<select onchange="setFiltro('${tela}','cat',this.value)" style="margin-left:auto">
+        <option value="">Categoria</option>
+        ${cats.map(c=>`<option ${f.cat===c?'selected':''}>${esc(c)}</option>`).join('')}</select>`:''}
+      ${ativo?`<button class="btn dgr" onclick="limparFiltro('${tela}')" style="margin-left:${cats.length?'6px':'auto'}">limpar</button>`:''}
+    </div>
+  </div>`;
+}
+
+/* filtra uma lista de objetos pelas mesmas regras da barra acima */
+function aplicaFiltro(tela, lista, campoBusca, campoTipo, campoCat){
+  const f=filtroDe(tela);
+  const q=f.busca.trim().toLowerCase();
+  return lista.filter(item=>{
+    if(q){
+      const campos=Array.isArray(campoBusca)?campoBusca:[campoBusca];
+      if(!campos.some(c=>String(item[c]||'').toLowerCase().includes(q))) return false;
+    }
+    if(f.tipo && campoTipo && item[campoTipo]!==f.tipo) return false;
+    if(f.cat && campoCat && item[campoCat]!==f.cat) return false;
+    return true;
+  });
+}
+
 function vLanc(){
-  const ls=D.lancamentos.filter(l=>ym(l.data)===MREF);
+  const doMes=D.lancamentos.filter(l=>ym(l.data)===MREF);
+  const cats=[...new Set(doMes.map(l=>l.categoria))].sort();
+  const ls=aplicaFiltro('lanc', doMes, 'descricao', 'tipo', 'categoria');
   const r=realizado(MREF);
   return head('Lançamentos','Cada movimento entra aqui e aparece no app da outra em segundos.')
   +`<div class="panel"><h2>Novo lançamento</h2><div class="pbody"><div class="form">
     <div class="fld"><label>Data</label><input type="date" id="l_d" value="${MREF}-01"></div>
     <div class="fld" style="grid-column:span 2"><label>Descrição</label><input id="l_n" placeholder="Ex.: Mercado"></div>
-    <div class="fld"><label>Categoria</label><select id="l_c">${CATS.map(c=>`<option>${c}</option>`).join('')}</select></div>
+    <div class="fld"><label>Categoria</label><select id="l_c" onchange="render()">${CATS.map(c=>`<option>${c}</option>`).join('')}</select></div>
     <div class="fld"><label>Tipo</label><select id="l_t"><option>Saída</option><option>Entrada</option></select></div>
     <div class="fld"><label>Quem</label><select id="l_q">${['Casal','Maria','Jéssica'].map(q=>`<option>${q}</option>`).join('')}</select></div>
     <div class="fld"><label>Valor</label><input type="number" step="0.01" id="l_v" placeholder="0,00"></div>
+    <div class="fld"><label>Cartão${$('l_c')&&$('l_c').value==='Cartão'?' *':''}</label><select id="l_cart">
+      <option value="">— nenhum —</option>
+      ${D.cartoes.filter(c=>c.ativo).map(c=>`<option>${esc(c.nome)}</option>`).join('')}</select></div>
     <div class="fld"><label>&nbsp;</label><button class="btn" onclick="addLanc()">Adicionar</button></div>
     <div class="fld" style="grid-column:1/-1;padding-top:2px"><button class="btn alt sm" onclick="marcarEstorno()">Foi um estorno no cartão</button><span class="note" style="margin-left:10px">Crédito devolvido pela loja ou pelo banco: abate a fatura daquele mês em vez de virar receita.</span></div>
   </div></div></div>
@@ -1210,10 +1265,14 @@ function vLanc(){
     ${kpi('Entradas',BRL(r.ent),'','pos')} ${kpi('Saídas',BRL(r.sai),'','neg')}
     ${kpi('Saldo',BRL(r.sal),'',r.sal<0?'neg':'pos')} ${kpi('Benefícios',BRL(r.va),'fora do saldo','amb')}
   </div>
-  <div class="panel"><h2>${mLabel(MREF)} <small>${ls.length} lançamento${ls.length===1?'':'s'}</small>
+  <div class="panel"><h2>${mLabel(MREF)} <small>${ls.length} de ${doMes.length} lançamento${doMes.length===1?'':'s'}</small>
     <select style="max-width:140px" onchange="setMes(this.value)">
       ${mesesDisponiveis().map(k=>`<option value="${k}" ${k===MREF?'selected':''}>${mLabel(k)}</option>`).join('')}
     </select></h2>
+  <div class="pbody" style="padding-bottom:0">
+    ${barraFiltro('lanc', {placeholder:'Buscar por descrição…',
+      tipos:[['Entrada','Entradas'],['Saída','Saídas']], categorias:cats})}
+  </div>
   <div class="tw"><table><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th>
     <th>Quem</th><th class="r">Valor</th><th></th></tr></thead><tbody>
   ${ls.map(l=>`<tr class="${l.protegido||l.beneficio?'dim':''}">
@@ -1225,7 +1284,8 @@ function vLanc(){
     <td class="r" style="font-weight:600;color:${l.tipo==='Entrada'?'var(--pos)':'var(--neg)'}">
       ${l.tipo==='Entrada'?'+':'−'} ${BRL(l.valor)}</td>
     <td class="r"><button class="btn dgr" onclick="delRow('lancamentos','${l.id}')">excluir</button></td></tr>`).join('')
-    ||'<tr><td colspan="6" class="note" style="padding:20px;text-align:center">Nenhum lançamento neste mês.</td></tr>'}
+    ||`<tr><td colspan="6" class="note" style="padding:20px;text-align:center">${
+      doMes.length?'Nenhum lançamento bate com o filtro.':'Nenhum lançamento neste mês.'}</td></tr>`}
   </tbody></table></div></div>`;
 }
 /* Atalho para estorno: crédito no cartão que abate a fatura. */
@@ -1233,28 +1293,39 @@ window.marcarEstorno=()=>{
   const t=$('l_t'); if(t) t.value='Entrada';
   const c=$('l_c'); if(c) c.value='Cartão';
   const n=$('l_n'); if(n && !n.value) n.value='Estorno — ';
+  render();
+  const cart=$('l_cart'); if(cart) cart.focus();
   toast('Escolha o cartão e o valor. O crédito abate a fatura daquele mês.', 4200);
 };
 window.addLanc=async()=>{
-  const d=$('l_d').value,n=$('l_n').value.trim(),v=parseFloat($('l_v').value);
+  const d=$('l_d').value,n=$('l_n').value.trim(),v=parseFloat($('l_v').value),
+        cat=$('l_c').value, cart=$('l_cart')?.value||null;
   if(!d||!n||!v) return toast('Preencha data, descrição e valor');
-  const ok=await inserir('lancamentos',{data:d,descricao:n,categoria:$('l_c').value,
+  if(cat==='Cartão' && !cart) return toast('Escolha o cartão — senão isso não abate a fatura de ninguém', 4400);
+  const ok=await inserir('lancamentos',{data:d,descricao:n,categoria:cat,cartao:cart,
     tipo:$('l_t').value,quem:$('l_q').value,valor:v,status:'Confirmado',criado_por:USER.id});
   if(ok){MREF=ym(d);render();toast(n+' lançado · saldo do mês agora '+BRL(realizado(MREF).sal));}
 };
 window.delRow=async(t,id)=>{if(await remover(t,id)){render();toast('Excluído');}};
 
 function vParc(){
+  const cartoes=[...new Set(D.parcelamentos.map(p=>p.cartao).filter(Boolean))].sort();
+  const comStatus=D.parcelamentos.map(p=>({...p, _status:p.restantes>0?'ativa':'quitada'}));
+  const lista=aplicaFiltro('parc', comStatus, 'descricao', '_status', 'cartao');
   return head('Parcelamentos','Cada dívida com quantas faltam e quando termina.')
   +`<div class="kpis">
     ${kpi('Saldo devedor',BRL(saldoParc()),'','amb')}
     ${kpi('Parcelas este mês',BRL(parcelasMes(ym(hoje()))))}
     ${kpi('Dívidas ativas',D.parcelamentos.filter(p=>p.restantes>0).length)}
   </div>
-  <div class="panel"><h2>Dívidas <small>edite as restantes para corrigir</small></h2>
+  <div class="panel"><h2>Dívidas <small>${lista.length} de ${D.parcelamentos.length} · edite as restantes para corrigir</small></h2>
+  <div class="pbody" style="padding-bottom:0">
+    ${barraFiltro('parc', {placeholder:'Buscar dívida…',
+      tipos:[['ativa','Ativas'],['quitada','Quitadas']], categorias:cartoes})}
+  </div>
   <div class="tw"><table><thead><tr><th>Dívida</th><th>Cartão</th><th class="r">Parcela</th>
     <th class="c">Faltam</th><th class="r">Saldo</th><th>Termina</th><th></th></tr></thead><tbody>
-  ${D.parcelamentos.map(p=>{
+  ${lista.map(p=>{
     const meses=mesesDaParcela(p);
     const irregular=Array.isArray(p.competencias)&&p.competencias.length;
     const fim=meses.length?meses[meses.length-1]:null;
@@ -1274,28 +1345,37 @@ function vParc(){
       ${irregular?'<span class="note" style="margin-left:8px">este parcelamento pula mês</span>'
                  :'<span class="note" style="margin-left:8px">mensais consecutivas</span>'}
     </td></tr>`;}).join('')
-    ||'<tr><td colspan="7" class="note" style="padding:20px;text-align:center">Nenhum parcelamento. Use "Nova compra" para simular e adicionar.</td></tr>'}
+    ||`<tr><td colspan="7" class="note" style="padding:20px;text-align:center">${
+      D.parcelamentos.length?'Nenhuma dívida bate com o filtro.':'Nenhum parcelamento. Use "Nova compra" para simular e adicionar.'}</td></tr>`}
   </tbody></table></div>
   <div class="pbody"><button class="btn" onclick="go('compra')">Simular nova compra</button></div></div>`;
 }
 window.setRow=async(t,id,campo,val)=>{if(await atualizar(t,id,{[campo]:val})){render();toast('Atualizado');}};
 
 function vAssin(){
+  const cartoes=[...new Set(D.assinaturas.map(a=>a.cartao).filter(Boolean))].sort();
+  const comStatus=D.assinaturas.map(a=>({...a, _status:a.projetar?'ativa':'pausada'}));
+  const lista=aplicaFiltro('assin', comStatus, 'descricao', '_status', 'cartao');
   return head('Assinaturas','Desmarque para ver na hora quanto sobraria sem ela.')
   +`<div class="kpis">${kpi('Total ativo',BRL(totAssin()))}
     ${kpi('Por ano',BRL(totAssin()*12),'','amb')}
     ${kpi('Ativas',D.assinaturas.filter(a=>a.projetar).length+' de '+D.assinaturas.length)}</div>
-  <div class="panel"><h2>Assinaturas</h2>
+  <div class="panel"><h2>Assinaturas <small>${lista.length} de ${D.assinaturas.length}</small></h2>
+  <div class="pbody" style="padding-bottom:0">
+    ${barraFiltro('assin', {placeholder:'Buscar assinatura…',
+      tipos:[['ativa','Ativas'],['pausada','Pausadas']], categorias:cartoes})}
+  </div>
   <div class="tw"><table><thead><tr><th class="c">Projetar</th><th>Nome</th><th>Cartão</th>
     <th class="r">Valor</th><th class="r">Por ano</th><th></th></tr></thead><tbody>
-  ${D.assinaturas.map(a=>`<tr class="${a.projetar?'':'dim'}">
+  ${lista.map(a=>`<tr class="${a.projetar?'':'dim'}">
     <td class="c"><input type="checkbox" ${a.projetar?'checked':''} style="width:auto;cursor:pointer"
       onchange="setRow('assinaturas','${a.id}','projetar',this.checked)"></td>
     <td><b>${esc(a.descricao)}</b>${a.observacao?`<br><span class="tag t-w">${esc(a.observacao)}</span>`:''}</td>
     <td>${esc(a.cartao||'—')}</td><td class="r">${BRL(a.valor)}</td>
     <td class="r">${a.projetar?BRL(a.valor*12):'—'}</td>
     <td class="r"><button class="btn dgr" onclick="delRow('assinaturas','${a.id}')">excluir</button></td></tr>`).join('')
-    ||'<tr><td colspan="6" class="note" style="padding:20px;text-align:center">Nenhuma assinatura cadastrada.</td></tr>'}
+    ||`<tr><td colspan="6" class="note" style="padding:20px;text-align:center">${
+      D.assinaturas.length?'Nenhuma assinatura bate com o filtro.':'Nenhuma assinatura cadastrada.'}</td></tr>`}
   </tbody></table></div>
   <div class="pbody"><div class="form">
     <div class="fld"><label>Nome</label><input id="a_n" placeholder="Ex.: Netflix"></div>
@@ -1325,6 +1405,10 @@ function vTerc(){
   const pes=[...new Set(abertos.map(t=>t.pessoa))];
   const vencidos=abertos.filter(atrasado);
   const parados=abertos.filter(t=>semPrazo(t) && dias(t)!==null && dias(t)>=30);
+
+  const pessoasTodas=[...new Set(D.terceiros.map(t=>t.pessoa))].sort();
+  const comStatus=D.terceiros.map(t=>({...t, _status:t.recebido?'recebido':'pendente'}));
+  const filtrados=aplicaFiltro('terc', comStatus, ['pessoa','descricao'], '_status', 'pessoa');
 
   /* Vários registros da mesma pessoa com a mesma descrição são parcelas de
      um compromisso só. Mostrar dez linhas iguais esconde o que importa:
@@ -1393,6 +1477,13 @@ function vTerc(){
     <b>${vencidos.length} ${vencidos.length===1?'cobrança passou':'cobranças passaram'} do prazo combinado.</b>
     ${vencidos.map(t=>esc(t.pessoa)+' ('+BRL(t.valor)+')').join(', ')}.</div>`:''}
 
+  <div class="panel"><h2>Filtrar <small>vale para as duas tabelas abaixo</small></h2>
+    <div class="pbody" style="padding-bottom:14px">
+      ${barraFiltro('terc', {placeholder:'Buscar por pessoa ou descrição…',
+        tipos:[['pendente','Pendentes'],['recebido','Recebidos']], categorias:pessoasTodas})}
+    </div>
+  </div>
+
   ${pes.length?`<div class="panel"><h2>Por pessoa</h2><div class="pbody"><div class="bars">
     ${pes.map(p=>{
       const v=abertos.filter(t=>t.pessoa===p).reduce((s,t)=>s+ +t.valor,0);
@@ -1402,11 +1493,12 @@ function vTerc(){
         <span class="r" style="font-weight:600">${BRL(v)}</span></div>`;}).join('')}
   </div></div></div>`:''}
 
-  <div class="panel"><h2>Fora do cartão <small>Pix, dinheiro, transferência — com ou sem prazo</small></h2>
+  <div class="panel"><h2>Fora do cartão <small>${filtrados.filter(t=>!noCartao(t)).length} de ${D.terceiros.filter(t=>!noCartao(t)).length} · Pix, dinheiro, transferência — com ou sem prazo</small></h2>
   <div class="tw"><table><thead><tr><th class="c">Recebido</th><th>Quem</th><th>O que é</th>
     <th>Origem</th><th>Quando volta</th><th class="r">Valor</th><th></th></tr></thead><tbody>
-  ${D.terceiros.filter(t=>!noCartao(t)).map(linha).join('')
-    ||'<tr><td colspan="7" class="note" style="padding:18px;text-align:center">Nada emprestado fora do cartão.</td></tr>'}
+  ${filtrados.filter(t=>!noCartao(t)).map(linha).join('')
+    ||`<tr><td colspan="7" class="note" style="padding:18px;text-align:center">${
+      D.terceiros.some(t=>!noCartao(t))?'Nada bate com o filtro.':'Nada emprestado fora do cartão.'}</td></tr>`}
   </tbody></table></div>
   <div class="pbody">
     <div class="kgroup sub">Registrar o que você emprestou</div>
@@ -1439,10 +1531,10 @@ function vTerc(){
       : 'Deixe a previsão em branco quando não houver prazo combinado. O app conta os dias e destaca quando passa de 30, 60 e 90.'}</p>
   </div></div>
 
-  <div class="panel"><h2>Nos cartões de vocês <small>compras de terceiros que entram na fatura</small></h2>
+  <div class="panel"><h2>Nos cartões de vocês <small>${agrupar(filtrados.filter(noCartao)).length} de ${agrupar(D.terceiros.filter(noCartao)).length} compromissos · compras de terceiros que entram na fatura</small></h2>
   <div class="tw"><table><thead><tr><th class="c">Recebido</th><th>Quem</th><th>O que é</th>
     <th>Cartão</th><th>Competência</th><th class="r">Valor</th><th></th></tr></thead><tbody>
-  ${agrupar(D.terceiros.filter(noCartao)).map(g=>{
+  ${agrupar(filtrados.filter(noCartao)).map(g=>{
     const pend=g.itens.filter(x=>!x.recebido);
     return `<tr class="${g.recebido?'dim':''}">
       <td class="c">${g.n===1
@@ -1475,7 +1567,8 @@ function vTerc(){
           <td class="r"><button class="btn dgr" onclick="delRow('terceiros','${x.id}')">excluir</button></td>
         </tr>`).join('')
       : ''}`;}).join('')
-    ||'<tr><td colspan="7" class="note" style="padding:18px;text-align:center">Nenhuma compra de terceiro nos cartões.</td></tr>'}
+    ||`<tr><td colspan="7" class="note" style="padding:18px;text-align:center">${
+      D.terceiros.some(noCartao)?'Nada bate com o filtro.':'Nenhuma compra de terceiro nos cartões.'}</td></tr>`}
   </tbody></table></div>
   <div class="pbody"><p class="note">Estes vêm das faturas e são abatidos da parte de vocês.
   Enquanto não voltam, ocupam <b>limite dos cartões</b> — hoje ${BRL(porCartao.reduce((s,t)=>s+ +t.valor,0))}
@@ -1561,22 +1654,33 @@ function vProj(){
 
 function vCad(){
   const c=cfg();
-  const tabela=(titulo,tab,campos,total)=>`
-    <div class="panel"><h2>${titulo}</h2><div class="tw"><table><thead><tr>
-      ${campos.map(f=>`<th class="${f.r?'r':''}">${f.l}</th>`).join('')}<th></th></tr></thead><tbody>
-    ${D[tab].map(x=>`<tr class="${x.ativo===false?'dim':''}">
-      ${campos.map(f=>`<td class="${f.r?'r':''}">${
-        f.tipo==='check'?`<input type="checkbox" ${x[f.k]?'checked':''} style="width:auto;cursor:pointer"
-            onchange="setRow('${tab}','${x.id}','${f.k}',this.checked)">`
-        :`<input ${f.tipo==='num'?'type="number" step="0.01"':''} value="${esc(x[f.k]??'')}"
-            style="border-color:transparent;padding:3px 5px;${f.r?'text-align:right;width:104px':''}"
-            onchange="setRow('${tab}','${x.id}','${f.k}',${f.tipo==='num'?'+this.value':'this.value'})">`
+  const tabela=(titulo,tab,campos,total)=>{
+    const chave='cad_'+tab;
+    const campoBusca=campos.filter(f=>f.tipo!=='num'&&f.tipo!=='check').map(f=>f.k);
+    const lista=aplicaFiltro(chave, D[tab], campoBusca);
+    const f=filtroDe(chave);
+    return `
+    <div class="panel"><h2>${titulo} <small>${lista.length} de ${D[tab].length}</small></h2>
+    ${D[tab].length>4?`<div class="pbody" style="padding-bottom:0">
+      ${barraFiltro(chave, {placeholder:'Buscar…'})}
+    </div>`:''}
+    <div class="tw"><table><thead><tr>
+      ${campos.map(fc=>`<th class="${fc.r?'r':''}">${fc.l}</th>`).join('')}<th></th></tr></thead><tbody>
+    ${lista.map(x=>`<tr class="${x.ativo===false?'dim':''}">
+      ${campos.map(fc=>`<td class="${fc.r?'r':''}">${
+        fc.tipo==='check'?`<input type="checkbox" ${x[fc.k]?'checked':''} style="width:auto;cursor:pointer"
+            onchange="setRow('${tab}','${x.id}','${fc.k}',this.checked)">`
+        :`<input ${fc.tipo==='num'?'type="number" step="0.01"':''} value="${esc(x[fc.k]??'')}"
+            style="border-color:transparent;padding:3px 5px;${fc.r?'text-align:right;width:104px':''}"
+            onchange="setRow('${tab}','${x.id}','${fc.k}',${fc.tipo==='num'?'+this.value':'this.value'})">`
       }</td>`).join('')}
       <td class="r"><button class="btn dgr" onclick="delRow('${tab}','${x.id}')">excluir</button></td></tr>`).join('')
-      ||`<tr><td colspan="${campos.length+1}" class="note" style="padding:16px;text-align:center">Vazio.</td></tr>`}
+      ||`<tr><td colspan="${campos.length+1}" class="note" style="padding:16px;text-align:center">${
+        D[tab].length?'Nada bate com o filtro.':'Vazio.'}</td></tr>`}
     </tbody><tfoot><tr><td colspan="${campos.length-1}">Total</td>
       <td class="r">${BRL(total)}</td><td></td></tr></tfoot></table></div>
     <div class="pbody"><button class="btn alt sm" onclick="addCad('${tab}')">+ Adicionar</button></div></div>`;
+  };
 
   return head('Cadastros','Cartões, renda, contas fixas e benefícios. Mudar qualquer coisa aqui recalcula o resto.')
   +`<div class="rowbar"><span class="note">Nesta página:</span>
@@ -1585,11 +1689,16 @@ function vCad(){
   </div>`
   +`<div class="kpis">${kpi('Renda',BRL(totRenda()))}${kpi('Fixas',BRL(totFixas()))}
     ${kpi('Benefícios',BRL(totVA()))}${kpi('Sobra estrutural',BRL(totRenda()-totFixas()),'antes de cartões','pos')}</div>
-  <div class="panel"><h2>Cartões <small>o dia de vencimento define em qual bloco a fatura cai no painel</small></h2>
+  <div class="panel"><h2>Cartões <small>${(()=>{const n=aplicaFiltro('cad_cartoes',D.cartoes.map(x=>({...x,_status:x.ativo?'ativo':'inativo'})),'nome','_status','titular').length;return n+' de '+D.cartoes.length;})()} · o dia de vencimento define em qual bloco a fatura cai no painel</small></h2>
+  ${D.cartoes.length>3?`<div class="pbody" style="padding-bottom:0">
+    ${barraFiltro('cad_cartoes', {placeholder:'Buscar cartão…',
+      tipos:[['ativo','Ativos'],['inativo','Inativos']],
+      categorias:[...new Set(D.cartoes.map(x=>x.titular).filter(Boolean))].sort()})}
+  </div>`:''}
   <div class="tw"><table><thead><tr><th class="c">Ativo</th><th>Cartão</th><th>Titular</th>
     <th class="c">Vence dia</th><th class="r">Limite</th>
     <th class="r">Fatura de ${mLabel(MREF)}</th><th></th></tr></thead><tbody>
-  ${D.cartoes.map(c=>{
+  ${aplicaFiltro('cad_cartoes', D.cartoes.map(x=>({...x,_status:x.ativo?'ativo':'inativo'})), 'nome', '_status', 'titular').map(c=>{
     const real=faturaLancada(c.nome,MREF), v=faturaCartao(c.nome,MREF);
     return `<tr class="${c.ativo?'':'dim'}">
     <td class="c"><input type="checkbox" ${c.ativo?'checked':''} style="width:auto;cursor:pointer"
@@ -1606,7 +1715,8 @@ function vCad(){
       onchange="setRow('cartoes','${c.id}','limite',this.value?+this.value:null)"></td>
     <td class="r">${v?BRL(v):'—'} ${v?`<span class="tag ${real?'t-ok':'t-g'}">${real?'lançada':'estimada'}</span>`:''}</td>
     <td class="r"><button class="btn dgr" onclick="delRow('cartoes','${c.id}')">excluir</button></td></tr>`;}).join('')
-    ||'<tr><td colspan="7" class="note" style="padding:16px;text-align:center">Nenhum cartão cadastrado.</td></tr>'}
+    ||`<tr><td colspan="7" class="note" style="padding:16px;text-align:center">${
+      D.cartoes.length?'Nenhum cartão bate com o filtro.':'Nenhum cartão cadastrado.'}</td></tr>`}
   </tbody></table></div>
   <div class="pbody"><div class="form">
     <div class="fld"><label>Novo cartão</label><input id="ct_n" placeholder="Ex.: Nubank"></div>
@@ -1951,6 +2061,7 @@ let FIN_SEL=null;
 let PLANO_VIDA=1800, PLANO_COLCHAO=300, PLANO_HORIZ=18;
 let PLANO_EVENTOS={};   /* { finId: [{id,tipo,data,valor,parcelas,controla}] } — a lista que a usuária monta */
 let PLANO_ID=0;
+let BUSCA_Q='', BUSCA_ABERTA=false;
 const ym2 = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
 
 /* Cada linha é um evento que a usuária controla — quando, quanto, pra onde.
@@ -3661,7 +3772,8 @@ const VIEWS={painel:vPainel,dash:vDash,fatura:vFatura,compra:vCompra,lanc:vLanc,
 
 function render(){
   const m=$('main'); if(!m) return montarShell();
-  montarNav();                      /* a barra já marca a aba certa */
+  montarNav();
+  montarBusca();                      /* a barra já marca a aba certa */
   m.innerHTML=(VIEWS[CUR]||vPainel)();
 }
 window.go=id=>{CUR=id;MENU_ABERTO=null;render();window.scrollTo(0,0);};
@@ -3672,6 +3784,7 @@ function montarShell(){
       <div class="brand"><b>Financeiro</b><span>${esc(EU||'')}</span>
         <button class="eng" onclick="abrirMenu('config')" aria-expanded="false"
           title="Cadastros, cópias e atividade">⚙</button></div>
+      <div id="busca"></div>
       <nav id="nav"></nav>
       <div id="menus"></div>
       <div class="railfoot">
@@ -3685,6 +3798,80 @@ function montarShell(){
     <main class="main" id="main"></main></div>`;
   render();
 }
+
+/* Busca no centro: telas E lançamentos no mesmo resultado. */
+function resultadosBusca(q){
+  const termo=q.trim().toLowerCase();
+  if(!termo) return {paginas:[], lancs:[]};
+  const paginas = PAGES.filter(([id,nome])=>nome.toLowerCase().includes(termo)).slice(0,4);
+  const lancs = D.lancamentos
+    .filter(l=>l.descricao.toLowerCase().includes(termo))
+    .sort((a,b)=>String(b.data).localeCompare(String(a.data)))
+    .slice(0,5);
+  return {paginas, lancs};
+}
+function montarBusca(){
+  const box=$('busca'); if(!box) return;
+  if(!BUSCA_ABERTA){
+    box.innerHTML = `<button class="buscabar" onclick="toggleBusca()" aria-expanded="false">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <span>Ir para uma tela, ou buscar um lançamento…</span></button>`;
+    return;
+  }
+
+  const q = BUSCA_Q.trim();
+  const R = q ? resultadosBusca(q) : {paginas:[], lancs:[]};
+
+  let corpo;
+  if(!q){
+    corpo = `<div class="buscavazio">Digite pra buscar uma tela ou um lançamento</div>`;
+  } else if(!R.paginas.length && !R.lancs.length){
+    corpo = `<div class="buscavazio">Nada encontrado para "${esc(q)}"</div>`;
+  } else {
+    const blocoPaginas = R.paginas.length ? (
+      `<div class="buscasep">Telas</div>` +
+      R.paginas.map(([id,nome]) =>
+        `<button class="buscaitem" onclick="irBusca('pagina','${id}')"><span>${esc(nome)}</span></button>`
+      ).join('')
+    ) : '';
+    const blocoLancs = R.lancs.length ? (
+      `<div class="buscasep">Lançamentos</div>` +
+      R.lancs.map(l => {
+        const dataFmt = String(l.data).split('-').reverse().join('/');
+        const cor = l.tipo==='Entrada' ? 'var(--pos)' : 'var(--neg)';
+        return `<button class="buscaitem" onclick="irBusca('lanc','${l.id}')">
+          <span>${esc(l.descricao)} <span class="note">${dataFmt}</span></span>
+          <b style="color:${cor}">${BRL(l.valor)}</b></button>`;
+      }).join('')
+    ) : '';
+    corpo = blocoPaginas + blocoLancs;
+  }
+
+  box.innerHTML = `<button class="buscabar aberta" onclick="toggleBusca()" aria-expanded="true">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    </button>
+    <div class="buscapainel">
+      <input id="buscainput" type="text" value="${esc(BUSCA_Q)}"
+        placeholder="Ir para uma tela, ou buscar um lançamento…"
+        oninput="setBusca(this.value)" onkeydown="if(event.key==='Escape')toggleBusca()">
+      ${corpo}
+    </div>`;
+
+  const el=$('buscainput');
+  if(el){ el.focus(); el.setSelectionRange?.(BUSCA_Q.length,BUSCA_Q.length); }
+}
+window.toggleBusca=()=>{ BUSCA_ABERTA=!BUSCA_ABERTA; if(!BUSCA_ABERTA) BUSCA_Q=''; montarBusca(); };
+window.setBusca=v=>{ BUSCA_Q=v; montarBusca(); };
+window.irBusca=(tipo,id)=>{
+  if(tipo==='pagina'){ go(id); }
+  else if(tipo==='lanc'){
+    const l=D.lancamentos.find(x=>x.id===id);
+    if(l){ MREF=ym(l.data); CUR='lanc'; }
+  }
+  BUSCA_ABERTA=false; BUSCA_Q=''; render(); window.scrollTo(0,0);
+};
 
 /* Desenha a barra: telas do dia a dia, o "Mais" e a engrenagem. */
 function montarNav(){
