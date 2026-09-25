@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v52';
+const APP_VER='v53';
 
 /* =====================================================================
    ESTADO
