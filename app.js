@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v51';
+const APP_VER='v52';
 
 /* =====================================================================
    ESTADO
@@ -3782,6 +3782,8 @@ function montarShell(){
   $('root').innerHTML=`<div class="shell">
     <div class="rail"><div class="railin">
       <div class="brand"><b>Financeiro</b><span>${esc(EU||'')}</span>
+        <button class="eng" id="btntema" onclick="alternarTema()"
+          title="Trocar entre claro e escuro">${temaAtual()==='light'?'☀':'☾'}</button>
         <button class="eng" onclick="abrirMenu('config')" aria-expanded="false"
           title="Cadastros, cópias e atividade">⚙</button></div>
       <div id="busca"></div>
@@ -3798,6 +3800,14 @@ function montarShell(){
     <main class="main" id="main"></main></div>`;
   render();
 }
+/* Tema: claro ou escuro, salvo no aparelho. Sem escolha salva, começa escuro. */
+function temaAtual(){ return document.documentElement.getAttribute('data-theme')==='light'?'light':'dark'; }
+window.alternarTema=()=>{
+  const novo = temaAtual()==='light' ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', novo);
+  try{ localStorage.setItem('tema', novo); }catch(e){}
+  const b=$('btntema'); if(b) b.textContent = novo==='light'?'☀':'☾';
+};
 
 /* Busca no centro: telas E lançamentos no mesmo resultado. */
 function resultadosBusca(q){
@@ -3878,21 +3888,25 @@ function montarNav(){
   const nav=$('nav'); if(!nav) return;
   const emMais = MENU_MAIS.some(([,ids])=>ids.includes(CUR));
   const emConfig = MENU_CONFIG.includes(CUR);
+  const ddMais = MENU_ABERTO==='mais'
+    ? `<div class="ddmenu mais-dd">${MENU_MAIS.map(([g,ids])=>
+        `<div class="sep">${g}</div>`+ids.map(id=>
+          `<button onclick="go('${id}')" aria-current="${CUR===id}">${rotulo(id)}</button>`).join('')
+        ).join('')}</div>`
+    : '';
   nav.innerHTML =
     MENU_FIXO.map(id=>`<button data-p="${id}" onclick="go('${id}')"
       aria-current="${CUR===id}">${rotulo(id)}</button>`).join('')
-    + `<button class="mais" onclick="abrirMenu('mais')"
-        aria-current="${emMais}" aria-expanded="${MENU_ABERTO==='mais'}">
-        ${emMais?rotulo(CUR):'Mais'} <span class="seta">▾</span></button>`
+    + `<span class="maiswrap">
+        <button class="mais" onclick="abrirMenu('mais')"
+          aria-current="${emMais}" aria-expanded="${MENU_ABERTO==='mais'}">
+          ${emMais?rotulo(CUR):'Mais'} <span class="seta">▾</span></button>
+        ${ddMais}
+      </span>`
     + (emConfig?`<button aria-current="true" onclick="abrirMenu('config')">${rotulo(CUR)}</button>`:'');
 
   const box=$('menus'); if(!box) return;
-  if(MENU_ABERTO==='mais'){
-    box.innerHTML=`<div class="ddmenu">${MENU_MAIS.map(([g,ids])=>
-      `<div class="sep">${g}</div>`+ids.map(id=>
-        `<button onclick="go('${id}')" aria-current="${CUR===id}">${rotulo(id)}</button>`).join('')
-      ).join('')}</div>`;
-  } else if(MENU_ABERTO==='config'){
+  if(MENU_ABERTO==='config'){
     box.innerHTML=`<div class="ddmenu dir"><div class="sep">Ajustes e manutenção</div>
       ${MENU_CONFIG.map(id=>`<button onclick="go('${id}')"
         aria-current="${CUR===id}">${rotulo(id)}</button>`).join('')}</div>`;
