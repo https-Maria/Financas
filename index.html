@@ -15,23 +15,24 @@
 <style>
 
 :root{
-  /* Escuro (padrão) — verde como cor de marca, azul-aço nos valores positivos. */
+  /* Escuro (padrão) — verde é a cor da casa, de ponta a ponta: valores
+     positivos, destaque ativo, tudo a mesma cor. Sem se esconder em detalhe. */
   --surface:#0A0F0D; --panel:#131C19; --ink:#E7EFEB; --muted:#7E9189;
   --rule:#24322D; --rule-soft:#1C2622;
-  --pos:#6FA0C4; --neg:#E0695C; --amber:#D9A441; --steel:#4FAD7A;
-  --pos-bg:#16212A; --neg-bg:#2B1712; --amber-bg:#2A2010; --steel-bg:#16231C;
+  --pos:#4FAD7A; --neg:#E0695C; --amber:#D9A441; --steel:#4FAD7A;
+  --pos-bg:#16231C; --neg-bg:#2B1712; --amber-bg:#2A2010; --steel-bg:#16231C;
   --mono:'JetBrains Mono',ui-monospace,monospace;
   --barra:#0A0F0D; --barra-borda:#1C2622; --barra-txt:#E7EFEB;
   --barra-sub:#7E9189; --barra-ativo:#4FAD7A;
 }
 :root[data-theme="light"]{
-  /* Claro — creme e verde, a mesma marca com a luz do dia. */
+  /* Claro — creme de fundo, o mesmo verde vivo em cima, sem versão apagada. */
   --surface:#F6F1E6; --panel:#FFFFFF; --ink:#2A241D; --muted:#8C7F6B;
   --rule:#E4D9C3; --rule-soft:#EFE8D8;
-  --pos:#3B6E91; --neg:#9C4A34; --amber:#8C6A1E; --steel:#3B5D45;
-  --pos-bg:#EAF2F7; --neg-bg:#FAF1EF; --amber-bg:#FCF4E4; --steel-bg:#EDF3EF;
+  --pos:#2F7A52; --neg:#9C4A34; --amber:#8C6A1E; --steel:#2F7A52;
+  --pos-bg:#E5F1EA; --neg-bg:#FAF1EF; --amber-bg:#FCF4E4; --steel-bg:#E5F1EA;
   --barra:#F6F1E6; --barra-borda:#E4D9C3; --barra-txt:#2A241D;
-  --barra-sub:#8C7F6B; --barra-ativo:#3B5D45;
+  --barra-sub:#8C7F6B; --barra-ativo:#2F7A52;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html{-webkit-text-size-adjust:100%}
@@ -452,6 +453,6 @@ input:focus,select:focus{border-color:var(--steel);outline:none;box-shadow:0 0 0
 <div id="root"><div class="gate"><div class="gatebox"><h1>Carregando…</h1>
 <p class="sub">Conectando ao banco de dados.</p></div></div></div>
 <div class="toast" id="toast"></div>
-<script type="module" src="app.js?v=52"></script>
+<script type="module" src="app.js?v=53"></script>
 </body>
 </html>
