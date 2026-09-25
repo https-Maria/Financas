@@ -15,16 +15,23 @@
 <style>
 
 :root{
-  /* Direção A — terminal de cálculo: fundo quase preto, âmbar como acento,
-     azul-aço no lugar do verde, cobre como segunda cor de marca. */
+  /* Escuro (padrão) — verde como cor de marca, azul-aço nos valores positivos. */
   --surface:#0A0F0D; --panel:#131C19; --ink:#E7EFEB; --muted:#7E9189;
   --rule:#24322D; --rule-soft:#1C2622;
-  --pos:#6FA0C4; --neg:#E0695C; --amber:#D9A441; --steel:#C17F4A;
-  --pos-bg:#16212A; --neg-bg:#2B1712; --amber-bg:#2A2010; --steel-bg:#271D14;
+  --pos:#6FA0C4; --neg:#E0695C; --amber:#D9A441; --steel:#4FAD7A;
+  --pos-bg:#16212A; --neg-bg:#2B1712; --amber-bg:#2A2010; --steel-bg:#16231C;
   --mono:'JetBrains Mono',ui-monospace,monospace;
-  /* barra do topo — mesma superfície do resto, sem bloco colorido separado */
   --barra:#0A0F0D; --barra-borda:#1C2622; --barra-txt:#E7EFEB;
-  --barra-sub:#7E9189; --barra-ativo:#D9A441;
+  --barra-sub:#7E9189; --barra-ativo:#4FAD7A;
+}
+:root[data-theme="light"]{
+  /* Claro — creme e verde, a mesma marca com a luz do dia. */
+  --surface:#F6F1E6; --panel:#FFFFFF; --ink:#2A241D; --muted:#8C7F6B;
+  --rule:#E4D9C3; --rule-soft:#EFE8D8;
+  --pos:#3B6E91; --neg:#9C4A34; --amber:#8C6A1E; --steel:#3B5D45;
+  --pos-bg:#EAF2F7; --neg-bg:#FAF1EF; --amber-bg:#FCF4E4; --steel-bg:#EDF3EF;
+  --barra:#F6F1E6; --barra-borda:#E4D9C3; --barra-txt:#2A241D;
+  --barra-sub:#8C7F6B; --barra-ativo:#3B5D45;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html{-webkit-text-size-adjust:100%}
@@ -33,7 +40,9 @@ body{
   background:var(--surface); color:var(--ink);
   font-size:15px; line-height:1.5;
   font-variant-numeric:tabular-nums;
+  transition:background-color .18s ease,color .18s ease;
 }
+@media(prefers-reduced-motion:reduce){ body{transition:none} }
 .num{font-variant-numeric:tabular-nums}
 h1,h2,h3{font-weight:700;line-height:1.2;letter-spacing:-.012em}
 button,input,select{font-family:inherit;font-size:inherit;color:inherit}
@@ -60,15 +69,19 @@ button{cursor:pointer;border:none;background:none}
 .railfoot button:hover{color:var(--barra-txt);text-decoration:underline}
 
 /* engrenagem e menus suspensos */
-.brand .eng{margin-left:auto;background:rgba(255,255,255,.12);border:none;color:#fff;
+.brand .eng{background:var(--rule-soft);border:none;color:var(--barra-txt);
   width:30px;height:30px;border-radius:4px;font-size:15px;cursor:pointer;line-height:1;
   flex:0 0 30px}
-.brand .eng:hover{background:rgba(255,255,255,.24)}
+.brand .eng:hover{background:var(--rule)}
+.brand .eng:first-of-type{margin-left:auto}
+.brand .eng+.eng{margin-left:6px}
 .rail button.mais .seta{font-size:10px;opacity:.75;margin-left:2px}
 .ddmenu{position:absolute;z-index:40;background:var(--panel);border:1px solid var(--rule);
   border-radius:4px;padding:6px;margin-top:4px;min-width:196px;
   box-shadow:0 6px 20px rgba(13,23,22,.16)}
 .ddmenu.dir{right:18px}
+.maiswrap{position:relative;display:inline-block}
+.ddmenu.mais-dd{left:0;top:100%;margin-top:2px}
 .ddmenu button{display:block;width:100%;text-align:left;font-size:13px;padding:7px 12px;
   border:none;background:none;border-radius:3px;color:var(--ink);cursor:pointer}
 .ddmenu button:hover{background:var(--surface)}
@@ -109,7 +122,7 @@ button{cursor:pointer;border:none;background:none}
   color:var(--muted);font-size:12px;font-weight:600;cursor:pointer}
 .fchip.on{border-color:var(--amber);color:var(--amber);background:var(--amber-bg)}
 .filtrochips select{max-width:150px;padding:5px 9px;font-size:12px}
-@media(max-width:620px){ .ddmenu{left:0;right:0;min-width:0} .ddmenu.dir{right:0} }
+@media(max-width:620px){ .ddmenu.dir{left:0;right:0;min-width:0} }
 
 .main{max-width:1180px;margin:0 auto;padding:18px 18px 56px}
 .page{display:none}
@@ -432,9 +445,13 @@ input:focus,select:focus{border-color:var(--steel);outline:none;box-shadow:0 0 0
 </style>
 </head>
 <body>
+<script>try{
+  const t=localStorage.getItem('tema');
+  if(t==='light'||t==='dark') document.documentElement.setAttribute('data-theme',t);
+}catch(e){}</script>
 <div id="root"><div class="gate"><div class="gatebox"><h1>Carregando…</h1>
 <p class="sub">Conectando ao banco de dados.</p></div></div></div>
 <div class="toast" id="toast"></div>
-<script type="module" src="app.js?v=51"></script>
+<script type="module" src="app.js?v=52"></script>
 </body>
 </html>
