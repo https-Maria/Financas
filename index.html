@@ -60,14 +60,15 @@ button{cursor:pointer;border:none;background:none}
 .brand span{font-size:12.5px;color:var(--barra-sub)}
 .rail nav{display:flex;margin-top:11px;overflow-x:auto;scrollbar-width:none}
 .rail nav::-webkit-scrollbar{display:none}
+@media(max-width:640px){ .rail nav{flex-wrap:wrap;overflow-x:visible;row-gap:2px} }
+.rail nav::-webkit-scrollbar{display:none}
 .rail button{padding:9px 0;margin-right:20px;font-size:13.5px;color:var(--barra-sub);
   border-bottom:2px solid transparent;white-space:nowrap;font-weight:500;background:none}
 .rail button:hover{color:var(--barra-txt)}
 .rail button[aria-current="true"]{color:var(--barra-txt);border-bottom-color:var(--barra-ativo);font-weight:700}
-.railfoot{display:flex;gap:16px;align-items:center;padding:0 0 9px;margin-top:-2px}
-.railfoot button{font-size:12px;color:var(--barra-sub);padding:0;background:none;
-  border:none;border-bottom:none}
-.railfoot button:hover{color:var(--barra-txt);text-decoration:underline}
+.rodape{display:flex;gap:14px;align-items:center;justify-content:center;
+  padding:22px 18px 28px;max-width:1180px;margin:0 auto;color:var(--muted);font-size:11.5px}
+.rodape-v{opacity:.7}
 
 /* engrenagem e menus suspensos */
 .brand .eng{background:var(--rule-soft);border:none;color:var(--barra-txt);
@@ -453,6 +454,6 @@ input:focus,select:focus{border-color:var(--steel);outline:none;box-shadow:0 0 0
 <div id="root"><div class="gate"><div class="gatebox"><h1>Carregando…</h1>
 <p class="sub">Conectando ao banco de dados.</p></div></div></div>
 <div class="toast" id="toast"></div>
-<script type="module" src="app.js?v=53"></script>
+<script type="module" src="app.js?v=54"></script>
 </body>
 </html>
