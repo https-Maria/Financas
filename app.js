@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v55';
+const APP_VER='v56';
 
 /* =====================================================================
    ESTADO
@@ -129,21 +129,30 @@ function mesesEntre(a,b){const[ay,am]=a.split('-').map(Number),[by,bm]=b.split('
 /* Fatura de verdade: vem dos lançamentos. Se você já lançou o pagamento da
    fatura daquele cartão naquele mês, esse é o valor que vale — nada de
    estimativa por cima de dado real, e nada de tabela paralela. */
+/* Crédito no cartão: estorno, devolução, cashback — sempre lançado como
+   Entrada, categoria Cartão. SEMPRE abate, esteja a fatura vindo do cálculo
+   ou de um total declarado. É a mesma tela de sempre, só a direção muda:
+   Saída = uma cobrança; Entrada = o contrário de uma cobrança. */
+function creditosCartao(nome,k){
+  return D.lancamentos.filter(l=>
+    ym(l.data)===k && !l.protegido && (l.cartao||'')===nome &&
+    l.tipo==='Entrada' && l.categoria==='Cartão');
+}
+function somaValores(lista){ return lista.reduce((s,l)=>s+ +l.valor,0); }
+
 function faturaLancada(nome,k){
-  /* Entrada num cartão é crédito: estorno, devolução, cashback. Ela abate a
-     fatura em vez de virar receita. Por isso o valor é a soma das saídas menos
-     a das entradas. Categoria "Ajuste Fatura" fica de fora daqui de propósito:
-     ela soma por cima em faturaCartao, não substitui o valor base — senão um
-     estorno pontual tinha o mesmo efeito de redefinir a fatura inteira. */
-  const ls=D.lancamentos.filter(l=>
-    ym(l.data)===k && !l.protegido &&
-    (l.cartao||'')===nome && l.categoria!=='Ajuste Fatura' &&
-    (l.categoria==='Cartão' || /fatura|estorno/i.test(l.descricao||'')));
-  if(!ls.length) return null;
-  const valor = ls.reduce((s,l)=> s + (l.tipo==='Entrada' ? -(+l.valor) : +l.valor), 0);
-  return {valor, itens: ls,
-          creditos: ls.filter(l=>l.tipo==='Entrada'),
-          debitos:  ls.filter(l=>l.tipo!=='Entrada')};
+  /* Só as Saídas categoria Cartão contam como "declarar o total inteiro" —
+     é o padrão de sempre (ex.: "a fatura de setembro é R$755,68"). Créditos
+     do mesmo mês já entram abatidos no valor, pra tela mostrar o número
+     final certo. */
+  const debitos=D.lancamentos.filter(l=>
+    ym(l.data)===k && !l.protegido && (l.cartao||'')===nome &&
+    l.tipo!=='Entrada' &&
+    (l.categoria==='Cartão' || /fatura/i.test(l.descricao||'')));
+  if(!debitos.length) return null;
+  const creditos=creditosCartao(nome,k);
+  const valor = somaValores(debitos) - somaValores(creditos);
+  return {valor, itens:[...debitos,...creditos], creditos, debitos};
 }
 
 /* ---- Ciclo de fatura: a janela que ela cobre ----
@@ -213,22 +222,28 @@ function faturaCalculada(nome, k, extra){
   return t;
 }
 
-/* O valor que vale: o lançado manda; senão, o calculado. */
-/* Ajustes pontuais desta fatura: estornos, cobranças que o app não previu,
-   correções manuais. SOMAM em cima do valor base — nunca substituem. É essa
-   soma que faltava antes: um estorno de R$139 tinha o mesmo efeito de "a
-   fatura inteira é R$139", porque entrava na mesma soma do valor lançado. */
+/* O valor que vale: um total declarado manda (já com créditos do mês
+   abatidos); sem isso, o calculado menos os créditos do mês — e, por cima
+   de tudo isso, os ajustes pontuais da própria aba Fatura (ver mais abaixo),
+   que somam pros dois lados, cobrança extra ou estorno, sem depender de
+   nenhuma regra de ciclo ou cálculo. */
+function faturaCartao(nome, k){
+  const real=faturaLancada(nome,k);
+  const base = real ? real.valor : (faturaCalculada(nome,k) - somaValores(creditosCartao(nome,k)));
+  return base + somaAjustesFatura(nome,k);
+}
+
+/* Ajustes pontuais da aba Fatura — cobrança que o cálculo não previu (ex.:
+   "YouTube debitou de novo"), ou correção que não cabe em regra nenhuma.
+   Categoria própria, nunca aparece no formulário geral de Lançamentos: só
+   esta aba cria isso, e sempre SOMA — cobrança extra some, estorno abate —
+   em cima de tudo o mais, sem depender de ciclo ou cálculo. */
 function ajustesFatura(nome, k){
   return D.lancamentos.filter(l=>
     ym(l.data)===k && !l.protegido && (l.cartao||'')===nome && l.categoria==='Ajuste Fatura');
 }
 function somaAjustesFatura(nome, k){
   return ajustesFatura(nome,k).reduce((s,l)=> s + (l.tipo==='Entrada' ? -(+l.valor) : +l.valor), 0);
-}
-function faturaCartao(nome, k){
-  const real=faturaLancada(nome,k);
-  const base = real ? real.valor : faturaCalculada(nome,k);
-  return base + somaAjustesFatura(nome,k);
 }
 
 /* Parcela de uma compra simulada neste mês. Independe de cartão escolhido:
@@ -926,6 +941,7 @@ const MENU_MAIS=[
 const MENU_CONFIG=['cad','backup','log'];
 const rotulo=id=>(PAGES.find(p=>p[0]===id)||[,id])[1];
 let MENU_ABERTO=null;
+let PROJ_ABERTO=null;
 let CUR='painel', MREF=ym(hoje()), VISAO=null;  // 'previsto' | 'realizado'
 let GASTO_RAPIDO_ABERTO=false;
 window.toggleGastoRapido=()=>{ GASTO_RAPIDO_ABERTO=!GASTO_RAPIDO_ABERTO; render(); };
@@ -1248,7 +1264,7 @@ function vPainel(){
 }
 
 const CATS=['Salário/Renda','Moradia','Transporte','Combustível','Investimento','Telefonia',
-  'Saúde','Compras','Cartão','Ajuste Fatura','Assinaturas','Alimentação','Lazer','Reserva','Reports','Outros'];
+  'Saúde','Compras','Cartão','Assinaturas','Alimentação','Lazer','Reserva','Reports','Outros'];
 
 /* =====================================================================
    FILTRO UNIVERSAL — o mesmo padrão em toda tabela do app.
@@ -1309,21 +1325,16 @@ function vLanc(){
   const ls=aplicaFiltro('lanc', doMes, 'descricao', 'tipo', 'categoria');
   const r=realizado(MREF);
   const cartoesAtivos=D.cartoes.filter(c=>c.ativo);
+  const ehCreditoCartao = $('l_c')?.value==='Cartão' && $('l_t')?.value==='Entrada';
 
   const camposNormal = `
     <div class="fld"><label>Categoria</label><select id="l_c" onchange="render()">${CATS.map(c=>`<option>${c}</option>`).join('')}</select></div>
-    <div class="fld"><label>Tipo</label><select id="l_t"><option>Saída</option><option>Entrada</option></select></div>
+    <div class="fld"><label>Tipo</label><select id="l_t" onchange="render()"><option>Saída</option><option>Entrada</option></select></div>
     <div class="fld"><label>Quem</label><select id="l_q">${['Casal','Maria','Jéssica'].map(q=>`<option>${q}</option>`).join('')}</select></div>
     <div class="fld"><label>Valor</label><input type="number" step="0.01" id="l_v" placeholder="0,00"></div>
     <div class="fld"><label>Cartão${$('l_c')&&$('l_c').value==='Cartão'?' *':''}</label><select id="l_cart">
       <option value="">— nenhum —</option>
       ${cartoesAtivos.map(c=>`<option>${esc(c.nome)}</option>`).join('')}</select></div>`;
-
-  const camposEstorno = `
-    <div class="fld"><label>Cartão *</label><select id="l_cart2">
-      ${cartoesAtivos.map(c=>`<option>${esc(c.nome)}</option>`).join('')}</select></div>
-    <div class="fld"><label>Quem</label><select id="l_q2">${['Casal','Maria','Jéssica'].map(q=>`<option>${q}</option>`).join('')}</select></div>
-    <div class="fld"><label>Valor</label><input type="number" step="0.01" id="l_v2" placeholder="0,00"></div>`;
 
   const camposCaixinha = `
     <div class="fld" style="grid-column:span 2"><label>Guardar em</label><select id="l_meta">
@@ -1337,18 +1348,19 @@ function vLanc(){
       <div class="fld" style="grid-column:span 2"><label>Natureza</label>
         <select onchange="setLancNat(this.value)">
           <option value="normal" ${LANC_NAT==='normal'?'selected':''}>Normal</option>
-          <option value="estorno" ${LANC_NAT==='estorno'?'selected':''}>Estorno no cartão</option>
           <option value="caixinha" ${LANC_NAT==='caixinha'?'selected':''}>Guardar na caixinha</option>
         </select></div>
     </div>
     <div class="form">
       <div class="fld"><label>Data</label><input type="date" id="l_d" value="${MREF}-01"></div>
       <div class="fld" style="grid-column:span 2"><label>Descrição${LANC_NAT==='caixinha'?' (opcional)':''}</label>
-        <input id="l_n" placeholder="${LANC_NAT==='estorno'?'Ex.: Devolução da loja':LANC_NAT==='caixinha'?'Deixe em branco pro nome padrão':'Ex.: Mercado'}"></div>
-      ${LANC_NAT==='normal'?camposNormal:LANC_NAT==='estorno'?camposEstorno:camposCaixinha}
+        <input id="l_n" placeholder="${LANC_NAT==='caixinha'?'Deixe em branco pro nome padrão':'Ex.: Mercado, ou Estorno — devolução'}"></div>
+      ${LANC_NAT==='normal'?camposNormal:camposCaixinha}
       <div class="fld"><label>&nbsp;</label><button class="btn" onclick="addLanc()">Adicionar</button></div>
     </div>
-    ${LANC_NAT==='estorno'?`<p class="note" style="margin-top:10px">Crédito devolvido pela loja ou pelo banco: abate a fatura daquele mês em vez de virar receita.</p>`:''}
+    ${LANC_NAT==='normal'?`<p class="note" style="margin-top:10px">Pra registrar um estorno: mesma tela,
+      categoria <b>Cartão</b>, tipo <b>Entrada</b> — abate a fatura daquele cartão em vez de virar receita.
+      ${ehCreditoCartao?' <span class="tag t-ok">é isso que você está montando agora</span>':''}</p>`:''}
     ${LANC_NAT==='caixinha'?`<p class="note" style="margin-top:10px">Soma no guardado da meta escolhida e baixa do saldo em conta — mesma lógica da aba Metas.</p>`:''}
   </div></div>
   <div class="kpis">
@@ -1382,16 +1394,6 @@ window.addLanc=async()=>{
   const d=$('l_d').value, nInf=$('l_n').value.trim();
   if(!d) return toast('Preencha a data');
 
-  if(LANC_NAT==='estorno'){
-    const cart=$('l_cart2')?.value, v=parseFloat($('l_v2')?.value);
-    if(!cart) return toast('Escolha o cartão');
-    if(!v) return toast('Informe o valor');
-    const n=nInf||'Estorno — devolução';
-    const ok=await inserir('lancamentos',{data:d,descricao:n,categoria:'Ajuste Fatura',cartao:cart,
-      tipo:'Entrada',quem:$('l_q2')?.value||'Casal',valor:v,status:'Confirmado',criado_por:USER.id});
-    if(ok){MREF=ym(d);render();toast(n+' lançado · abate '+BRL(v)+' da fatura do '+cart);}
-    return;
-  }
   if(LANC_NAT==='caixinha'){
     const metaId=$('l_meta')?.value||null, v=parseFloat($('l_v3')?.value);
     if(!v) return toast('Informe quanto você guardou');
@@ -1400,12 +1402,18 @@ window.addLanc=async()=>{
     return;
   }
 
-  const n=nInf, v=parseFloat($('l_v').value), cat=$('l_c').value, cart=$('l_cart')?.value||null;
+  const n=nInf, v=parseFloat($('l_v').value), cat=$('l_c').value, cart=$('l_cart')?.value||null, tipo=$('l_t').value;
   if(!n||!v) return toast('Preencha descrição e valor');
-  if((cat==='Cartão'||cat==='Ajuste Fatura') && !cart) return toast('Escolha o cartão — senão isso não abate a fatura de ninguém', 4400);
+  if(cat==='Cartão' && !cart) return toast('Escolha o cartão — senão isso não abate a fatura de ninguém', 4400);
   const ok=await inserir('lancamentos',{data:d,descricao:n,categoria:cat,cartao:cart,
-    tipo:$('l_t').value,quem:$('l_q').value,valor:v,status:'Confirmado',criado_por:USER.id});
-  if(ok){MREF=ym(d);render();toast(n+' lançado · saldo do mês agora '+BRL(realizado(MREF).sal));}
+    tipo,quem:$('l_q').value,valor:v,status:'Confirmado',criado_por:USER.id});
+  if(ok){
+    MREF=ym(d);render();
+    const msg = (cat==='Cartão'&&tipo==='Entrada')
+      ? n+' lançado · abate '+BRL(v)+' da fatura do '+cart
+      : n+' lançado · saldo do mês agora '+BRL(realizado(MREF).sal);
+    toast(msg);
+  }
 };
 window.delRow=async(t,id)=>{if(await remover(t,id)){render();toast('Excluído');}};
 
@@ -1741,19 +1749,37 @@ function vProj(){
   +(neg.length?`<div class="warn" style="margin-bottom:16px"><b>Atenção:</b> ${neg.length}
      ${neg.length===1?'mês fica negativo':'meses ficam negativos'}: ${neg.map(x=>mLabel(x.k)).join(', ')}.</div>`
     :`<div class="info" style="margin-bottom:16px">Nenhum mês negativo. Acumulado em 24 meses: ${BRL(f[23].acc)}.</div>`)
-  +`<div class="panel"><div class="tw"><table><thead><tr>
+  +`<div class="panel"><h2>Mês a mês <small>clique num mês pra ver as parcelas e assinaturas que compõem os cartões</small></h2>
+  <div class="tw"><table><thead><tr>
     <th>Mês</th><th class="r">Renda</th><th class="r">Fixas</th><th class="r">Cartões</th>
     <th class="r">Saídas</th><th class="r">Saldo</th><th class="r">Acumulado</th><th class="r">%</th>
   </tr></thead><tbody>
-  ${f.map(x=>`<tr><td><b>${mLabel(x.k)}</b></td>
-    <td class="r">${BRL(x.renda)}</td><td class="r">${BRL(x.fix)}</td>
-    <td class="r">${BRL(x.cart)}${x.real?' <span class="tag t-ok">real</span>':''}</td>
-    <td class="r"><b>${BRL(x.out)}</b></td>
-    <td class="r" style="font-weight:600;color:${x.sal<0?'var(--neg)':'var(--pos)'}">${BRL(x.sal)}</td>
-    <td class="r">${BRL(x.acc)}</td>
-    <td class="r"><span class="pill ${x.pct>.8?'t-no':x.pct>.6?'t-w':'t-ok'}">${PCT(x.pct)}</span></td>
-  </tr>`).join('')}</tbody></table></div></div>`;
+  ${f.map(x=>{
+    const parcelas=D.parcelamentos.filter(p=>parcelaCaiEm(p,x.k));
+    const assinaturas=D.assinaturas.filter(a=>a.projetar)
+      .map(a=>({a, vz:vezesAssinatura(a,x.k)})).filter(r=>r.vz>0);
+    const temDetalhe=parcelas.length||assinaturas.length;
+    return `<tr class="${temDetalhe?'chk':''}" ${temDetalhe?`onclick="toggleProjMes('${x.k}')"`:''}
+      style="${temDetalhe?'cursor:pointer':''}"><td><b>${temDetalhe?(PROJ_ABERTO===x.k?'▾ ':'▸ '):''}${mLabel(x.k)}</b></td>
+      <td class="r">${BRL(x.renda)}</td><td class="r">${BRL(x.fix)}</td>
+      <td class="r">${BRL(x.cart)}${x.real?' <span class="tag t-ok">real</span>':''}</td>
+      <td class="r"><b>${BRL(x.out)}</b></td>
+      <td class="r" style="font-weight:600;color:${x.sal<0?'var(--neg)':'var(--pos)'}">${BRL(x.sal)}</td>
+      <td class="r">${BRL(x.acc)}</td>
+      <td class="r"><span class="pill ${x.pct>.8?'t-no':x.pct>.6?'t-w':'t-ok'}">${PCT(x.pct)}</span></td>
+    </tr>
+    ${(temDetalhe && PROJ_ABERTO===x.k)?`<tr><td colspan="8" style="padding:0">
+      <div style="padding:10px 15px 14px;background:var(--surface)">
+        ${parcelas.length?`<div class="kgroup sub">Parcelamentos conhecidos</div>
+          ${parcelas.map(p=>`<div class="dline"><span class="note">${esc(p.descricao)}${p.cartao?' · '+esc(p.cartao):''}</span>
+            <span>${BRL(p.valor_parcela)}</span></div>`).join('')}`:''}
+        ${assinaturas.length?`<div class="kgroup sub" style="margin-top:${parcelas.length?'8px':'0'}">Assinaturas conhecidas</div>
+          ${assinaturas.map(r=>`<div class="dline"><span class="note">${esc(r.a.descricao)}${r.a.cartao?' · '+esc(r.a.cartao):''}${r.vz!==1?' × '+r.vz:''}</span>
+            <span>${BRL(r.a.valor*r.vz)}</span></div>`).join('')}`:''}
+      </div></td></tr>`:''}`;
+  }).join('')}</tbody></table></div></div>`;
 }
+window.toggleProjMes=k=>{ PROJ_ABERTO = PROJ_ABERTO===k ? null : k; render(); };
 
 function vCad(){
   const c=cfg();
