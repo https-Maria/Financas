@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v56';
+const APP_VER='v57';
 
 /* =====================================================================
    ESTADO
@@ -494,7 +494,7 @@ function avulsosDoMes(k){
   return D.lancamentos.filter(l=>{
     if(mesDeCaixa(l)!==k) return false;
     if(l.beneficio || l.protegido) return false;          // VA e Reports têm lugar próprio
-    if(l.categoria==='Cartão' && cartoesAtivos.has(l.cartao)) return false;  // é a fatura
+    if((l.categoria==='Cartão'||l.categoria==='Ajuste Fatura') && cartoesAtivos.has(l.cartao)) return false;  // já está na fatura
     if(l.tipo==='Saída'   && nomesFixas.has(l.descricao))  return false;     // é conta fixa
     if(l.tipo==='Entrada' && nomesRendas.has(l.descricao)) return false;     // é renda
     return true;
@@ -4070,21 +4070,19 @@ function montarNav(){
   const nav=$('nav'); if(!nav) return;
   const emMais = MENU_MAIS.some(([,ids])=>ids.includes(CUR));
   const emConfig = MENU_CONFIG.includes(CUR);
-  const ddMais = MENU_ABERTO==='mais'
-    ? `<div class="ddmenu mais-dd">${MENU_MAIS.map(([g,ids])=>
-        `<div class="sep">${g}</div>`+ids.map(id=>
-          `<button onclick="go('${id}')" aria-current="${CUR===id}">${rotulo(id)}</button>`).join('')
-        ).join('')}</div>`
-    : '';
+  /* "Mais" virou um <select> nativo — o navegador cuida sozinho de abrir,
+     posicionar e fechar. Nada de CSS customizado pra dar errado. */
+  const selectMais = `<select class="maisnativo" aria-label="Mais páginas" onchange="if(this.value)go(this.value)"
+      ${emMais?'aria-current="true"':''}>
+      <option value="" ${!emMais?'selected':''}>Mais ▾</option>
+      ${MENU_MAIS.map(([g,ids])=>`<optgroup label="${g}">
+        ${ids.map(id=>`<option value="${id}" ${CUR===id?'selected':''}>${rotulo(id)}</option>`).join('')}
+      </optgroup>`).join('')}
+    </select>`;
   nav.innerHTML =
     MENU_FIXO.map(id=>`<button data-p="${id}" onclick="go('${id}')"
       aria-current="${CUR===id}">${rotulo(id)}</button>`).join('')
-    + `<span class="maiswrap">
-        <button class="mais" onclick="abrirMenu('mais')"
-          aria-current="${emMais}" aria-expanded="${MENU_ABERTO==='mais'}">
-          Mais <span class="seta">▾</span></button>
-        ${ddMais}
-      </span>`
+    + selectMais
     + (emConfig?`<button aria-current="true" onclick="abrirMenu('config')">${rotulo(CUR)}</button>`:'');
 
   const box=$('menus'); if(!box) return;
