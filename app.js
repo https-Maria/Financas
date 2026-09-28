@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v54';
+const APP_VER='v55';
 
 /* =====================================================================
    ESTADO
@@ -132,10 +132,12 @@ function mesesEntre(a,b){const[ay,am]=a.split('-').map(Number),[by,bm]=b.split('
 function faturaLancada(nome,k){
   /* Entrada num cartão é crédito: estorno, devolução, cashback. Ela abate a
      fatura em vez de virar receita. Por isso o valor é a soma das saídas menos
-     a das entradas. */
+     a das entradas. Categoria "Ajuste Fatura" fica de fora daqui de propósito:
+     ela soma por cima em faturaCartao, não substitui o valor base — senão um
+     estorno pontual tinha o mesmo efeito de redefinir a fatura inteira. */
   const ls=D.lancamentos.filter(l=>
     ym(l.data)===k && !l.protegido &&
-    (l.cartao||'')===nome &&
+    (l.cartao||'')===nome && l.categoria!=='Ajuste Fatura' &&
     (l.categoria==='Cartão' || /fatura|estorno/i.test(l.descricao||'')));
   if(!ls.length) return null;
   const valor = ls.reduce((s,l)=> s + (l.tipo==='Entrada' ? -(+l.valor) : +l.valor), 0);
@@ -212,9 +214,21 @@ function faturaCalculada(nome, k, extra){
 }
 
 /* O valor que vale: o lançado manda; senão, o calculado. */
+/* Ajustes pontuais desta fatura: estornos, cobranças que o app não previu,
+   correções manuais. SOMAM em cima do valor base — nunca substituem. É essa
+   soma que faltava antes: um estorno de R$139 tinha o mesmo efeito de "a
+   fatura inteira é R$139", porque entrava na mesma soma do valor lançado. */
+function ajustesFatura(nome, k){
+  return D.lancamentos.filter(l=>
+    ym(l.data)===k && !l.protegido && (l.cartao||'')===nome && l.categoria==='Ajuste Fatura');
+}
+function somaAjustesFatura(nome, k){
+  return ajustesFatura(nome,k).reduce((s,l)=> s + (l.tipo==='Entrada' ? -(+l.valor) : +l.valor), 0);
+}
 function faturaCartao(nome, k){
   const real=faturaLancada(nome,k);
-  return real ? real.valor : faturaCalculada(nome,k);
+  const base = real ? real.valor : faturaCalculada(nome,k);
+  return base + somaAjustesFatura(nome,k);
 }
 
 /* Parcela de uma compra simulada neste mês. Independe de cartão escolhido:
@@ -1234,7 +1248,7 @@ function vPainel(){
 }
 
 const CATS=['Salário/Renda','Moradia','Transporte','Combustível','Investimento','Telefonia',
-  'Saúde','Compras','Cartão','Assinaturas','Alimentação','Lazer','Reserva','Reports','Outros'];
+  'Saúde','Compras','Cartão','Ajuste Fatura','Assinaturas','Alimentação','Lazer','Reserva','Reports','Outros'];
 
 /* =====================================================================
    FILTRO UNIVERSAL — o mesmo padrão em toda tabela do app.
@@ -1373,9 +1387,9 @@ window.addLanc=async()=>{
     if(!cart) return toast('Escolha o cartão');
     if(!v) return toast('Informe o valor');
     const n=nInf||'Estorno — devolução';
-    const ok=await inserir('lancamentos',{data:d,descricao:n,categoria:'Cartão',cartao:cart,
+    const ok=await inserir('lancamentos',{data:d,descricao:n,categoria:'Ajuste Fatura',cartao:cart,
       tipo:'Entrada',quem:$('l_q2')?.value||'Casal',valor:v,status:'Confirmado',criado_por:USER.id});
-    if(ok){MREF=ym(d);render();toast(n+' lançado · abate a fatura do '+cart);}
+    if(ok){MREF=ym(d);render();toast(n+' lançado · abate '+BRL(v)+' da fatura do '+cart);}
     return;
   }
   if(LANC_NAT==='caixinha'){
@@ -1388,7 +1402,7 @@ window.addLanc=async()=>{
 
   const n=nInf, v=parseFloat($('l_v').value), cat=$('l_c').value, cart=$('l_cart')?.value||null;
   if(!n||!v) return toast('Preencha descrição e valor');
-  if(cat==='Cartão' && !cart) return toast('Escolha o cartão — senão isso não abate a fatura de ninguém', 4400);
+  if((cat==='Cartão'||cat==='Ajuste Fatura') && !cart) return toast('Escolha o cartão — senão isso não abate a fatura de ninguém', 4400);
   const ok=await inserir('lancamentos',{data:d,descricao:n,categoria:cat,cartao:cart,
     tipo:$('l_t').value,quem:$('l_q').value,valor:v,status:'Confirmado',criado_por:USER.id});
   if(ok){MREF=ym(d);render();toast(n+' lançado · saldo do mês agora '+BRL(realizado(MREF).sal));}
@@ -3716,35 +3730,20 @@ window.voltarMes=async(pid,k)=>{
 };
 window.setFatCart=v=>{ FAT_CART=v; render(); };
 
-/* Corrige o total de uma fatura pro valor real do banco. Não mexe em nenhuma
-   parcela ou assinatura individual — cria (ou atualiza) UM lançamento de
-   ajuste que cobre exatamente a diferença, reaproveitando o mesmo mecanismo
-   que já faz um lançamento categoria "Cartão" valer mais que o cálculo. */
-window.ajustarFatura=async(nome,k)=>{
-  const novo=parseFloat($('fat_ajuste')?.value);
-  if(isNaN(novo) || novo<0) return toast('Informe um valor válido');
-  const marcador='Ajuste de fatura — '+nome;
-  const existente=D.lancamentos.find(l=>l.categoria==='Cartão' && l.cartao===nome &&
-    ym(l.data)===k && l.descricao===marcador);
-  /* Um lançamento real de categoria Cartão SUBSTITUI o valor calculado, não
-     soma em cima dele — é assim que faturaLancada já funciona. Por isso o
-     ajuste não pode ser "a diferença pro valor calculado": precisa ser a
-     diferença pros OUTROS lançamentos reais que já existirem (normalmente
-     nenhum), pro total dar exatamente o valor digitado. */
-  const outrosReais=D.lancamentos
-    .filter(l=>l.categoria==='Cartão' && l.cartao===nome && ym(l.data)===k && l.id!==existente?.id)
-    .reduce((s,l)=> s + (l.tipo==='Entrada'?-1:1)*+l.valor, 0);
-  const diferenca=novo-outrosReais;
-  if(Math.abs(diferenca)<0.01){
-    if(existente) await remover('lancamentos',existente.id);
-    render(); toast('Já batia — nada pra ajustar');
-    return;
-  }
-  const dados={data:k+'-'+String(ultimoDiaDoMes(k)).padStart(2,'0'), descricao:marcador,
-    categoria:'Cartão', cartao:nome, tipo:diferenca>=0?'Saída':'Entrada', valor:Math.abs(diferenca),
-    status:'Confirmado', criado_por:USER?.id||null};
-  const ok = existente ? await atualizar('lancamentos',existente.id,dados) : await inserir('lancamentos',dados);
-  if(ok){ render(); toast('Fatura da '+nome+' ajustada para '+BRL(novo)); }
+/* Adiciona um ajuste pontual (cobrança extra ou estorno) na fatura de um
+   cartão/mês. Cada um vira um lançamento próprio, categoria "Ajuste Fatura" —
+   soma em cima do calculado, nunca substitui. Excluir é o delRow padrão. */
+window.addAjusteFatura=async(nome,k)=>{
+  const desc=$('fat_desc')?.value.trim();
+  const tipo=$('fat_tipo')?.value;
+  const v=parseFloat($('fat_valor')?.value);
+  if(!v || v<=0) return toast('Informe o valor do ajuste');
+  const n=desc || (tipo==='estorno'?'Estorno / desconto':'Cobrança extra');
+  const ok=await inserir('lancamentos',{
+    data:k+'-'+String(ultimoDiaDoMes(k)).padStart(2,'0'), descricao:n,
+    categoria:'Ajuste Fatura', cartao:nome, tipo:tipo==='estorno'?'Entrada':'Saída',
+    quem:'Casal', valor:v, status:'Confirmado', criado_por:USER?.id||null});
+  if(ok){ render(); toast(n+' — '+BRL(v)+' adicionado na fatura da '+nome); }
 };
 
 function vFatura(){
@@ -3800,16 +3799,31 @@ function vFatura(){
       somaTerc>0?'abatido da parte de vocês':'nenhum',somaTerc>0?'amb':'')}
   </div>
 
-  <div class="panel"><h2>Corrigir o valor <small>o BB muda a composição da fatura com mais frequência — ajuste aqui quando o cálculo não bater</small></h2>
-  <div class="pbody"><div class="form">
-    <div class="fld"><label>Valor real desta fatura</label>
-      <input type="number" step="0.01" id="fat_ajuste" value="${valor.toFixed(2)}"></div>
-    <div class="fld"><label>&nbsp;</label>
-      <button class="btn" onclick="ajustarFatura('${esc(n)}','${comp}')">Salvar valor real</button></div>
-  </div>
-  <p class="note" style="margin-top:8px">Isso cria (ou atualiza) um lançamento de ajuste que cobre a
-  diferença — não apaga nem mexe nas parcelas e assinaturas individuais, só faz o total bater com o
-  que está no seu banco.</p>
+  <div class="panel"><h2>Ajustes desta fatura <small>o BB muda a composição com mais frequência — some ou remova cobranças pontuais aqui, sem mexer em parcelas e assinaturas</small></h2>
+  <div class="pbody">
+    ${(()=>{
+      const ajs=ajustesFatura(n,comp);
+      if(!ajs.length) return `<p class="note" style="margin-bottom:12px">Nenhum ajuste neste mês — o total acima vem só do cálculo (parcelas + assinaturas).</p>`;
+      return `<div class="tw" style="margin-bottom:12px"><table><thead><tr>
+        <th>O que é</th><th class="r">Valor</th><th></th></tr></thead><tbody>
+        ${ajs.map(l=>`<tr><td>${esc(l.descricao)}
+          <span class="tag ${l.tipo==='Entrada'?'t-ok':'t-w'}">${l.tipo==='Entrada'?'estorno':'cobrança extra'}</span></td>
+          <td class="r" style="color:${l.tipo==='Entrada'?'var(--pos)':'var(--neg)'}">
+            ${l.tipo==='Entrada'?'−':'+'} ${BRL(l.valor)}</td>
+          <td class="r"><button class="btn dgr" onclick="delRow('lancamentos','${l.id}')">excluir</button></td></tr>`).join('')}
+        </tbody><tfoot><tr><td>Total dos ajustes</td><td class="r"><b>${BRL(somaAjustesFatura(n,comp))}</b></td><td></td></tr></tfoot>
+      </table></div>`;
+    })()}
+    <div class="form">
+      <div class="fld" style="grid-column:span 2"><label>O que é</label>
+        <input id="fat_desc" placeholder="Ex.: Compra que a loja não avisou, ou devolução"></div>
+      <div class="fld"><label>Tipo</label><select id="fat_tipo">
+        <option value="cobranca">Cobrança extra</option>
+        <option value="estorno">Estorno / desconto</option></select></div>
+      <div class="fld"><label>Valor</label><input type="number" step="0.01" id="fat_valor" placeholder="0,00"></div>
+      <div class="fld"><label>&nbsp;</label>
+        <button class="btn" onclick="addAjusteFatura('${esc(n)}','${comp}')">Adicionar</button></div>
+    </div>
   </div></div>
 
   ${ciclo?`<div class="info" style="margin-bottom:16px">
@@ -4042,7 +4056,7 @@ function montarNav(){
     + `<span class="maiswrap">
         <button class="mais" onclick="abrirMenu('mais')"
           aria-current="${emMais}" aria-expanded="${MENU_ABERTO==='mais'}">
-          ${emMais?rotulo(CUR):'Mais'} <span class="seta">▾</span></button>
+          Mais <span class="seta">▾</span></button>
         ${ddMais}
       </span>`
     + (emConfig?`<button aria-current="true" onclick="abrirMenu('config')">${rotulo(CUR)}</button>`:'');
