@@ -58,10 +58,7 @@ button{cursor:pointer;border:none;background:none}
   padding:13px 0 0;gap:14px;flex-wrap:wrap}
 .brand b{font-size:15px;font-weight:700;color:var(--barra-txt);letter-spacing:-.01em}
 .brand span{font-size:12.5px;color:var(--barra-sub)}
-.rail nav{display:flex;margin-top:11px;overflow-x:auto;scrollbar-width:none}
-.rail nav::-webkit-scrollbar{display:none}
-@media(max-width:640px){ .rail nav{flex-wrap:wrap;overflow-x:visible;row-gap:2px} }
-.rail nav::-webkit-scrollbar{display:none}
+.rail nav{display:flex;flex-wrap:wrap;row-gap:2px;margin-top:11px}
 .rail button{padding:9px 0;margin-right:20px;font-size:13.5px;color:var(--barra-sub);
   border-bottom:2px solid transparent;white-space:nowrap;font-weight:500;background:none}
 .rail button:hover{color:var(--barra-txt)}
@@ -454,6 +451,6 @@ input:focus,select:focus{border-color:var(--steel);outline:none;box-shadow:0 0 0
 <div id="root"><div class="gate"><div class="gatebox"><h1>Carregando…</h1>
 <p class="sub">Conectando ao banco de dados.</p></div></div></div>
 <div class="toast" id="toast"></div>
-<script type="module" src="app.js?v=55"></script>
+<script type="module" src="app.js?v=56"></script>
 </body>
 </html>
