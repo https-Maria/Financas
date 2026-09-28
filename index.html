@@ -74,13 +74,10 @@ button{cursor:pointer;border:none;background:none}
 .brand .eng:hover{background:var(--rule)}
 .brand .eng:first-of-type{margin-left:auto}
 .brand .eng+.eng{margin-left:6px}
-.rail button.mais .seta{font-size:10px;opacity:.75;margin-left:2px}
 .ddmenu{position:absolute;z-index:40;background:var(--panel);border:1px solid var(--rule);
   border-radius:4px;padding:6px;margin-top:4px;min-width:196px;
   box-shadow:0 6px 20px rgba(13,23,22,.16)}
 .ddmenu.dir{right:18px}
-.maiswrap{position:relative;display:inline-block}
-.ddmenu.mais-dd{left:0;top:100%;margin-top:2px}
 .ddmenu button{display:block;width:100%;text-align:left;font-size:13px;padding:7px 12px;
   border:none;background:none;border-radius:3px;color:var(--ink);cursor:pointer}
 .ddmenu button:hover{background:var(--surface)}
@@ -89,6 +86,18 @@ button{cursor:pointer;border:none;background:none}
   color:var(--muted);font-weight:700;padding:8px 12px 4px}
 .ddmenu .sep:first-child{padding-top:4px}
 #menus{position:relative}
+
+/* "Mais": select nativo do navegador — sempre abre, sempre no lugar certo,
+   sem CSS de posicionamento pra dar errado. Só troca a casca pra combinar
+   com os outros botões da barra. */
+select.maisnativo{appearance:none;-webkit-appearance:none;background:none;
+  border:none;border-bottom:2px solid transparent;color:var(--barra-sub);
+  font:inherit;font-size:13.5px;font-weight:500;padding:9px 22px 9px 0;margin-right:20px;
+  cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238FA39E' stroke-width='1.6'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 4px center}
+select.maisnativo:hover{color:var(--barra-txt)}
+select.maisnativo[aria-current="true"]{color:var(--barra-txt);border-bottom-color:var(--barra-ativo);font-weight:700}
+select.maisnativo option,select.maisnativo optgroup{color:var(--ink);background:var(--panel);font-weight:400}
 
 /* ---------- busca no centro ---------- */
 #busca{position:relative;margin-top:11px}
@@ -451,6 +460,6 @@ input:focus,select:focus{border-color:var(--steel);outline:none;box-shadow:0 0 0
 <div id="root"><div class="gate"><div class="gatebox"><h1>Carregando…</h1>
 <p class="sub">Conectando ao banco de dados.</p></div></div></div>
 <div class="toast" id="toast"></div>
-<script type="module" src="app.js?v=56"></script>
+<script type="module" src="app.js?v=57"></script>
 </body>
 </html>
