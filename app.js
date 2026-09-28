@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v53';
+const APP_VER='v54';
 
 /* =====================================================================
    ESTADO
@@ -32,6 +32,12 @@ const PCT = v => (v*100).toFixed(1).replace('.',',')+'%';
 const esc = s => String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const hoje = () => new Date().toISOString().slice(0,10);
 const ym = d => String(d).slice(0,7);
+/* Chave de dia civil (AAAA-MM-DD) a partir de um objeto Date — usada pra
+   comparar "é o mesmo dia" sem depender da hora exata do timestamp. Uma data
+   vinda de um <input type=date> convertida com T12:00:00 e um dia de curva
+   construído à meia-noite são o mesmo dia civil, mas timestamps diferentes;
+   comparar por getTime() os separa e o valor do evento some sem erro nenhum. */
+const diaChave = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 const mLabel = k => k.slice(5)+'/'+k.slice(0,4);
 function addM(k,n){let[y,m]=k.split('-').map(Number);m+=n;y+=Math.floor((m-1)/12);m=((m-1)%12+12)%12+1;
   return y+'-'+String(m).padStart(2,'0');}
@@ -146,13 +152,25 @@ function faturaLancada(nome,k){
 const cicloDe = (cartao,k) => D.ciclos.find(c=>c.cartao===cartao && c.competencia===k) || null;
 
 function janelaFatura(cartao,k){
+  const todos=D.ciclos.filter(c=>c.cartao===cartao).sort((a,b)=>a.fecha.localeCompare(b.fecha));
+  if(!todos.length) return null;   // cartão sem nenhum ciclo cadastrado: comportamento antigo (conta 1x)
   const c=cicloDe(cartao,k);
-  if(!c) return null;
-  const ant=cicloDe(cartao,addM(k,-1));
-  if(ant) return {ini:ant.fecha, fim:c.fecha};
-  /* sem o ciclo anterior, assume um mês antes do fechamento atual */
-  const f=new Date(c.fecha+'T12:00:00'); f.setMonth(f.getMonth()-1);
-  return {ini:f.toISOString().slice(0,10), fim:c.fecha, estimada:true};
+  if(c){
+    const idx=todos.findIndex(x=>x.competencia===k);
+    const ant=todos[idx-1];
+    if(ant) return {ini:ant.fecha, fim:c.fecha};
+    /* é o primeiro ciclo que existe pra esse cartão: sem fechamento anterior
+       de verdade, assume um mês antes deste — só acontece uma vez, no início
+       do histórico. */
+    const f=new Date(c.fecha+'T12:00:00'); f.setMonth(f.getMonth()-1);
+    return {ini:f.toISOString().slice(0,10), fim:c.fecha, estimada:true};
+  }
+  /* Esse mês não tem ciclo próprio. As cobranças que "cairiam" aqui já
+     pertencem à janela de algum ciclo vizinho de verdade — inventar uma
+     janela própria faria a mesma cobrança contar duas vezes (foi exatamente
+     esse o bug: assinatura somando na fatura vizinha). Sem janela própria,
+     sem contagem própria. */
+  return null;
 }
 
 /* Quantas vezes o dia X aparece dentro de (ini, fim] */
@@ -172,8 +190,10 @@ function vezesNoPeriodo(dia, ini, fim){
 
 /* Quantas cobranças desta assinatura entram na fatura do mês k */
 function vezesAssinatura(a, k){
+  const temCiclos = D.ciclos.some(c=>c.cartao===a.cartao);
+  if(!temCiclos) return 1;               // cartão sem ciclo cadastrado: comportamento antigo
   const j=janelaFatura(a.cartao,k);
-  if(!j) return 1;                       // sem ciclo cadastrado: comportamento antigo
+  if(!j) return 0;                       // tem ciclos, mas não pra este mês: a cobrança é de um vizinho
   return vezesNoPeriodo(+a.dia, j.ini, j.fim);
 }
 
@@ -893,6 +913,30 @@ const MENU_CONFIG=['cad','backup','log'];
 const rotulo=id=>(PAGES.find(p=>p[0]===id)||[,id])[1];
 let MENU_ABERTO=null;
 let CUR='painel', MREF=ym(hoje()), VISAO=null;  // 'previsto' | 'realizado'
+let GASTO_RAPIDO_ABERTO=false;
+window.toggleGastoRapido=()=>{ GASTO_RAPIDO_ABERTO=!GASTO_RAPIDO_ABERTO; render(); };
+window.addGastoRapido=async()=>{
+  const v=parseFloat($('gr_v')?.value);
+  if(!v || v<=0) return toast('Informe quanto foi');
+  const nota=$('gr_n')?.value.trim();
+  const ok=await inserir('lancamentos',{data:hoje(), descricao:nota?('Dia a dia — '+nota):'Dia a dia',
+    categoria:'Dia a dia', tipo:'Saída', quem:'Casal', valor:v, status:'Confirmado', criado_por:USER?.id||null});
+  if(ok){ GASTO_RAPIDO_ABERTO=false; MREF=ym(hoje()); render(); toast(BRL(v)+' registrado — dois toques, prontinho'); }
+};
+/* Quanto o casal realmente gasta no dia a dia, olhando os meses fechados
+   que já têm lançamentos de categoria "Dia a dia". Sem dado real, devolve
+   null — quem usa isso decide o que fazer no vazio (o slider manual, etc.). */
+function mediaVidaReal(nMeses){
+  const nMesesUsar = nMeses||3;
+  const atual=ym(hoje());
+  const meses=horizon(nMesesUsar+1, addM(atual,-nMesesUsar)).slice(0,-1); // últimos N meses fechados
+  const somas = meses.map(k=>
+    D.lancamentos.filter(l=>l.categoria==='Dia a dia' && ym(l.data)===k)
+      .reduce((s,l)=>s+ +l.valor,0)
+  ).filter(v=>v>0);
+  if(!somas.length) return null;
+  return {media: somas.reduce((a,b)=>a+b,0)/somas.length, meses: somas.length};
+}
 
 /* qual script resolve cada tabela que pode estar faltando */
 const MIGRACAO_DE = {
@@ -957,7 +1001,6 @@ function vPainel(){
   let corrido=0;
   const comAcum=blocos.map(b=>{ corrido+=b.saldo; return {...b,acum:corrido}; });
   const apertados=comAcum.filter(b=>b.acum<0);
-  const terc=D.terceiros.filter(t=>!t.recebido);
   const cats=Object.entries(r.porCat).sort((a,b)=>b[1]-a[1]).slice(0,8);
   const mxc=Math.max(...cats.map(c=>c[1]),1);
 
@@ -976,9 +1019,22 @@ function vPainel(){
         ${meses.map(k=>`<option value="${k}" ${k===MREF?'selected':''}>${mLabel(k)}</option>`).join('')}
       </select></div>
     <div style="flex:1"></div>
+    <button class="btn alt" onclick="toggleGastoRapido()">+ Gasto rápido</button>
     <button class="btn" onclick="go('compra')">Simular compra</button>
     <button class="btn alt" onclick="go('lanc')">Lançar movimento</button>
   </div>
+
+  ${GASTO_RAPIDO_ABERTO?`<div class="panel" style="margin-bottom:16px"><div class="pbody">
+    <div class="form">
+      <div class="fld"><label>Quanto foi</label><input type="number" step="0.01" id="gr_v" placeholder="0,00"></div>
+      <div class="fld" style="grid-column:span 2"><label>Com o quê (opcional)</label>
+        <input id="gr_n" placeholder="Ex.: mercado, gasolina…"></div>
+      <div class="fld"><label>&nbsp;</label><button class="btn" onclick="addGastoRapido()">Salvar</button></div>
+    </div>
+    <p class="note" style="margin-top:8px">Registra como "Dia a dia", hoje, no valor da compra. Sem categoria
+    pra escolher, sem fricção — é pra você lançar na hora, não depois. Quanto mais isso acumular, mais o
+    Dashboard usa o gasto real em vez de estimativa.</p>
+  </div></div>`:''}
 
   ${(()=>{
     const S=saldoConta();
@@ -1096,8 +1152,6 @@ function vPainel(){
               const vz=vezesAssinatura(a,MREF);
               return {d:a.descricao+(vz!==1?' — '+vz+' cobranças neste ciclo':''), v:(+a.valor)*vz};
             }).filter(x=>x.v>0)];
-          const terc=D.terceiros.filter(t=>t.cartao===n&&!t.recebido)
-            .reduce((s,t)=>s+ +t.valor,0);
           const jan=janelaFatura(n,MREF);
           const rep=D.assinaturas.filter(a=>a.projetar&&(a.cartao||'')===n)
             .map(a=>({a, vz:vezesAssinatura(a,MREF)})).filter(x=>x.vz!==1);
@@ -1141,20 +1195,10 @@ function vPainel(){
                   Para corrigir, edite o lançamento em <b>Lançamentos</b>.</p>`
               : `<p class="note" style="margin-top:8px">A fatura ainda não foi lançada, então o app usa
                   esta soma como estimativa. Quando você lançar o valor real, ele assume o lugar.</p>`}
-              ${terc?`<div class="dline"><span class="note">Terceiros a receber neste cartão</span>
-                <span class="note" style="color:var(--amber)">${BRL(terc)}</span></div>`:''}
             </div>
           </details>`;}).filter(Boolean).join('');
         return linhas||'<p class="note">Nenhuma fatura neste mês.</p>';
       })()}
-    </div></div>
-
-    <div class="panel"><h2>Terceiros a receber <small>${BRL(aReceber())}</small></h2><div class="pbody">
-      ${terc.length?terc.map(t=>`<div class="dline"><span>${esc(t.pessoa)} · ${esc(t.descricao)}
-        <span class="note">${esc(t.competencia||'')}</span></span>
-        <b style="color:var(--amber)">${BRL(t.valor)}</b></div>`).join('')
-        :'<p class="note">Nada pendente.</p>'}
-      <p class="note" style="margin-top:10px">Está dentro das faturas acima, mas não é gasto de vocês.</p>
     </div></div>
   </div>
 
@@ -1242,25 +1286,57 @@ function aplicaFiltro(tela, lista, campoBusca, campoTipo, campoCat){
   });
 }
 
+let LANC_NAT='normal';
+window.setLancNat=v=>{ LANC_NAT=v; render(); };
+
 function vLanc(){
   const doMes=D.lancamentos.filter(l=>ym(l.data)===MREF);
   const cats=[...new Set(doMes.map(l=>l.categoria))].sort();
   const ls=aplicaFiltro('lanc', doMes, 'descricao', 'tipo', 'categoria');
   const r=realizado(MREF);
-  return head('Lançamentos','Cada movimento entra aqui e aparece no app da outra em segundos.')
-  +`<div class="panel"><h2>Novo lançamento</h2><div class="pbody"><div class="form">
-    <div class="fld"><label>Data</label><input type="date" id="l_d" value="${MREF}-01"></div>
-    <div class="fld" style="grid-column:span 2"><label>Descrição</label><input id="l_n" placeholder="Ex.: Mercado"></div>
+  const cartoesAtivos=D.cartoes.filter(c=>c.ativo);
+
+  const camposNormal = `
     <div class="fld"><label>Categoria</label><select id="l_c" onchange="render()">${CATS.map(c=>`<option>${c}</option>`).join('')}</select></div>
     <div class="fld"><label>Tipo</label><select id="l_t"><option>Saída</option><option>Entrada</option></select></div>
     <div class="fld"><label>Quem</label><select id="l_q">${['Casal','Maria','Jéssica'].map(q=>`<option>${q}</option>`).join('')}</select></div>
     <div class="fld"><label>Valor</label><input type="number" step="0.01" id="l_v" placeholder="0,00"></div>
     <div class="fld"><label>Cartão${$('l_c')&&$('l_c').value==='Cartão'?' *':''}</label><select id="l_cart">
       <option value="">— nenhum —</option>
-      ${D.cartoes.filter(c=>c.ativo).map(c=>`<option>${esc(c.nome)}</option>`).join('')}</select></div>
-    <div class="fld"><label>&nbsp;</label><button class="btn" onclick="addLanc()">Adicionar</button></div>
-    <div class="fld" style="grid-column:1/-1;padding-top:2px"><button class="btn alt sm" onclick="marcarEstorno()">Foi um estorno no cartão</button><span class="note" style="margin-left:10px">Crédito devolvido pela loja ou pelo banco: abate a fatura daquele mês em vez de virar receita.</span></div>
-  </div></div></div>
+      ${cartoesAtivos.map(c=>`<option>${esc(c.nome)}</option>`).join('')}</select></div>`;
+
+  const camposEstorno = `
+    <div class="fld"><label>Cartão *</label><select id="l_cart2">
+      ${cartoesAtivos.map(c=>`<option>${esc(c.nome)}</option>`).join('')}</select></div>
+    <div class="fld"><label>Quem</label><select id="l_q2">${['Casal','Maria','Jéssica'].map(q=>`<option>${q}</option>`).join('')}</select></div>
+    <div class="fld"><label>Valor</label><input type="number" step="0.01" id="l_v2" placeholder="0,00"></div>`;
+
+  const camposCaixinha = `
+    <div class="fld" style="grid-column:span 2"><label>Guardar em</label><select id="l_meta">
+      <option value="">Reserva de emergência</option>
+      ${D.metas.map(m=>`<option value="${m.id}">${esc(m.nome)}</option>`).join('')}</select></div>
+    <div class="fld"><label>Valor</label><input type="number" step="0.01" id="l_v3" placeholder="0,00"></div>`;
+
+  return head('Lançamentos','Cada movimento entra aqui e aparece no app da outra em segundos.')
+  +`<div class="panel"><h2>Novo lançamento</h2><div class="pbody">
+    <div class="form" style="margin-bottom:12px">
+      <div class="fld" style="grid-column:span 2"><label>Natureza</label>
+        <select onchange="setLancNat(this.value)">
+          <option value="normal" ${LANC_NAT==='normal'?'selected':''}>Normal</option>
+          <option value="estorno" ${LANC_NAT==='estorno'?'selected':''}>Estorno no cartão</option>
+          <option value="caixinha" ${LANC_NAT==='caixinha'?'selected':''}>Guardar na caixinha</option>
+        </select></div>
+    </div>
+    <div class="form">
+      <div class="fld"><label>Data</label><input type="date" id="l_d" value="${MREF}-01"></div>
+      <div class="fld" style="grid-column:span 2"><label>Descrição${LANC_NAT==='caixinha'?' (opcional)':''}</label>
+        <input id="l_n" placeholder="${LANC_NAT==='estorno'?'Ex.: Devolução da loja':LANC_NAT==='caixinha'?'Deixe em branco pro nome padrão':'Ex.: Mercado'}"></div>
+      ${LANC_NAT==='normal'?camposNormal:LANC_NAT==='estorno'?camposEstorno:camposCaixinha}
+      <div class="fld"><label>&nbsp;</label><button class="btn" onclick="addLanc()">Adicionar</button></div>
+    </div>
+    ${LANC_NAT==='estorno'?`<p class="note" style="margin-top:10px">Crédito devolvido pela loja ou pelo banco: abate a fatura daquele mês em vez de virar receita.</p>`:''}
+    ${LANC_NAT==='caixinha'?`<p class="note" style="margin-top:10px">Soma no guardado da meta escolhida e baixa do saldo em conta — mesma lógica da aba Metas.</p>`:''}
+  </div></div>
   <div class="kpis">
     ${kpi('Entradas',BRL(r.ent),'','pos')} ${kpi('Saídas',BRL(r.sai),'','neg')}
     ${kpi('Saldo',BRL(r.sal),'',r.sal<0?'neg':'pos')} ${kpi('Benefícios',BRL(r.va),'fora do saldo','amb')}
@@ -1288,19 +1364,30 @@ function vLanc(){
       doMes.length?'Nenhum lançamento bate com o filtro.':'Nenhum lançamento neste mês.'}</td></tr>`}
   </tbody></table></div></div>`;
 }
-/* Atalho para estorno: crédito no cartão que abate a fatura. */
-window.marcarEstorno=()=>{
-  const t=$('l_t'); if(t) t.value='Entrada';
-  const c=$('l_c'); if(c) c.value='Cartão';
-  const n=$('l_n'); if(n && !n.value) n.value='Estorno — ';
-  render();
-  const cart=$('l_cart'); if(cart) cart.focus();
-  toast('Escolha o cartão e o valor. O crédito abate a fatura daquele mês.', 4200);
-};
 window.addLanc=async()=>{
-  const d=$('l_d').value,n=$('l_n').value.trim(),v=parseFloat($('l_v').value),
-        cat=$('l_c').value, cart=$('l_cart')?.value||null;
-  if(!d||!n||!v) return toast('Preencha data, descrição e valor');
+  const d=$('l_d').value, nInf=$('l_n').value.trim();
+  if(!d) return toast('Preencha a data');
+
+  if(LANC_NAT==='estorno'){
+    const cart=$('l_cart2')?.value, v=parseFloat($('l_v2')?.value);
+    if(!cart) return toast('Escolha o cartão');
+    if(!v) return toast('Informe o valor');
+    const n=nInf||'Estorno — devolução';
+    const ok=await inserir('lancamentos',{data:d,descricao:n,categoria:'Cartão',cartao:cart,
+      tipo:'Entrada',quem:$('l_q2')?.value||'Casal',valor:v,status:'Confirmado',criado_por:USER.id});
+    if(ok){MREF=ym(d);render();toast(n+' lançado · abate a fatura do '+cart);}
+    return;
+  }
+  if(LANC_NAT==='caixinha'){
+    const metaId=$('l_meta')?.value||null, v=parseFloat($('l_v3')?.value);
+    if(!v) return toast('Informe quanto você guardou');
+    await guardar(metaId?'meta':'reserva', metaId, {valor:v, data:d, descricao:nInf||undefined});
+    MREF=ym(d);
+    return;
+  }
+
+  const n=nInf, v=parseFloat($('l_v').value), cat=$('l_c').value, cart=$('l_cart')?.value||null;
+  if(!n||!v) return toast('Preencha descrição e valor');
   if(cat==='Cartão' && !cart) return toast('Escolha o cartão — senão isso não abate a fatura de ninguém', 4400);
   const ok=await inserir('lancamentos',{data:d,descricao:n,categoria:cat,cartao:cart,
     tipo:$('l_t').value,quem:$('l_q').value,valor:v,status:'Confirmado',criado_por:USER.id});
@@ -1591,7 +1678,9 @@ window.addTerc=async()=>{
 /* marcar como recebido guarda também a data */
 window.setTercOrig=v=>{ TERC_ORIG=v; render(); };
 window.setPlano=(campo,v)=>{
-  if(campo==='vida') PLANO_VIDA=+v; else if(campo==='caixa') PLANO_CAIXA=+v; else if(campo==='colchao') PLANO_COLCHAO=+v;
+  if(campo==='vida'){ PLANO_VIDA=+v; PLANO_VIDA_AUTO=false; }
+  else if(campo==='caixa') PLANO_CAIXA=+v;
+  else if(campo==='colchao') PLANO_COLCHAO=+v;
   render();
 };
 window.addEvento=(finId,tipo)=>{
@@ -1911,11 +2000,14 @@ window.addMeta=async()=>{
     {render();toast('Meta adicionada');}
 };
 /* Guardar dinheiro: soma no destino e lança a saída da conta. */
-window.guardar=async(tipo,id)=>{
+/* Guarda dinheiro numa meta ou na reserva. Lê os campos da aba Metas por padrão;
+   se vier um "override" (usado pelo Lançamentos condicional), usa esses valores
+   direto, sem duplicar a lógica de somar no guardado + criar o lançamento. */
+window.guardar=async(tipo,id,override)=>{
   const campo = tipo==='reserva' ? 'dp_r' : 'dp_'+id;
   const campoData = tipo==='reserva' ? 'dp_rd' : 'dpd_'+id;
-  const v=parseFloat($(campo)?.value);
-  const d=$(campoData)?.value || hoje();
+  const v = override?.valor ?? parseFloat($(campo)?.value);
+  const d = override?.data || $(campoData)?.value || hoje();
   if(!v || v<=0) return toast('Informe quanto você guardou');
 
   const nome = tipo==='reserva' ? 'Reserva de emergência'
@@ -1926,10 +2018,11 @@ window.guardar=async(tipo,id)=>{
   if(!ok) return;
 
   await inserir('lancamentos',{
-    data:d, descricao:'Guardado — '+nome, categoria:'Reserva', tipo:'Saída',
+    data:d, descricao:(override?.descricao)||('Guardado — '+nome), categoria:'Reserva', tipo:'Saída',
     quem:'Casal', valor:v, status:'Confirmado',
     protegido:false, beneficio:false,
-    observacao:'Depósito lançado na aba Metas', criado_por:USER?.id||null});
+    observacao:override?'Lançado pela tela de Lançamentos':'Depósito lançado na aba Metas',
+    criado_por:USER?.id||null});
   render(); toast(BRL(v)+' guardado em '+nome);
 };
 
@@ -2059,6 +2152,7 @@ let FIN_SEL=null;
    13º/férias que tenha sido lançado como um avulso de data futura.
    ===================================================================== */
 let PLANO_VIDA=1800, PLANO_COLCHAO=300, PLANO_HORIZ=18;
+let PLANO_VIDA_AUTO=true;  // true até a usuária mexer no slider — daí usa a média real, se existir
 let PLANO_EVENTOS={};   /* { finId: [{id,tipo,data,valor,parcelas,controla}] } — a lista que a usuária monta */
 let PLANO_ID=0;
 let BUSCA_Q='', BUSCA_ABERTA=false;
@@ -2128,8 +2222,8 @@ function curvaComEventos(fin, eventos, vida, horizM){
   const meses=horizon(horizM,kIni);
   const porData=new Map();
   resolvidos.forEach(ev=>{
-    const t=ev.data.getTime();
-    porData.set(t, (porData.get(t)||0) - (ev.valorReal||0));
+    const chave=diaChave(ev.data);
+    porData.set(chave, (porData.get(chave)||0) - (ev.valorReal||0));
   });
   const dias=[]; let saldo=saldoConta().atual ?? (+cfg().saldo_conferido||0);
   let pior={data:null,saldo};
@@ -2143,7 +2237,7 @@ function curvaComEventos(fin, eventos, vida, horizM){
       const data=new Date(ay,am-1,d);
       if(k===kIni && data<new Date(new Date().setHours(0,0,0,0))) continue;
       let delta=(porDia[d]||0)-vida/nDias;
-      delta += porData.get(data.getTime())||0;
+      delta += porData.get(diaChave(data))||0;
       saldo+=delta;
       if(pior.data===null || saldo<pior.saldo) pior={data,saldo};
       dias.push({data, saldo, k});
@@ -2259,6 +2353,8 @@ function vAmort(){
 
     <div class="painel-plano">
   ${(()=>{
+    const vidaReal = mediaVidaReal(3);
+    const vidaEfetiva = (PLANO_VIDA_AUTO && vidaReal) ? Math.round(vidaReal.media/10)*10 : PLANO_VIDA;
     const eventos=(PLANO_EVENTOS[f.id]||[]).map(e=>({...e, data:new Date(e.data+'T12:00:00')}));
     if(!eventos.length){
       return `<div class="panel"><h2>Nenhum evento ainda</h2><div class="pbody">
@@ -2269,7 +2365,7 @@ function vAmort(){
         <button class="btn alt" onclick="addEvento('${f.id}','antecipar')">Adicionar do zero</button>
       </div></div>`;
     }
-    const R=curvaComEventos(f, eventos, PLANO_VIDA, PLANO_HORIZ);
+    const R=curvaComEventos(f, eventos, vidaEfetiva, PLANO_HORIZ);
     const temPerigo = R.curva.some(d=>d.saldo<PLANO_COLCHAO);
 
     const C=R.curva;
@@ -2280,7 +2376,7 @@ function vAmort(){
     const py=v=>alt-((v-mn)/((mx-mn)||1))*(alt-16)+8;
     const pts=C.map((x,idx)=>px(idx)+','+py(x.saldo)).join(' ');
     const marcas=R.resolvidos.map(ev=>{
-      const idx=C.findIndex(x=>x.data.getTime()===ev.data.getTime());
+      const idx=C.findIndex(x=>diaChave(x.data)===diaChave(ev.data));
       if(idx<0) return '';
       const cor = ev.tipo==='guardar' ? 'var(--amber)' : 'var(--pos)';
       const emPerigo = C[idx].saldo < PLANO_COLCHAO;
@@ -2332,7 +2428,7 @@ function vAmort(){
     </tr></thead><tbody>
     ${eventos.slice().sort((a,b)=>a.data-b.data).map(ev=>{
       const res=R.resolvidos.find(r=>r.id===ev.id);
-      const emPerigo = res && C.find(x=>x.data.getTime()===ev.data.getTime())?.saldo < PLANO_COLCHAO;
+      const emPerigo = res && C.find(x=>diaChave(x.data)===diaChave(ev.data))?.saldo < PLANO_COLCHAO;
       return `<tr style="${emPerigo?'background:var(--neg-bg)':''}">
         <td><select onchange="setEvento('${f.id}','${ev.id}','tipo',this.value)">
           <option value="antecipar" ${ev.tipo==='antecipar'?'selected':''}>Antecipar</option>
@@ -2365,13 +2461,18 @@ function vAmort(){
     </div>
 
     <div class="panel"><h2>Ajustes gerais</h2><div class="pbody">
-      <p class="note" style="margin-bottom:14px">"Vida" é a única suposição do app — gasolina, mercado
-      e lazer não são rastreados por pedido seu. O colchão só marca a linha no gráfico; ele não trava
-      seus eventos, só avisa quando alguma data fica abaixo dele.</p>
+      <p class="note" style="margin-bottom:14px">${vidaReal
+        ? `"Vida" veio da média real dos últimos ${vidaReal.meses} ${vidaReal.meses===1?'mês':'meses'}
+           com gasto do dia a dia lançado (categoria "Dia a dia", pelo atalho no Painel). Mexeu no controle
+           abaixo? Ele passa a valer, mesmo que a média mude depois.`
+        : `"Vida" é a única suposição do app — gasolina, mercado e lazer ainda não têm nenhum lançamento
+           registrado. Use o "+ Gasto rápido" no Painel algumas vezes e este número passa a se calcular
+           sozinho.`}
+      O colchão só marca a linha no gráfico; ele não trava seus eventos, só avisa quando alguma data fica abaixo dele.</p>
       <div class="sliders-plano">
         <div class="sl-plano">
-          <label>Vida — gasolina, mercado, lazer <span>${BRL(PLANO_VIDA)}</span></label>
-          <input type="range" min="1000" max="3000" step="50" value="${PLANO_VIDA}"
+          <label>Vida — gasolina, mercado, lazer <span>${BRL(vidaEfetiva)}</span></label>
+          <input type="range" min="1000" max="3000" step="50" value="${vidaEfetiva}"
             oninput="setPlano('vida',this.value)">
           <div class="faixa"><span>1.000</span><span>3.000</span></div>
         </div>
@@ -2393,7 +2494,7 @@ function vAmort(){
       const renda=bl.reduce((s,b)=>s+b.tIn,0), comprometido=bl.reduce((s,b)=>s+b.tOut,0);
       const doMes=R.resolvidos.filter(e=>ym2(e.data)===k);
       const gastoMes=doMes.reduce((s,e)=>s+(e.valorReal||0),0);
-      const sobra=renda-comprometido-PLANO_VIDA-gastoMes;
+      const sobra=renda-comprometido-vidaEfetiva-gastoMes;
       if(!doMes.length && renda===0 && comprometido===0) return '';
       return `<tr><td>${mLabel(k)}</td><td class="r">${BRL(renda)}</td><td class="r">${BRL(comprometido)}</td>
         <td class="r">${doMes.length?doMes.map(e=>e.tipo==='antecipar'?e.parcelasReais+'x':'caixinha').join(', '):'—'}
@@ -3615,6 +3716,37 @@ window.voltarMes=async(pid,k)=>{
 };
 window.setFatCart=v=>{ FAT_CART=v; render(); };
 
+/* Corrige o total de uma fatura pro valor real do banco. Não mexe em nenhuma
+   parcela ou assinatura individual — cria (ou atualiza) UM lançamento de
+   ajuste que cobre exatamente a diferença, reaproveitando o mesmo mecanismo
+   que já faz um lançamento categoria "Cartão" valer mais que o cálculo. */
+window.ajustarFatura=async(nome,k)=>{
+  const novo=parseFloat($('fat_ajuste')?.value);
+  if(isNaN(novo) || novo<0) return toast('Informe um valor válido');
+  const marcador='Ajuste de fatura — '+nome;
+  const existente=D.lancamentos.find(l=>l.categoria==='Cartão' && l.cartao===nome &&
+    ym(l.data)===k && l.descricao===marcador);
+  /* Um lançamento real de categoria Cartão SUBSTITUI o valor calculado, não
+     soma em cima dele — é assim que faturaLancada já funciona. Por isso o
+     ajuste não pode ser "a diferença pro valor calculado": precisa ser a
+     diferença pros OUTROS lançamentos reais que já existirem (normalmente
+     nenhum), pro total dar exatamente o valor digitado. */
+  const outrosReais=D.lancamentos
+    .filter(l=>l.categoria==='Cartão' && l.cartao===nome && ym(l.data)===k && l.id!==existente?.id)
+    .reduce((s,l)=> s + (l.tipo==='Entrada'?-1:1)*+l.valor, 0);
+  const diferenca=novo-outrosReais;
+  if(Math.abs(diferenca)<0.01){
+    if(existente) await remover('lancamentos',existente.id);
+    render(); toast('Já batia — nada pra ajustar');
+    return;
+  }
+  const dados={data:k+'-'+String(ultimoDiaDoMes(k)).padStart(2,'0'), descricao:marcador,
+    categoria:'Cartão', cartao:nome, tipo:diferenca>=0?'Saída':'Entrada', valor:Math.abs(diferenca),
+    status:'Confirmado', criado_por:USER?.id||null};
+  const ok = existente ? await atualizar('lancamentos',existente.id,dados) : await inserir('lancamentos',dados);
+  if(ok){ render(); toast('Fatura da '+nome+' ajustada para '+BRL(novo)); }
+};
+
 function vFatura(){
   const ativos=D.cartoes.filter(c=>c.ativo);
   if(!ativos.length) return head('Fatura','Nenhum cartão cadastrado.');
@@ -3667,6 +3799,18 @@ function vFatura(){
     ${kpi('De terceiros',BRL(somaTerc),
       somaTerc>0?'abatido da parte de vocês':'nenhum',somaTerc>0?'amb':'')}
   </div>
+
+  <div class="panel"><h2>Corrigir o valor <small>o BB muda a composição da fatura com mais frequência — ajuste aqui quando o cálculo não bater</small></h2>
+  <div class="pbody"><div class="form">
+    <div class="fld"><label>Valor real desta fatura</label>
+      <input type="number" step="0.01" id="fat_ajuste" value="${valor.toFixed(2)}"></div>
+    <div class="fld"><label>&nbsp;</label>
+      <button class="btn" onclick="ajustarFatura('${esc(n)}','${comp}')">Salvar valor real</button></div>
+  </div>
+  <p class="note" style="margin-top:8px">Isso cria (ou atualiza) um lançamento de ajuste que cobre a
+  diferença — não apaga nem mexe nas parcelas e assinaturas individuais, só faz o total bater com o
+  que está no seu banco.</p>
+  </div></div>
 
   ${ciclo?`<div class="info" style="margin-bottom:16px">
     Ciclo de <b>${jan?jan.ini.split('-').reverse().slice(0,2).join('/'):'?'}</b>
@@ -3785,19 +3929,17 @@ function montarShell(){
         <button class="eng" id="btntema" onclick="alternarTema()"
           title="Trocar entre claro e escuro">${temaAtual()==='light'?'☀':'☾'}</button>
         <button class="eng" onclick="abrirMenu('config')" aria-expanded="false"
-          title="Cadastros, cópias e atividade">⚙</button></div>
+          title="Configurações">⚙</button></div>
       <div id="busca"></div>
       <nav id="nav"></nav>
       <div id="menus"></div>
-      <div class="railfoot">
-        <span class="sync"><span class="dot ${SYNC}" id="syncdot"></span><span id="synctxt">Sincronizado</span></span>
-        <span style="color:var(--barra-sub);font-size:11px;opacity:.7">${APP_VER}</span>
-        <span style="flex:1"></span>
-        <button onclick="exportar()">Exportar backup</button>
-        <button onclick="sair()">Sair</button>
-      </div>
     </div></div>
-    <main class="main" id="main"></main></div>`;
+    <main class="main" id="main"></main>
+    <footer class="rodape">
+      <span class="sync"><span class="dot ${SYNC}" id="syncdot"></span><span id="synctxt">Sincronizado</span></span>
+      <span class="rodape-v">${APP_VER}</span>
+    </footer>
+    </div>`;
   render();
 }
 /* Tema: claro ou escuro, salvo no aparelho. Sem escolha salva, começa escuro. */
@@ -3909,7 +4051,11 @@ function montarNav(){
   if(MENU_ABERTO==='config'){
     box.innerHTML=`<div class="ddmenu dir"><div class="sep">Ajustes e manutenção</div>
       ${MENU_CONFIG.map(id=>`<button onclick="go('${id}')"
-        aria-current="${CUR===id}">${rotulo(id)}</button>`).join('')}</div>`;
+        aria-current="${CUR===id}">${rotulo(id)}</button>`).join('')}
+      <div class="sep" style="margin-top:6px;padding-top:9px;border-top:1px solid var(--rule-soft)">Conta</div>
+      <button onclick="abrirMenu(null);exportar()">Exportar backup</button>
+      <button onclick="abrirMenu(null);sair()" style="color:var(--neg)">Sair</button>
+    </div>`;
   } else box.innerHTML='';
 }
 window.abrirMenu=q=>{ MENU_ABERTO = MENU_ABERTO===q ? null : q; montarNav(); };
