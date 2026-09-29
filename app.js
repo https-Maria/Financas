@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v57';
+const APP_VER='v59';
 
 /* =====================================================================
    ESTADO
@@ -3101,7 +3101,11 @@ function usoDosLimites(k){
       .reduce((s,p)=>s+mesesDaParcela(p).filter(m=>m>k).length*(+p.valor_parcela),0);
     const terceiros=D.terceiros.filter(t=>t.cartao===c.nome && !t.recebido)
       .reduce((s,t)=>s+ +t.valor,0);
-    const usado=fatura+parcelasFuturas;
+    /* Limite é físico do cartão — não distingue de quem é a compra. Terceiros
+       ocupam limite de verdade enquanto não voltam, diferente do fluxo de
+       caixa (Painel/Amortização), que conta só a parte de vocês por escolha
+       sua. Por isso aqui soma; lá, não. */
+    const usado=fatura+parcelasFuturas+terceiros;
     return {nome:c.nome, limite:+c.limite, fatura, parcelasFuturas, terceiros,
             usado, livre:Math.max(0,+c.limite-usado), pct:(+c.limite)?usado/(+c.limite):0};
   }).sort((a,b)=>b.pct-a.pct);
@@ -3791,7 +3795,7 @@ function vFatura(){
   const terceiros = D.terceiros.filter(t=>t.cartao===n && !t.recebido &&
     (!t.competencia || t.competencia===mLabel(comp)));
   const avulsos = D.lancamentos.filter(l=>l.cartao===n && ym(l.data)===comp &&
-    l.categoria!=='Cartão');
+    l.categoria!=='Cartão' && l.categoria!=='Ajuste Fatura');
   const somaParc = parcelas.reduce((s,p)=>s+ +p.valor_parcela,0);
   const somaAssin = assinaturas.reduce((s,x)=>s+(+x.a.valor)*x.vz,0);
   const somaTerc = terceiros.reduce((s,t)=>s+ +t.valor,0);
@@ -3813,17 +3817,20 @@ function vFatura(){
   </div>
 
   <div class="kpis">
-    ${kpi('Total da fatura',BRL(valor),real?'valor lançado':'estimado pelos cadastros',
+    ${kpi('Sua parte da fatura',BRL(valor),real?'valor lançado':'estimado pelos cadastros',
       real?'pos':'amb')}
+    ${kpi('Total real do cartão',BRL(valor+somaTerc),
+      somaTerc>0?'inclui '+BRL(somaTerc)+' de terceiros — é isso que bate com o banco':'igual à sua parte, sem terceiros neste mês')}
     ${kpi('O que o app conhece',BRL(conhecido),
       parcelas.length+' parcela'+(parcelas.length===1?'':'s')+' · '+
       assinaturas.length+' assinatura'+(assinaturas.length===1?'':'s'))}
     ${naoIdentificado!=null?kpi('Compras do dia a dia',BRL(naoIdentificado),
       'diferença entre o lançado e o conhecido',naoIdentificado<0?'pos':'')
       :kpi('Ainda não lançada','—','o valor real vai substituir a estimativa')}
-    ${kpi('De terceiros',BRL(somaTerc),
-      somaTerc>0?'abatido da parte de vocês':'nenhum',somaTerc>0?'amb':'')}
   </div>
+  ${somaTerc>0?`<p class="note" style="margin:-8px 0 16px">"Sua parte" fica de fora de terceiros de
+    propósito — é o que conta pro seu orçamento. Pra conferir com o extrato do banco, que não separa
+    isso, use o "Total real do cartão" acima.</p>`:''}
 
   <div class="panel"><h2>Ajustes desta fatura <small>o BB muda a composição com mais frequência — some ou remova cobranças pontuais aqui, sem mexer em parcelas e assinaturas</small></h2>
   <div class="pbody">
@@ -3940,11 +3947,16 @@ function vFatura(){
           (naoIdentificado>0?'+':'')+BRL(naoIdentificado)}</td></tr>`
     :`<tr><td class="note">Ainda não lançada: o app usa a estimativa</td>
         <td class="r note">${BRL(calc)}</td></tr>`}
-    <tr style="border-top:2px solid var(--rule)"><td><b>Vale nas contas</b></td>
+    <tr style="border-top:2px solid var(--rule)"><td><b>Sua parte</b></td>
       <td class="r"><b style="font-size:16px">${BRL(valor)}</b></td></tr>
+    ${somaTerc>0?`<tr><td class="note">+ De terceiros (${esc(terceiros.map(t=>t.pessoa).filter((v,i,a)=>a.indexOf(v)===i).join(', '))})</td>
+      <td class="r note">${BRL(somaTerc)}</td></tr>
+    <tr style="border-top:1px solid var(--rule)"><td><b>Total real do cartão</b></td>
+      <td class="r"><b style="font-size:16px;color:var(--amber)">${BRL(valor+somaTerc)}</b></td></tr>`:''}
   </tbody></table></div>
-  <div class="pbody"><p class="note">Para corrigir o total, edite o lançamento da fatura em
-  <b>Lançamentos</b>. Para corrigir a composição, use os botões acima ou os cadastros.</p></div>
+  <div class="pbody"><p class="note">"Sua parte" é o que conta pro orçamento de vocês. "Total real do
+  cartão" é o que o banco cobra — inclui terceiros e é essa linha que deve bater com o extrato. Para
+  corrigir a composição, use os ajustes acima ou os cadastros.</p></div>
   </div>`;
 }
 
