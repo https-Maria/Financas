@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v64';
+const APP_VER='v66';
 
 /* =====================================================================
    ESTADO
@@ -227,13 +227,19 @@ function faturaCalculada(nome, k, extra){
 }
 
 /* O valor que vale: um total declarado manda (já com créditos do mês
-   abatidos); sem isso, o calculado menos os créditos do mês — e, por cima
-   de tudo isso, os ajustes pontuais da própria aba Fatura (ver mais abaixo),
-   que somam pros dois lados, cobrança extra ou estorno, sem depender de
-   nenhuma regra de ciclo ou cálculo. */
+   abatidos); sem isso, o calculado (parcelas+assinaturas) MENOS os créditos
+   MAIS as compras à vista já lançadas nesse cartão/mês — senão elas ficavam
+   só na lista, sem nunca entrar no total de verdade. Por cima de tudo isso,
+   os ajustes pontuais da própria aba Fatura (ver mais abaixo). */
+function comprasAVista(nome, k){
+  return D.lancamentos.filter(l=>
+    ym(l.data)===k && !l.protegido && (l.cartao||'')===nome &&
+    l.categoria!=='Cartão' && l.categoria!=='Ajuste Fatura' && l.tipo!=='Entrada');
+}
 function faturaCartao(nome, k){
   const real=faturaLancada(nome,k);
-  const base = real ? real.valor : (faturaCalculada(nome,k) - somaValores(creditosCartao(nome,k)));
+  const base = real ? real.valor
+    : (faturaCalculada(nome,k) - somaValores(creditosCartao(nome,k)) + somaValores(comprasAVista(nome,k)));
   return base + somaAjustesFatura(nome,k);
 }
 
@@ -498,7 +504,10 @@ function avulsosDoMes(k){
   return D.lancamentos.filter(l=>{
     if(mesDeCaixa(l)!==k) return false;
     if(l.beneficio || l.protegido) return false;          // VA e Reports têm lugar próprio
-    if((l.categoria==='Cartão'||l.categoria==='Ajuste Fatura') && cartoesAtivos.has(l.cartao)) return false;  // já está na fatura
+    /* Qualquer lançamento com cartão marcado já faz parte da fatura daquele
+       cartão — categoria Cartão, Ajuste Fatura, Compras, tanto faz. Nunca
+       deve contar de novo como linha solta do dia a dia. */
+    if(l.cartao && cartoesAtivos.has(l.cartao)) return false;
     if(l.tipo==='Saída'   && nomesFixas.has(l.descricao))  return false;     // é conta fixa
     if(l.tipo==='Entrada' && nomesRendas.has(l.descricao)) return false;     // é renda
     return true;
@@ -3839,6 +3848,11 @@ function vFatura(){
   const somaParc = parcelas.reduce((s,p)=>s+ +p.valor_parcela,0);
   const somaAssin = assinaturas.reduce((s,x)=>s+(+x.a.valor)*x.vz,0);
   const somaTerc = terceiros.reduce((s,t)=>s+ +t.valor,0);
+  /* Reports é dinheiro protegido — some no cartão de verdade (o banco não
+     distingue), mas fica fora de "sua parte", igual terceiros. */
+  const reportsNoCartao = D.lancamentos.filter(l=>
+    l.protegido && (l.cartao||'')===n && ym(l.data)===comp && l.tipo!=='Entrada');
+  const somaReports = reportsNoCartao.reduce((s,l)=>s+ +l.valor,0);
   const conhecido = somaParc+somaAssin;
   const naoIdentificado = real ? real.valor-conhecido : null;
   const proximas = D.parcelamentos.filter(p=>(p.cartao||'')===n && +p.restantes>0
@@ -3859,8 +3873,10 @@ function vFatura(){
   <div class="kpis">
     ${kpi('Sua parte da fatura',BRL(valor),real?'valor lançado':'estimado pelos cadastros',
       real?'pos':'amb')}
-    ${kpi('Total real do cartão',BRL(valor+somaTerc),
-      somaTerc>0?'inclui '+BRL(somaTerc)+' de terceiros — é isso que bate com o banco':'igual à sua parte, sem terceiros neste mês')}
+    ${kpi('Total real do cartão',BRL(valor+somaTerc+somaReports),
+      (somaTerc>0||somaReports>0)
+        ?'inclui '+BRL(somaTerc+somaReports)+(somaTerc>0&&somaReports>0?' (terceiros + Reports)':somaTerc>0?' de terceiros':' de Reports')+' — é isso que bate com o banco'
+        :'igual à sua parte, sem terceiros nem Reports neste mês')}
     ${kpi('O que o app conhece',BRL(conhecido),
       parcelas.length+' parcela'+(parcelas.length===1?'':'s')+' · '+
       assinaturas.length+' assinatura'+(assinaturas.length===1?'':'s'))}
@@ -3996,12 +4012,14 @@ function vFatura(){
     <tr style="border-top:2px solid var(--rule)"><td><b>Sua parte</b></td>
       <td class="r"><b style="font-size:16px">${BRL(valor)}</b></td></tr>
     ${somaTerc>0?`<tr><td class="note">+ De terceiros (${esc(terceiros.map(t=>t.pessoa).filter((v,i,a)=>a.indexOf(v)===i).join(', '))})</td>
-      <td class="r note">${BRL(somaTerc)}</td></tr>
-    <tr style="border-top:1px solid var(--rule)"><td><b>Total real do cartão</b></td>
-      <td class="r"><b style="font-size:16px;color:var(--amber)">${BRL(valor+somaTerc)}</b></td></tr>`:''}
+      <td class="r note">${BRL(somaTerc)}</td></tr>`:''}
+    ${somaReports>0?`<tr><td class="note">+ Pago com Reports (protegido)</td>
+      <td class="r note">${BRL(somaReports)}</td></tr>`:''}
+    ${(somaTerc>0||somaReports>0)?`<tr style="border-top:1px solid var(--rule)"><td><b>Total real do cartão</b></td>
+      <td class="r"><b style="font-size:16px;color:var(--amber)">${BRL(valor+somaTerc+somaReports)}</b></td></tr>`:''}
   </tbody></table></div>
   <div class="pbody"><p class="note">"Sua parte" é o que conta pro orçamento de vocês. "Total real do
-  cartão" é o que o banco cobra — inclui terceiros e é essa linha que deve bater com o extrato. Para
+  cartão" é o que o banco cobra — inclui terceiros e Reports, e é essa linha que deve bater com o extrato. Para
   corrigir a composição, use os ajustes acima ou os cadastros.</p></div>
   </div>`;
 }
