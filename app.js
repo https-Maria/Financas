@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v69';
+const APP_VER='v70';
 
 /* =====================================================================
    ESTADO
@@ -961,11 +961,11 @@ const PAGES=[['painel','Painel'],['dash','Dashboard'],['compra','Nova compra'],[
 
 /* O menu mostra só o dia a dia. O resto fica agrupado atrás de "Mais",
    e o que é manutenção vai para a engrenagem. */
-const MENU_FIXO=['painel','dash','lanc','cal','metas'];
+const MENU_FIXO=['painel','dash','lanc','cal','metas','notas'];
 const MENU_MAIS=[
   ['Compromissos',['fatura','parc','assin','terc']],
   ['Análise',     ['proj','amort','casa']],
-  ['Simular',     ['compra','notas']]];
+  ['Simular',     ['compra']]];
 const MENU_CONFIG=['cad','backup','log'];
 const rotulo=id=>(PAGES.find(p=>p[0]===id)||[,id])[1];
 let MENU_ABERTO=null;
