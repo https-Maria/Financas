@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v62';
+const APP_VER='v64';
 
 /* =====================================================================
    ESTADO
@@ -185,27 +185,31 @@ function janelaFatura(cartao,k){
 }
 
 /* Quantas vezes o dia X aparece dentro de (ini, fim] */
-function vezesNoPeriodo(dia, ini, fim){
+function vezesNoPeriodo(dia, ini, fim, ativoDesde){
   if(!dia) return 1;
   let n=0;
   const a=new Date(ini+'T12:00:00'), b=new Date(fim+'T12:00:00');
+  const desde = ativoDesde ? new Date(ativoDesde+'T12:00:00') : null;
   const d=new Date(a.getFullYear(), a.getMonth(), 1);
   while(d <= b){
     const ult=new Date(d.getFullYear(), d.getMonth()+1, 0).getDate();
     const cob=new Date(d.getFullYear(), d.getMonth(), Math.min(dia,ult), 12);
-    if(cob > a && cob <= b) n++;
+    if(cob > a && cob <= b && (!desde || cob >= desde)) n++;
     d.setMonth(d.getMonth()+1);
   }
   return n;
 }
 
-/* Quantas cobranças desta assinatura entram na fatura do mês k */
+/* Quantas cobranças desta assinatura entram na fatura do mês k. Se ela tem
+   "ativo_desde" (começou a cobrar num cartão específico a partir de uma
+   data), nenhuma ocorrência anterior a isso conta — sem isso, a primeira
+   janela (sem ciclo vizinho) sempre inventava uma cobrança "de sempre". */
 function vezesAssinatura(a, k){
   const temCiclos = D.ciclos.some(c=>c.cartao===a.cartao);
   if(!temCiclos) return 1;               // cartão sem ciclo cadastrado: comportamento antigo
   const j=janelaFatura(a.cartao,k);
   if(!j) return 0;                       // tem ciclos, mas não pra este mês: a cobrança é de um vizinho
-  return vezesNoPeriodo(+a.dia, j.ini, j.fim);
+  return vezesNoPeriodo(+a.dia, j.ini, j.fim, a.ativo_desde);
 }
 
 /* Fatura calculada: parcelas devidas + assinaturas projetadas do cartão. */
@@ -959,6 +963,8 @@ let MENU_ABERTO=null;
 let PROJ_ABERTO=null;
 let PARC_ABERTO=null;
 window.toggleParc=id=>{ PARC_ABERTO = PARC_ABERTO===id ? null : id; render(); };
+let ASSIN_ABERTO=null;
+window.toggleAssin=id=>{ ASSIN_ABERTO = ASSIN_ABERTO===id ? null : id; render(); };
 let CUR='painel', MREF=ym(hoje()), VISAO=null;  // 'previsto' | 'realizado'
 let GASTO_RAPIDO_ABERTO=false;
 window.toggleGastoRapido=()=>{ GASTO_RAPIDO_ABERTO=!GASTO_RAPIDO_ABERTO; render(); };
@@ -1490,21 +1496,34 @@ function vAssin(){
   +`<div class="kpis">${kpi('Total ativo',BRL(totAssin()))}
     ${kpi('Por ano',BRL(totAssin()*12),'','amb')}
     ${kpi('Ativas',D.assinaturas.filter(a=>a.projetar).length+' de '+D.assinaturas.length)}</div>
-  <div class="panel"><h2>Assinaturas <small>${lista.length} de ${D.assinaturas.length}</small></h2>
+  <div class="panel"><h2>Assinaturas <small>${lista.length} de ${D.assinaturas.length} · clique numa linha pra dizer
+    desde quando ela cobra nesse cartão</small></h2>
   <div class="pbody" style="padding-bottom:0">
     ${barraFiltro('assin', {placeholder:'Buscar assinatura…',
       tipos:[['ativa','Ativas'],['pausada','Pausadas']], categorias:cartoes})}
   </div>
   <div class="tw"><table><thead><tr><th class="c">Projetar</th><th>Nome</th><th>Cartão</th>
-    <th class="r">Valor</th><th class="r">Por ano</th><th></th></tr></thead><tbody>
-  ${lista.map(a=>`<tr class="${a.projetar?'':'dim'}">
+    <th class="c">Dia</th><th class="r">Valor</th><th class="r">Por ano</th><th></th></tr></thead><tbody>
+  ${lista.map(a=>{
+    const aberto=ASSIN_ABERTO===a.id;
+    return `<tr class="${a.projetar?'':'dim'}">
     <td class="c"><input type="checkbox" ${a.projetar?'checked':''} style="width:auto;cursor:pointer"
       onchange="setRow('assinaturas','${a.id}','projetar',this.checked)"></td>
-    <td><b>${esc(a.descricao)}</b>${a.observacao?`<br><span class="tag t-w">${esc(a.observacao)}</span>`:''}</td>
-    <td>${esc(a.cartao||'—')}</td><td class="r">${BRL(a.valor)}</td>
+    <td><b style="cursor:pointer" onclick="toggleAssin('${a.id}')">${aberto?'▾ ':'▸ '}${esc(a.descricao)}</b>${a.observacao?`<br><span class="tag t-w">${esc(a.observacao)}</span>`:''}${
+      !a.dia?' <span class="tag t-w">sem dia — projeção pode errar</span>':''}</td>
+    <td>${esc(a.cartao||'—')}</td>
+    <td class="c"><input type="number" min="1" max="31" value="${a.dia||''}" placeholder="—" style="width:48px;padding:3px 5px;text-align:center"
+      onchange="setRow('assinaturas','${a.id}','dia',this.value?+this.value:null)"></td>
+    <td class="r">${BRL(a.valor)}</td>
     <td class="r">${a.projetar?BRL(a.valor*12):'—'}</td>
-    <td class="r"><button class="btn dgr" onclick="delRow('assinaturas','${a.id}')">excluir</button></td></tr>`).join('')
-    ||`<tr><td colspan="6" class="note" style="padding:20px;text-align:center">${
+    <td class="r"><button class="btn dgr" onclick="delRow('assinaturas','${a.id}')">excluir</button></td></tr>
+    ${aberto?`<tr class="sub"><td colspan="7" style="padding:4px 15px 10px">
+      <span class="note">Começou a cobrar neste cartão a partir de:</span>
+      <input type="date" value="${a.ativo_desde||''}" style="padding:3px 7px;margin-left:6px"
+        onchange="setRow('assinaturas','${a.id}','ativo_desde',this.value||null)">
+      <span class="note" style="margin-left:8px">deixe em branco se ela sempre cobrou aqui — só preencha se mudou de cartão ou é nova, senão a projeção pode inventar uma cobrança antiga que nunca aconteceu</span>
+    </td></tr>`:''}`;}).join('')
+    ||`<tr><td colspan="7" class="note" style="padding:20px;text-align:center">${
       D.assinaturas.length?'Nenhuma assinatura bate com o filtro.':'Nenhuma assinatura cadastrada.'}</td></tr>`}
   </tbody></table></div>
   <div class="pbody"><div class="form">
@@ -3784,19 +3803,6 @@ window.setFatCart=v=>{ FAT_CART=v; render(); };
 /* Adiciona um ajuste pontual (cobrança extra ou estorno) na fatura de um
    cartão/mês. Cada um vira um lançamento próprio, categoria "Ajuste Fatura" —
    soma em cima do calculado, nunca substitui. Excluir é o delRow padrão. */
-/* Compra à vista no cartão: sem parcela, sem assinatura — categoria
-   "Compras" comum, que já cai automaticamente em avulsosDoMes/Fatura. */
-window.addAvulsoCartao=async(nome,k)=>{
-  const d=$('av_d')?.value, desc=$('av_desc')?.value.trim(), v=parseFloat($('av_valor')?.value);
-  if(!d) return toast('Preencha a data');
-  if(!desc) return toast('Preencha a descrição');
-  if(!v || v<=0) return toast('Informe o valor');
-  const ok=await inserir('lancamentos',{
-    data:d, descricao:desc, categoria:'Compras', cartao:nome,
-    tipo:'Saída', quem:'Casal', valor:v, status:'Confirmado', criado_por:USER?.id||null});
-  if(ok){ render(); toast(desc+' — '+BRL(v)+' lançado na '+nome); }
-};
-
 window.addAjusteFatura=async(nome,k)=>{
   const desc=$('fat_desc')?.value.trim();
   const tipo=$('fat_tipo')?.value;
@@ -3961,9 +3967,9 @@ function vFatura(){
     </tbody></table></div>
     <div class="pbody"><p class="note">Está na fatura mas não é gasto de vocês.</p></div></div>`:''}
 
-  <div class="panel"><h2>Compras à vista <small>o que você gastou direto no cartão, sem parcelar — lance aqui pra não sobrar só como diferença não identificada</small></h2>
+  <div class="panel"><h2>Compras à vista <small>o que você gastou direto no cartão, sem parcelar — lançado pela tela de Lançamentos normal</small></h2>
   <div class="pbody">
-    ${avulsos.length?`<div class="tw" style="margin-bottom:12px"><table><thead><tr><th>Data</th><th>Descrição</th>
+    ${avulsos.length?`<div class="tw"><table><thead><tr><th>Data</th><th>Descrição</th>
       <th class="r">Valor</th><th></th></tr></thead><tbody>
     ${avulsos.map(l=>`<tr><td class="mono">${String(l.data).split('-').reverse().join('/')}</td>
       <td>${esc(l.descricao)}${l.tipo==='Entrada'?' <span class="tag t-ok">crédito</span>':''}</td>
@@ -3971,16 +3977,9 @@ function vFatura(){
         l.tipo==='Entrada'?'− ':''}${BRL(l.valor)}</td>
       <td class="r"><button class="btn dgr" onclick="delRow('lancamentos','${l.id}')">excluir</button></td></tr>`).join('')}
     </tbody></table></div>`
-    :`<p class="note" style="margin-bottom:12px">Nenhuma compra à vista lançada neste mês — normal se você só lança o
-    essencial, mas também pode ser a causa da diferença em "Compras do dia a dia" ali em cima.</p>`}
-    <div class="form">
-      <div class="fld"><label>Data</label><input type="date" id="av_d" value="${comp}-10"></div>
-      <div class="fld" style="grid-column:span 2"><label>Descrição</label>
-        <input id="av_desc" placeholder="Ex.: Mercado, restaurante..."></div>
-      <div class="fld"><label>Valor</label><input type="number" step="0.01" id="av_valor" placeholder="0,00"></div>
-      <div class="fld"><label>&nbsp;</label>
-        <button class="btn" onclick="addAvulsoCartao('${esc(n)}','${comp}')">Adicionar</button></div>
-    </div>
+    :`<p class="note">Nenhuma compra à vista lançada neste mês — normal se você só lança o
+    essencial, mas também pode ser a causa da diferença em "Compras do dia a dia" ali em cima.
+    Pra lançar uma, use o Lançamentos normal, categoria "Compras", escolhendo este cartão — ela aparece aqui sozinha.</p>`}
   </div></div>
 
   <div class="panel"><h2>Fechando a conta</h2>
