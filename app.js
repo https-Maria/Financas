@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v61';
+const APP_VER='v62';
 
 /* =====================================================================
    ESTADO
@@ -3784,6 +3784,19 @@ window.setFatCart=v=>{ FAT_CART=v; render(); };
 /* Adiciona um ajuste pontual (cobrança extra ou estorno) na fatura de um
    cartão/mês. Cada um vira um lançamento próprio, categoria "Ajuste Fatura" —
    soma em cima do calculado, nunca substitui. Excluir é o delRow padrão. */
+/* Compra à vista no cartão: sem parcela, sem assinatura — categoria
+   "Compras" comum, que já cai automaticamente em avulsosDoMes/Fatura. */
+window.addAvulsoCartao=async(nome,k)=>{
+  const d=$('av_d')?.value, desc=$('av_desc')?.value.trim(), v=parseFloat($('av_valor')?.value);
+  if(!d) return toast('Preencha a data');
+  if(!desc) return toast('Preencha a descrição');
+  if(!v || v<=0) return toast('Informe o valor');
+  const ok=await inserir('lancamentos',{
+    data:d, descricao:desc, categoria:'Compras', cartao:nome,
+    tipo:'Saída', quem:'Casal', valor:v, status:'Confirmado', criado_por:USER?.id||null});
+  if(ok){ render(); toast(desc+' — '+BRL(v)+' lançado na '+nome); }
+};
+
 window.addAjusteFatura=async(nome,k)=>{
   const desc=$('fat_desc')?.value.trim();
   const tipo=$('fat_tipo')?.value;
@@ -3948,14 +3961,27 @@ function vFatura(){
     </tbody></table></div>
     <div class="pbody"><p class="note">Está na fatura mas não é gasto de vocês.</p></div></div>`:''}
 
-  ${avulsos.length?`<div class="panel"><h2>Outros lançamentos neste cartão</h2>
-    <div class="tw"><table><thead><tr><th>Data</th><th>Descrição</th>
-      <th class="r">Valor</th></tr></thead><tbody>
+  <div class="panel"><h2>Compras à vista <small>o que você gastou direto no cartão, sem parcelar — lance aqui pra não sobrar só como diferença não identificada</small></h2>
+  <div class="pbody">
+    ${avulsos.length?`<div class="tw" style="margin-bottom:12px"><table><thead><tr><th>Data</th><th>Descrição</th>
+      <th class="r">Valor</th><th></th></tr></thead><tbody>
     ${avulsos.map(l=>`<tr><td class="mono">${String(l.data).split('-').reverse().join('/')}</td>
       <td>${esc(l.descricao)}${l.tipo==='Entrada'?' <span class="tag t-ok">crédito</span>':''}</td>
       <td class="r" style="color:${l.tipo==='Entrada'?'var(--pos)':'inherit'}">${
-        l.tipo==='Entrada'?'− ':''}${BRL(l.valor)}</td></tr>`).join('')}
-    </tbody></table></div></div>`:''}
+        l.tipo==='Entrada'?'− ':''}${BRL(l.valor)}</td>
+      <td class="r"><button class="btn dgr" onclick="delRow('lancamentos','${l.id}')">excluir</button></td></tr>`).join('')}
+    </tbody></table></div>`
+    :`<p class="note" style="margin-bottom:12px">Nenhuma compra à vista lançada neste mês — normal se você só lança o
+    essencial, mas também pode ser a causa da diferença em "Compras do dia a dia" ali em cima.</p>`}
+    <div class="form">
+      <div class="fld"><label>Data</label><input type="date" id="av_d" value="${comp}-10"></div>
+      <div class="fld" style="grid-column:span 2"><label>Descrição</label>
+        <input id="av_desc" placeholder="Ex.: Mercado, restaurante..."></div>
+      <div class="fld"><label>Valor</label><input type="number" step="0.01" id="av_valor" placeholder="0,00"></div>
+      <div class="fld"><label>&nbsp;</label>
+        <button class="btn" onclick="addAvulsoCartao('${esc(n)}','${comp}')">Adicionar</button></div>
+    </div>
+  </div></div>
 
   <div class="panel"><h2>Fechando a conta</h2>
   <div class="tw"><table class="mini"><tbody>
