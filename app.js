@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v59';
+const APP_VER='v61';
 
 /* =====================================================================
    ESTADO
@@ -909,6 +909,21 @@ window.confirmarCompra=async()=>{
   const c=simCalc();
   if(c.negativos.length && !confirm(
      `Esta compra deixa ${c.negativos.length} mês(es) negativo(s). Confirmar mesmo assim?`)) return;
+  /* Proteção contra o que aconteceu com a Jaqueline: um parcelamento novo
+     com nome ou valor parecido com um terceiro já existente pode ser a
+     MESMA dívida, cadastrada duas vezes — uma vez como sua, outra como de
+     quem já deve. Só avisa; não bloqueia, porque às vezes é coincidência. */
+  const descNorm = SIM.desc.trim().toLowerCase();
+  const parecido = D.terceiros.find(t=>{
+    const tDescNorm=(t.descricao||'').toLowerCase();
+    const mesmoValor = Math.abs(+t.valor-c.parcela)<0.02;
+    const nomeParecido = tDescNorm.includes(descNorm) || descNorm.includes(tDescNorm);
+    return mesmoValor || (nomeParecido && descNorm.length>2);
+  });
+  if(parecido && !confirm(
+    `Isso parece com o que ${esc(parecido.pessoa)} já deve (${esc(parecido.descricao)}, ${BRL(parecido.valor)}). `+
+    `Tem certeza que não é a mesma dívida, só cadastrada duas vezes? Confirmar mesmo assim?`
+  )) return;
   const ok = await inserir('parcelamentos',{
     descricao:SIM.desc.trim(), cartao:SIM.cartao||null,
     valor_parcela:+c.parcela.toFixed(2), total_parcelas:SIM.parcelas,
@@ -942,6 +957,8 @@ const MENU_CONFIG=['cad','backup','log'];
 const rotulo=id=>(PAGES.find(p=>p[0]===id)||[,id])[1];
 let MENU_ABERTO=null;
 let PROJ_ABERTO=null;
+let PARC_ABERTO=null;
+window.toggleParc=id=>{ PARC_ABERTO = PARC_ABERTO===id ? null : id; render(); };
 let CUR='painel', MREF=ym(hoje()), VISAO=null;  // 'previsto' | 'realizado'
 let GASTO_RAPIDO_ABERTO=false;
 window.toggleGastoRapido=()=>{ GASTO_RAPIDO_ABERTO=!GASTO_RAPIDO_ABERTO; render(); };
@@ -1438,22 +1455,26 @@ function vParc(){
     const meses=mesesDaParcela(p);
     const irregular=Array.isArray(p.competencias)&&p.competencias.length;
     const fim=meses.length?meses[meses.length-1]:null;
-    return `<tr><td><b>${esc(p.descricao)}</b>${p.origem==='simulacao_confirmada'?' <span class="tag t-i">simulada</span>':''}
+    const aberto=PARC_ABERTO===p.id;
+    const quitada=+p.restantes<=0;
+    return `<tr class="${quitada?'dim':''}"><td><b>${esc(p.descricao)}</b>${p.origem==='simulacao_confirmada'?' <span class="tag t-i">simulada</span>':''}
       ${irregular?' <span class="tag t-w">meses definidos</span>':''}</td>
     <td>${esc(p.cartao||'—')}</td><td class="r">${BRL(p.valor_parcela)}</td>
     <td class="c"><input type="number" min="0" value="${p.restantes}" style="width:56px;padding:3px 5px;text-align:center"
       onchange="setRow('parcelamentos','${p.id}','restantes',Math.max(0,+this.value))"></td>
     <td class="r"><b>${BRL(p.valor_parcela*p.restantes)}</b></td>
     <td>${fim?mLabel(fim):'—'}</td>
-    <td class="r"><button class="btn dgr" onclick="delRow('parcelamentos','${p.id}')">excluir</button></td></tr>
-    <tr class="sub"><td colspan="7" style="padding:4px 15px 10px">
+    <td class="r" style="white-space:nowrap">
+      ${quitada?'':`<button class="btn alt sm" onclick="toggleParc('${p.id}')" title="Ver ou editar os meses">${aberto?'▾':'▸'} meses</button>`}
+      <button class="btn dgr" onclick="delRow('parcelamentos','${p.id}')">excluir</button></td></tr>
+    ${(aberto && !quitada)?`<tr class="sub"><td colspan="7" style="padding:4px 15px 10px">
       <span class="note">Meses em que cai:</span>
       <input value="${meses.map(m=>mLabel(m)).join(', ')}" style="width:min(420px,70%);padding:3px 7px;margin-left:6px"
         onchange="setCompetencias('${p.id}',this.value)"
         title="Escreva MM/AAAA separando por vírgula. Deixe em branco para voltar ao mês a mês.">
       ${irregular?'<span class="note" style="margin-left:8px">este parcelamento pula mês</span>'
                  :'<span class="note" style="margin-left:8px">mensais consecutivas</span>'}
-    </td></tr>`;}).join('')
+    </td></tr>`:''}`;}).join('')
     ||`<tr><td colspan="7" class="note" style="padding:20px;text-align:center">${
       D.parcelamentos.length?'Nenhuma dívida bate com o filtro.':'Nenhum parcelamento. Use "Nova compra" para simular e adicionar.'}</td></tr>`}
   </tbody></table></div>
