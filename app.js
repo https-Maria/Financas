@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v66';
+const APP_VER='v68';
 
 /* =====================================================================
    ESTADO
@@ -3831,7 +3831,7 @@ function vFatura(){
   const c = ativos.find(x=>x.nome===FAT_CART) || ativos[0];
   const n = c.nome;
   const k = MREF;
-  const comp = venceNoDia1(n) ? addM(k,1) : k;   /* qual competência esta fatura é */
+  const comp = venceNoDia1(n) ? addM(k,1) : k;   /* mês em foco = quando o dinheiro sai (igual o Painel); a fatura em si pode ter rótulo diferente */
   const jan = janelaFatura(n,comp);
   const ciclo = cicloDe(n,comp);
   const real = faturaLancada(n,comp);
@@ -3869,6 +3869,8 @@ function vFatura(){
         ${mesesDisponiveis().map(m=>`<option value="${m}" ${m===k?'selected':''}>${mLabel(m)}</option>`).join('')}
       </select></div>
   </div>
+  ${comp!==k?`<p class="note" style="margin:-8px 0 16px">Mostrando a fatura que ${esc(n)} chama de
+    <b>${mLabel(comp)}</b> — é a que sai da sua conta em ${mLabel(k)}, por vencer dia 1.</p>`:''}
 
   <div class="kpis">
     ${kpi('Sua parte da fatura',BRL(valor),real?'valor lançado':'estimado pelos cadastros',
