@@ -11,16 +11,16 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v68';
+const APP_VER='v69';
 
 /* =====================================================================
    ESTADO
    ===================================================================== */
 const TABELAS = ['rendas','fixas','beneficios','cartoes','parcelamentos',
-                 'assinaturas','lancamentos','terceiros','metas','casa_itens','financiamentos','agenda','snapshots','ciclos','auditoria'];
+                 'assinaturas','lancamentos','terceiros','metas','casa_itens','financiamentos','agenda','snapshots','ciclos','auditoria','notas'];
 let USER=null, GRUPO=null, EU=null;
 let D = {rendas:[],fixas:[],beneficios:[],cartoes:[],parcelamentos:[],
-         assinaturas:[],lancamentos:[],terceiros:[],metas:[],casa_itens:[],financiamentos:[],agenda:[],snapshots:[],ciclos:[],auditoria:[],config:null};
+         assinaturas:[],lancamentos:[],terceiros:[],metas:[],casa_itens:[],financiamentos:[],agenda:[],snapshots:[],ciclos:[],auditoria:[],notas:[],config:null};
 let ONLINE = navigator.onLine, SYNC='off', FALTANDO=[];
 
 /* =====================================================================
@@ -957,7 +957,7 @@ window.confirmarCompra=async()=>{
 const PAGES=[['painel','Painel'],['dash','Dashboard'],['compra','Nova compra'],['lanc','Lançamentos'],
   ['parc','Parcelamentos'],['assin','Assinaturas'],['terc','Terceiros'],
   ['cal','Calendário'],['proj','Projeção'],['amort','Amortização'],['casa','Projeções Casa'],
-  ['cad','Cadastros'],['metas','Metas'],['backup','Cópias'],['log','Atividade'],['fatura','Fatura']];
+  ['cad','Cadastros'],['metas','Metas'],['backup','Cópias'],['log','Atividade'],['fatura','Fatura'],['notas','Bloco de notas']];
 
 /* O menu mostra só o dia a dia. O resto fica agrupado atrás de "Mais",
    e o que é manutenção vai para a engrenagem. */
@@ -965,7 +965,7 @@ const MENU_FIXO=['painel','dash','lanc','cal','metas'];
 const MENU_MAIS=[
   ['Compromissos',['fatura','parc','assin','terc']],
   ['Análise',     ['proj','amort','casa']],
-  ['Simular',     ['compra']]];
+  ['Simular',     ['compra','notas']]];
 const MENU_CONFIG=['cad','backup','log'];
 const rotulo=id=>(PAGES.find(p=>p[0]===id)||[,id])[1];
 let MENU_ABERTO=null;
@@ -1005,6 +1005,7 @@ const MIGRACAO_DE = {
   casa_itens:'migracao-casa.sql', financiamentos:'migracao-financiamento.sql',
   agenda:'migracao-agenda.sql', snapshots:'migracao-backup.sql',
   ciclos:'migracao-ciclos.sql', auditoria:'migracao-auditoria.sql',
+  notas:'migracao-notas.sql',
 };
 function head(t,p){
   /* Tabelas que têm migração própria (casa, financiamento, agenda, cópias,
@@ -4029,14 +4030,208 @@ function vFatura(){
 /* =====================================================================
    SHELL E INICIALIZAÇÃO
    ===================================================================== */
+
+/* =====================================================================
+   BLOCO DE NOTAS — lista que soma sozinha + calculadora ao lado
+   Rascunho do casal: não entra em orçamento, fatura, Painel nem Projeção.
+   "conta" guarda o que foi digitado (2x18,50); o valor é recalculado dela.
+   ===================================================================== */
+/* Motor de conta, sem eval: vírgula decimal, ponto de milhar opcional,
+   + - * / x × ÷ e parênteses. Devolve null se a conta não fecha. */
+function notaNumero(s){
+  if(s.includes(',')) s=s.replace(/\./g,'').replace(',','.');
+  else if(/^\d{1,3}(\.\d{3})+$/.test(s)) s=s.replace(/\./g,'');
+  const n=Number(s); return Number.isFinite(n)?n:NaN;
+}
+function notaCalcular(txt){
+  const t=String(txt||'').replace(/×|x|X/g,'*').replace(/÷/g,'/').replace(/−|–/g,'-');
+  const tk=[]; let i=0;
+  while(i<t.length){
+    const c=t[i];
+    if(c===' '){i++;continue;}
+    if('+-*/()'.includes(c)){tk.push(c);i++;continue;}
+    const m=t.slice(i).match(/^[\d.,]+/);
+    if(!m) return null;
+    const n=notaNumero(m[0]); if(isNaN(n)) return null;
+    tk.push(n); i+=m[0].length;
+  }
+  if(!tk.length) return null;
+  let p=0;
+  const expr=()=>{let v=termo(); while(tk[p]==='+'||tk[p]==='-'){const o=tk[p++],r=termo(); v=o==='+'?v+r:v-r;} return v;};
+  const termo=()=>{let v=fator(); while(tk[p]==='*'||tk[p]==='/'){const o=tk[p++],r=fator(); v=o==='*'?v*r:v/r;} return v;};
+  const fator=()=>{const x=tk[p];
+    if(x==='-'){p++;return -fator();} if(x==='+'){p++;return fator();}
+    if(x==='('){p++;const v=expr(); if(tk[p]!==')') throw 0; p++; return v;}
+    if(typeof x==='number'){p++;return x;} throw 0;};
+  try{const v=expr(); if(p!==tk.length||!Number.isFinite(v)) return null; return Math.round(v*100)/100;}
+  catch(e){return null;}
+}
+const notaTexto = v => String(v).replace('.',',');
+
+let NOTA_PEND={};      // o que foi digitado e ainda não voltou do banco: {id:{descricao,conta}}
+let NOTA_TIMER={};     // salvamento automático por linha
+let NOTA_CALC='';      // o que está na calculadora
+let NOTA_FOCO=null;    // campo pra focar depois do próximo desenho
+
+function notaLinhas(){
+  return D.notas.map(n=>({...n, ...(NOTA_PEND[n.id]||{})}))
+    .sort((a,b)=>(a.ordem-b.ordem)||String(a.criado_em).localeCompare(String(b.criado_em)));
+}
+function notaTotal(){
+  return Math.round(notaLinhas().reduce((s,n)=>s+(notaCalcular(n.conta)||0),0)*100)/100;
+}
+function notaCelula(n){
+  const v=notaCalcular(n.conta);
+  if(v===null) return n.conta.trim()?`<span class="neg" title="Conta incompleta">?</span>`:'';
+  return `<button type="button" onclick="notaLevar('${n.id}')" title="Levar para a calculadora"
+    ${v<0?'class="neg"':''}>${BRL(v)}</button>`;
+}
+function notaVisor(){
+  const c=$('nt_conta'), r=$('nt_res'); if(!c||!r) return;
+  c.textContent=NOTA_CALC;
+  const v=notaCalcular(NOTA_CALC);
+  r.textContent = NOTA_CALC==='' ? '0' : (v===null ? '…'
+    : v.toLocaleString('pt-BR',Number.isInteger(v)?{maximumFractionDigits:0}:{minimumFractionDigits:2,maximumFractionDigits:2}));
+}
+
+function vNotas(){
+  const cab=head('Bloco de notas','Rascunho do casal: uma lista que soma sozinha e uma calculadora do lado. Não entra no orçamento.');
+  if(FALTANDO.includes('notas'))
+    return cab+`<div class="warn">Esta aba precisa da tabela de notas. Rode <b>migracao-notas.sql</b> no Supabase e recarregue.</div>`;
+  const ls=notaLinhas(), tot=notaTotal();
+  const teclas=[['C','fn'],['⌫','fn'],['÷','op'],['×','op'],['7'],['8'],['9'],['−','op'],
+    ['4'],['5'],['6'],['+','op'],['1'],['2'],['3'],['=','eq'],['0'],[','],['( )','fn'],['Usar na lista','anota']];
+  return cab+`<div class="nt-grid">
+    <div class="panel"><h2>Lista <small>${ls.length?ls.length+(ls.length>1?' linhas':' linha'):'vazia'}</small></h2><div class="pbody">
+      ${ls.length?`<div class="nt-itens">${ls.map(n=>`<div class="nt-item">
+        <input class="nt-nm" id="nt_d_${n.id}" value="${esc(n.descricao)}" placeholder="O quê" aria-label="Descrição"
+          oninput="notaDigitar('${n.id}','descricao',this.value)" onchange="notaSalvar('${n.id}')"
+          onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('nt_c_${n.id}').focus();}">
+        <input class="nt-v" id="nt_c_${n.id}" value="${esc(n.conta)}" placeholder="0,00" aria-label="Valor ou conta"
+          autocomplete="off" spellcheck="false"
+          oninput="notaDigitar('${n.id}','conta',this.value)" onchange="notaSalvar('${n.id}')"
+          onkeydown="if(event.key==='Enter'){event.preventDefault();notaProxima('${n.id}');}">
+        <span class="nt-r" id="nt_r_${n.id}">${notaCelula(n)}</span>
+        <span class="nt-d"><button class="btn dgr" onclick="notaApagar('${n.id}')" aria-label="Apagar linha">×</button></span>
+      </div>`).join('')}</div>`
+      :`<p class="note" style="padding:4px 0 10px">Nada anotado ainda. Adicione uma linha ou faça uma conta e toque em <b>Usar na lista</b>.</p>`}
+      <div class="rowbar" style="margin:12px 0 0">
+        <button class="btn alt sm" onclick="notaNova()">Adicionar linha</button>
+        ${ls.length?`<button class="btn dgr" onclick="notaLimpar()">Limpar lista</button>`:''}
+      </div>
+      <div class="nt-total"><span>Total</span><b id="nt_total" class="${tot<0?'neg':''}">${BRL(tot)}</b></div>
+      <p class="note" style="margin-top:8px">No valor dá pra digitar a conta direto: <b>2x18,50</b>, <b>150-10</b>, <b>(80+40)/2</b>.</p>
+    </div></div>
+    <div class="panel"><h2>Calculadora</h2><div class="pbody">
+      <div class="nt-visor"><div class="nt-conta" id="nt_conta"></div><div class="nt-res" id="nt_res">0</div></div>
+      <div class="nt-teclas">${teclas.map(([t,c])=>`<button type="button" class="nt-tk ${c||''}" onclick="notaTecla('${t}')">${t}</button>`).join('')}</div>
+      <p class="note" style="margin-top:10px">Toque num valor da lista para trazer ele para cá.</p>
+    </div></div>
+  </div>`;
+}
+/* Depois de desenhar: visor da calculadora e foco pedido. */
+function notaDepois(){
+  notaVisor();
+  if(NOTA_FOCO){ const el=$(NOTA_FOCO); NOTA_FOCO=null; if(el){ el.focus(); } }
+}
+
+window.notaDigitar=(id,campo,val)=>{
+  NOTA_PEND[id]={...(NOTA_PEND[id]||{}),[campo]:val};
+  if(campo==='conta'){
+    const n=notaLinhas().find(x=>x.id===id);
+    const cel=$('nt_r_'+id); if(cel&&n) cel.innerHTML=notaCelula(n);
+    const tot=notaTotal(), t=$('nt_total');
+    if(t){ t.textContent=BRL(tot); t.className=tot<0?'neg':''; }
+  }
+  clearTimeout(NOTA_TIMER[id]);
+  NOTA_TIMER[id]=setTimeout(()=>notaSalvar(id),900);
+};
+window.notaSalvar=async id=>{
+  clearTimeout(NOTA_TIMER[id]);
+  const p=NOTA_PEND[id]; if(!p) return;
+  const atual=D.notas.find(x=>x.id===id); if(!atual){ delete NOTA_PEND[id]; return; }
+  const enviar={...p};
+  const campos={...enviar, atualizado_em:new Date().toISOString()};
+  if('conta' in enviar) campos.valor=notaCalcular(enviar.conta);
+  const ok=await atualizar('notas',id,campos);
+  if(!ok) return;                                   /* fica pendente, tenta de novo no próximo toque */
+  /* só esquece o que foi mesmo salvo — se digitou mais nesse meio tempo, continua pendente */
+  const agora=NOTA_PEND[id]||{};
+  Object.keys(enviar).forEach(k=>{ if(agora[k]===enviar[k]) delete agora[k]; });
+  if(Object.keys(agora).length) NOTA_PEND[id]=agora; else delete NOTA_PEND[id];
+};
+async function notaInserir(descricao,conta){
+  const ordem=D.notas.reduce((m,n)=>Math.max(m,n.ordem||0),0)+1;
+  return inserir('notas',{descricao, conta, valor:notaCalcular(conta), ordem, criado_por:USER?.id||null});
+}
+window.notaNova=async()=>{
+  const n=await notaInserir('',''); if(!n) return;
+  NOTA_FOCO='nt_d_'+n.id; render();
+};
+window.notaProxima=async id=>{
+  await notaSalvar(id);
+  const ls=notaLinhas(), i=ls.findIndex(x=>x.id===id);
+  if(i>=0 && i<ls.length-1){ $('nt_d_'+ls[i+1].id)?.focus(); return; }
+  notaNova();
+};
+window.notaApagar=async id=>{
+  clearTimeout(NOTA_TIMER[id]); delete NOTA_PEND[id];
+  if(await remover('notas',id)) render();
+};
+window.notaLimpar=async()=>{
+  if(!confirm('Apagar todas as linhas do bloco de notas? Isso vale para as duas.')) return;
+  const {error}=await sb.from('notas').delete().eq('grupo_id',GRUPO);
+  if(error) return toast('Erro ao limpar: '+error.message,4200);
+  Object.values(NOTA_TIMER).forEach(clearTimeout);
+  NOTA_PEND={}; NOTA_TIMER={}; D.notas=[]; cacheSave(); render(); toast('Lista limpa');
+};
+window.notaLevar=id=>{
+  const n=notaLinhas().find(x=>x.id===id); if(!n) return;
+  const v=notaCalcular(n.conta); if(v===null) return;
+  NOTA_CALC=notaTexto(v); notaVisor();
+};
+window.notaTecla=async t=>{
+  if(t==='C') NOTA_CALC='';
+  else if(t==='⌫') NOTA_CALC=NOTA_CALC.slice(0,-1);
+  else if(t==='='){ const v=notaCalcular(NOTA_CALC); if(v!==null) NOTA_CALC=notaTexto(v); }
+  else if(t==='( )'){
+    const ab=(NOTA_CALC.match(/\(/g)||[]).length, fe=(NOTA_CALC.match(/\)/g)||[]).length;
+    NOTA_CALC += (ab>fe && /[\d)]$/.test(NOTA_CALC)) ? ')' : '(';
+  }
+  else if(t==='Usar na lista'){
+    const v=notaCalcular(NOTA_CALC);
+    if(v===null) return toast(NOTA_CALC?'A conta não está completa':'Faça uma conta primeiro');
+    const n=await notaInserir('',notaTexto(v)); if(!n) return;
+    NOTA_CALC=''; NOTA_FOCO='nt_d_'+n.id; render(); return;
+  }
+  else{
+    const op='+−×÷'.includes(t);
+    if(op && /[+−×÷]$/.test(NOTA_CALC)) NOTA_CALC=NOTA_CALC.slice(0,-1);
+    if(op && NOTA_CALC==='' && t!=='−') return;
+    NOTA_CALC+=t;
+  }
+  notaVisor();
+};
+
 const VIEWS={painel:vPainel,dash:vDash,fatura:vFatura,compra:vCompra,lanc:vLanc,parc:vParc,assin:vAssin,
-             terc:vTerc,cal:vCal,proj:vProj,amort:vAmort,casa:vCasa,cad:vCad,metas:vMetas,backup:vBackup,log:vLog};
+             terc:vTerc,cal:vCal,proj:vProj,amort:vAmort,casa:vCasa,cad:vCad,metas:vMetas,backup:vBackup,log:vLog,notas:vNotas};
 
 function render(){
   const m=$('main'); if(!m) return montarShell();
   montarNav();
   montarBusca();                      /* a barra já marca a aba certa */
+  /* No bloco de notas, o tempo real redesenha a tela enquanto se digita
+     (até a própria gravação volta como aviso). Sem isto o cursor sairia do
+     campo a cada salvamento. Só nesta aba: as outras seguem como sempre. */
+  const ae=document.activeElement;
+  const foco = CUR==='notas' && ae && ae.id && m.contains(ae)
+    ? {id:ae.id, a:ae.selectionStart, b:ae.selectionEnd} : null;
   m.innerHTML=(VIEWS[CUR]||vPainel)();
+  if(CUR==='notas'){
+    if(foco && !NOTA_FOCO){ const el=$(foco.id);
+      if(el){ el.focus({preventScroll:true}); try{ el.setSelectionRange(foco.a,foco.b); }catch(e){} } }
+    notaDepois();
+  }
 }
 window.go=id=>{CUR=id;MENU_ABERTO=null;render();window.scrollTo(0,0);};
 
