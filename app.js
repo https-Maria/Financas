@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v70';
+const APP_VER='v71';
 
 /* =====================================================================
    ESTADO
@@ -150,9 +150,23 @@ function faturaLancada(nome,k){
     l.tipo!=='Entrada' &&
     (l.categoria==='Cartão' || /fatura/i.test(l.descricao||'')));
   if(!debitos.length) return null;
-  const creditos=creditosCartao(nome,k);
+  /* Marcado no Painel = FOTO do total que o app calculou naquela hora, e esse
+     total já tinha abatido os créditos e somado os ajustes que existiam. Se
+     aplicasse de novo, contava duas vezes (foi o estorno de 73,23 do BB
+     Jéssica: 463,15 virava 389,92). Então, em cima de uma foto, só entra o
+     que foi lançado DEPOIS dela. Total digitado à mão segue a regra de sempre. */
+  const foto = debitos.every(veioDoPainel)
+    ? Math.max(...debitos.map(l=>Date.parse(l.criado_em)||0)) : null;
+  const creditos=creditosCartao(nome,k).filter(c=>depoisDaFoto(c,foto));
   const valor = somaValores(debitos) - somaValores(creditos);
-  return {valor, itens:[...debitos,...creditos], creditos, debitos};
+  return {valor, itens:[...debitos,...creditos], creditos, debitos, foto};
+}
+/* Sem foto, tudo conta. Com foto, só o que foi criado depois dela — sem data
+   de criação, assume que já estava na foto (é o lado que não conta 2x). */
+function depoisDaFoto(l, foto){
+  if(!foto) return true;
+  const t=Date.parse(l.criado_em);
+  return !!t && t>foto;
 }
 
 /* ---- Ciclo de fatura: a janela que ela cobre ----
@@ -240,7 +254,7 @@ function faturaCartao(nome, k){
   const real=faturaLancada(nome,k);
   const base = real ? real.valor
     : (faturaCalculada(nome,k) - somaValores(creditosCartao(nome,k)) + somaValores(comprasAVista(nome,k)));
-  return base + somaAjustesFatura(nome,k);
+  return base + somaAjustesFatura(nome,k,real);
 }
 
 /* Ajustes pontuais da aba Fatura — cobrança que o cálculo não previu (ex.:
@@ -252,8 +266,13 @@ function ajustesFatura(nome, k){
   return D.lancamentos.filter(l=>
     ym(l.data)===k && !l.protegido && (l.cartao||'')===nome && l.categoria==='Ajuste Fatura');
 }
-function somaAjustesFatura(nome, k){
-  return ajustesFatura(nome,k).reduce((s,l)=> s + (l.tipo==='Entrada' ? -(+l.valor) : +l.valor), 0);
+/* Quais ajustes ainda somam: todos, a não ser que a fatura tenha sido marcada
+   no Painel — aí os que já existiam estão dentro da foto. */
+function ajusteConta(l, real){ return depoisDaFoto(l, real && real.foto); }
+function somaAjustesFatura(nome, k, real){
+  if(real===undefined) real=faturaLancada(nome,k);
+  return ajustesFatura(nome,k).filter(l=>ajusteConta(l,real))
+    .reduce((s,l)=> s + (l.tipo==='Entrada' ? -(+l.valor) : +l.valor), 0);
 }
 
 /* Parcela de uma compra simulada neste mês. Independe de cartão escolhido:
@@ -394,7 +413,7 @@ function lancDoItem(it, k){
   const r = lancRelacionado(it,k);
   if(!r) return null;
   const feitos = r.itens.filter(confirmado);
-  return feitos.length ? {valor:feitos.reduce((s,l)=>s+ +l.valor,0), itens:feitos} : null;
+  return feitos.length ? {valor:feitos.reduce((s,l)=>s+(l.tipo==='Entrada'?-l.valor:+l.valor),0), itens:feitos} : null;
 }
 function montaLanc(it, k, dia){
   return {data: dataDoItem(it,k,dia),
@@ -3899,11 +3918,12 @@ function vFatura(){
       return `<div class="tw" style="margin-bottom:12px"><table><thead><tr>
         <th>O que é</th><th class="r">Valor</th><th></th></tr></thead><tbody>
         ${ajs.map(l=>`<tr><td>${esc(l.descricao)}
-          <span class="tag ${l.tipo==='Entrada'?'t-ok':'t-w'}">${l.tipo==='Entrada'?'estorno':'cobrança extra'}</span></td>
+          <span class="tag ${l.tipo==='Entrada'?'t-ok':'t-w'}">${l.tipo==='Entrada'?'estorno':'cobrança extra'}</span>
+          ${ajusteConta(l,real)?'':'<span class="tag t-g" title="Já estava no valor quando você marcou a fatura como paga no Painel">já no valor pago</span>'}</td>
           <td class="r" style="color:${l.tipo==='Entrada'?'var(--pos)':'var(--neg)'}">
             ${l.tipo==='Entrada'?'−':'+'} ${BRL(l.valor)}</td>
           <td class="r"><button class="btn dgr" onclick="delRow('lancamentos','${l.id}')">excluir</button></td></tr>`).join('')}
-        </tbody><tfoot><tr><td>Total dos ajustes</td><td class="r"><b>${BRL(somaAjustesFatura(n,comp))}</b></td><td></td></tr></tfoot>
+        </tbody><tfoot><tr><td>${real&&real.foto?'Somando por cima do valor pago':'Total dos ajustes'}</td><td class="r"><b>${BRL(somaAjustesFatura(n,comp,real))}</b></td><td></td></tr></tfoot>
       </table></div>`;
     })()}
     <div class="form">
