@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v71';
+const APP_VER='v72';
 
 /* =====================================================================
    ESTADO
@@ -1597,6 +1597,10 @@ function vTerc(){
     .replace(/\b\d+\s*\/\s*\d+\b/g,'')
     .replace(/^[\s—–-]+|[\s—–-]+$/g,'')
     .trim();
+  /* Competência de terceiro é 'MM/AAAA'. Como texto, '01/2027' vem antes de
+     '10/2026' — a parcela de janeiro virava a "1 de 10". Ordena por AAAA-MM. */
+  const compOrdem = c => { const m=String(c||'').match(/^(\d{1,2})\/(\d{4})$/);
+    return m ? m[2]+'-'+m[1].padStart(2,'0') : String(c||''); };
   function agrupar(lista){
     const g=new Map();
     lista.forEach(t=>{
@@ -1605,7 +1609,8 @@ function vTerc(){
       g.get(ch).push(t);
     });
     return [...g.values()].map(its=>{
-      const comps=its.map(x=>x.competencia).filter(Boolean).sort();
+      const comps=its.map(x=>x.competencia).filter(Boolean)
+        .sort((a,b)=>compOrdem(a).localeCompare(compOrdem(b)));
       return {itens:its, n:its.length,
               pessoa:its[0].pessoa,
               descricao:semParcela(its[0].descricao) || its[0].descricao,
@@ -1734,7 +1739,7 @@ function vTerc(){
         ? `<button class="btn dgr" onclick="delRow('terceiros','${g.itens[0].id}')">excluir</button>`
         : `<button class="btn alt sm" onclick="abrirGrupo('${esc(g.pessoa)}','${esc(g.descricao)}')">ver as ${g.n}</button>`}</td>
     </tr>${GRUPO_ABERTO===g.pessoa+'|'+g.descricao
-      ? g.itens.sort((a,b)=>String(a.competencia||'').localeCompare(String(b.competencia||''))).map((x,i)=>`
+      ? g.itens.slice().sort((a,b)=>compOrdem(a.competencia).localeCompare(compOrdem(b.competencia))).map((x,i)=>`
         <tr class="sub ${x.recebido?'dim':''}"><td class="c">
           <input type="checkbox" ${x.recebido?'checked':''} style="width:auto;cursor:pointer"
             onchange="receberTerc('${x.id}',this.checked)"></td>
