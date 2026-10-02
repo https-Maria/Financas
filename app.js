@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v72';
+const APP_VER='v76';
 
 /* =====================================================================
    ESTADO
@@ -79,6 +79,14 @@ const cfg = () => D.config || {reserva_atual:0,aporte_mensal:0,
    e soma tudo que foi lançado depois. Benefícios ficam fora: VA não é dinheiro
    na conta. Reports entra, porque é dinheiro que passa pela conta de verdade,
    mas fica destacado para não ser confundido com sobra. */
+/* O que mexe na conta do banco: o que foi pago à vista (débito, Pix, dinheiro)
+   e o pagamento da fatura (categoria Cartão, Saída). Compra no cartão só tira
+   dinheiro da conta quando a fatura é paga — se contasse no dia, saía duas
+   vezes. Estorno e ajuste no cartão abatem a fatura, não entram na conta. */
+function mexeNoBanco(l){
+  if(!l.cartao) return true;
+  return l.categoria==='Cartão' && l.tipo==='Saída';
+}
 function saldoConta(){
   const c=cfg();
   const base = c.saldo_conferido==null ? null : +c.saldo_conferido;
@@ -88,6 +96,7 @@ function saldoConta(){
   const ate = hoje();
   const depois = D.lancamentos.filter(l=>
     !l.beneficio &&
+    mexeNoBanco(l) &&
     l.status!=='Projetado' &&
     String(l.data) <= ate &&
     (!desde || String(l.data)>desde));
@@ -572,10 +581,11 @@ function blocosDoMes(k){
                              quem:'Casal',competencia:prox});
       });
     }
-    /* avulsos do dia; no último bloco entram também os do fim do mês */
+    /* avulsos do dia; no último bloco entram também os do fim do mês.
+       Gasto do dia 1 não tem bloco próprio: entra no primeiro (antes sumia). */
     avulsos.forEach(l=>{
-      const d=+String(l.data).slice(8,10);
-      const cai = ultimo ? d>=dia || d>=ultimoDiaDoMes(k) : d===dia;
+      const d0=+String(l.data).slice(8,10), d = d0<=1 ? ordenados[0] : d0;
+      const cai = ultimo ? d>=dia || d0>=ultimoDiaDoMes(k) : d===dia;
       if(!cai) return;
       const it={desc:l.descricao, valor:+l.valor, tipo:'avulso', lancId:l.id,
                 categoria:l.categoria||'Outros', quem:l.quem||'Casal',
@@ -1080,7 +1090,12 @@ function vPainel(){
   const f=fluxo(12,null,MREF), mes=f[0], r=realizado(MREF);
   const meses=mesesDisponiveis();
   const blocos=blocosDoMes(MREF);
-  let corrido=0;
+  /* O mês não começa do zero: o que sobrou do último dia do mês anterior
+     (depois da reserva das faturas do dia 1) fica na conta e paga os gastos
+     até a primeira entrada. Sem isso, um gasto no dia 2 virava "falta caixa". */
+  const sobraAnterior=Math.max(0, Math.round(
+    blocosDoMes(addM(MREF,-1)).reduce((s,b)=>s+b.saldo,0)*100)/100);
+  let corrido=sobraAnterior;
   const comAcum=blocos.map(b=>{ corrido+=b.saldo; return {...b,acum:corrido}; });
   const apertados=comAcum.filter(b=>b.acum<0);
   const cats=Object.entries(r.porCat).sort((a,b)=>b[1]-a[1]).slice(0,8);
@@ -1154,7 +1169,8 @@ function vPainel(){
         <div class="kgroup sub">Conferir com o extrato do banco</div>
         <p class="note" style="margin-bottom:6px">O app calcula <b>${BRL(S.atual)}</b>,
         contando só lançamentos já confirmados e com data até hoje —
-        previsão e o que está marcado como Projetado ficam de fora.
+        previsão e o que está marcado como Projetado ficam de fora. Compra no cartão
+        só conta quando a fatura é paga.
         Se o banco mostra outro número, corrija aqui e o app segue deste ponto.</p>
         ${formulario}
       </div></div>`;
@@ -1175,6 +1191,8 @@ function vPainel(){
     Vai faltar caixa antes da próxima entrada.</div>`:''}
 
   <div class="kgroup">Fluxo por data em ${mLabel(MREF)} <small>clique para detalhar</small></div>
+  ${sobraAnterior?`<p class="note" style="margin:-4px 0 8px">Começa com <b>${BRL(sobraAnterior)}</b>:
+    a sobra prevista do fim de ${mLabel(addM(MREF,-1))}, já descontada a reserva das faturas do dia 1.</p>`:''}
   <div class="dayflow">
   ${comAcum.map(b=>`
     <details class="day">
@@ -1286,22 +1304,17 @@ function vPainel(){
 
   ${(()=>{
     const rp=reportsMes(MREF);
-    if(!rp.temMovimento && !rp.previsto) return '';
-    return `<div class="panel"><h2>Reports <small>protegido — fora do orçamento do casal</small></h2>
+    if(!rp.temMovimento) return '';
+    return `<div class="panel"><h2>Reports <small>pago com dinheiro já guardado — fora do orçamento do casal</small></h2>
       <div class="pbody">
-        <div class="dline"><span>${rp.ent?'Entrada recebida':'Entrada prevista'}</span>
-          <b style="color:var(--pos)">${BRL(rp.ent||rp.previsto)}</b></div>
+        ${rp.ent?`<div class="dline"><span>Entrada recebida</span>
+          <b style="color:var(--pos)">${BRL(rp.ent)}</b></div>`:''}
         ${rp.sai.map(l=>`<div class="dline"><span>${esc(l.descricao)}
           <span class="note">${String(l.data).split('-').reverse().join('/')}</span></span>
-          <b style="color:var(--neg)">${BRL(l.valor)}</b></div>`).join('')}
-        ${rp.tot?`<div class="dline" style="border-top:1px solid var(--rule);margin-top:4px;padding-top:6px">
-          <span><b>Sobra protegida</b></span>
-          <b style="color:${(rp.ent||rp.previsto)-rp.tot<0?'var(--neg)':'var(--pos)'}">
-            ${BRL((rp.ent||rp.previsto)-rp.tot)}</b></div>`:''}
-        ${rp.encerrado&&rp.tot?`<p class="note" style="margin-top:10px;color:var(--neg)">
-          Atenção: o Reports encerrou e ainda há ${BRL(rp.tot)} alocado a ele neste mês.
-          Sem entrada nova, isso acaba caindo no orçamento de vocês.</p>`
-        :`<p class="note" style="margin-top:10px">Não soma à renda disponível e não entra no saldo do mês.</p>`}
+          <b>${BRL(l.valor)}</b></div>`).join('')}
+        ${rp.sai.length>1?`<div class="dline" style="border-top:1px solid var(--rule);margin-top:4px;padding-top:6px">
+          <span><b>Total pago com o Reports</b></span><b>${BRL(rp.tot)}</b></div>`:''}
+        <p class="note" style="margin-top:10px">Dinheiro já guardado para isso — não entra no orçamento do casal.</p>
       </div></div>`;
   })()}
 
@@ -1380,12 +1393,12 @@ function vLanc(){
   const ehCreditoCartao = $('l_c')?.value==='Cartão' && $('l_t')?.value==='Entrada';
 
   const camposNormal = `
-    <div class="fld"><label>Categoria</label><select id="l_c" onchange="render()">${CATS.map(c=>`<option>${c}</option>`).join('')}</select></div>
-    <div class="fld"><label>Tipo</label><select id="l_t" onchange="render()"><option>Saída</option><option>Entrada</option></select></div>
+    <div class="fld"><label>Categoria</label><select id="l_c" onchange="lancCampos()">${CATS.map(c=>`<option>${c}</option>`).join('')}</select></div>
+    <div class="fld"><label>Tipo</label><select id="l_t" onchange="lancCampos()"><option>Saída</option><option>Entrada</option></select></div>
     <div class="fld"><label>Quem</label><select id="l_q">${['Casal','Maria','Jéssica'].map(q=>`<option>${q}</option>`).join('')}</select></div>
     <div class="fld"><label>Valor</label><input type="number" step="0.01" id="l_v" placeholder="0,00"></div>
-    <div class="fld"><label>Cartão${$('l_c')&&$('l_c').value==='Cartão'?' *':''}</label><select id="l_cart">
-      <option value="">— nenhum —</option>
+    <div class="fld"><label id="l_cart_lbl">Pago com${$('l_c')&&$('l_c').value==='Cartão'?' *':''}</label><select id="l_cart">
+      <option value="">À vista (débito, Pix, dinheiro)</option>
       ${cartoesAtivos.map(c=>`<option>${esc(c.nome)}</option>`).join('')}</select></div>`;
 
   const camposCaixinha = `
@@ -1412,7 +1425,7 @@ function vLanc(){
     </div>
     ${LANC_NAT==='normal'?`<p class="note" style="margin-top:10px">Pra registrar um estorno: mesma tela,
       categoria <b>Cartão</b>, tipo <b>Entrada</b> — abate a fatura daquele cartão em vez de virar receita.
-      ${ehCreditoCartao?' <span class="tag t-ok">é isso que você está montando agora</span>':''}</p>`:''}
+      <span class="tag t-ok" id="l_hint" style="${ehCreditoCartao?'':'display:none'}">é isso que você está montando agora</span></p>`:''}
     ${LANC_NAT==='caixinha'?`<p class="note" style="margin-top:10px">Soma no guardado da meta escolhida e baixa do saldo em conta — mesma lógica da aba Metas.</p>`:''}
   </div></div>
   <div class="kpis">
@@ -1442,6 +1455,13 @@ function vLanc(){
       doMes.length?'Nenhum lançamento bate com o filtro.':'Nenhum lançamento neste mês.'}</td></tr>`}
   </tbody></table></div></div>`;
 }
+/* Trocar categoria/tipo só atualiza a dica e o "*" — sem redesenhar a tela,
+   que zeraria o que já foi preenchido no formulário. */
+window.lancCampos=()=>{
+  const c=$('l_c')?.value, t=$('l_t')?.value;
+  const lbl=$('l_cart_lbl'); if(lbl) lbl.textContent='Pago com'+(c==='Cartão'?' *':'');
+  const h=$('l_hint'); if(h) h.style.display=(c==='Cartão'&&t==='Entrada')?'':'none';
+};
 window.addLanc=async()=>{
   const d=$('l_d').value, nInf=$('l_n').value.trim();
   if(!d) return toast('Preencha a data');
@@ -1463,7 +1483,11 @@ window.addLanc=async()=>{
     MREF=ym(d);render();
     const msg = (cat==='Cartão'&&tipo==='Entrada')
       ? n+' lançado · abate '+BRL(v)+' da fatura do '+cart
-      : n+' lançado · saldo do mês agora '+BRL(realizado(MREF).sal);
+      : cart && cat!=='Cartão'
+      ? n+' lançado no '+cart+' · entra na fatura, não sai do saldo agora'
+      : d>hoje()
+      ? n+' lançado para '+d.split('-').reverse().join('/')+' · '+(tipo==='Entrada'?'entra no':'sai do')+' saldo nesse dia'
+      : n+' lançado · '+(tipo==='Entrada'?'entrou no':'saiu do')+' saldo da conta';
     toast(msg);
   }
 };
