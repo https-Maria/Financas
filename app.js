@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v76';
+const APP_VER='v78';
 
 /* =====================================================================
    ESTADO
@@ -542,17 +542,20 @@ function avulsosDoMes(k){
   });
 }
 
+/* Já saiu/entrou na conta? Então o saldo conferido já conta com isso. */
+function aindaVaiAcontecer(l){
+  return l.status==='Projetado' || String(l.data) > hoje();
+}
 function blocosDoMes(k){
   const cartoes = D.cartoes.length?D.cartoes:[];
   const dias = new Set();
   D.rendas.filter(r=>r.ativo&&!r.protegida).forEach(r=>dias.add(+r.dia||1));
   D.fixas.filter(f=>f.ativo).forEach(f=>dias.add(+f.dia||1));
   cartoes.forEach(c=>{ if(c.ativo && +c.dia_venc>1) dias.add(+c.dia_venc); });
+  /* Os blocos são as datas em que há compromisso: renda, conta fixa e
+     vencimento de fatura. Gasto avulso NÃO cria bloco — senão uma gasolina
+     do dia 2 virava um "bloco dia 02" que não é data de entrada nenhuma. */
   const avulsos = avulsosDoMes(k);
-  avulsos.forEach(l=>{
-    const d=+String(l.data).slice(8,10);
-    if(d>1 && d<ultimoDiaDoMes(k)) dias.add(d);
-  });
   dias.add(31);
   const ordenados=[...dias].filter(d=>d>1).sort((a,b)=>a-b);
 
@@ -581,12 +584,14 @@ function blocosDoMes(k){
                              quem:'Casal',competencia:prox});
       });
     }
-    /* avulsos do dia; no último bloco entram também os do fim do mês.
-       Gasto do dia 1 não tem bloco próprio: entra no primeiro (antes sumia). */
-    avulsos.forEach(l=>{
-      const d0=+String(l.data).slice(8,10), d = d0<=1 ? ordenados[0] : d0;
-      const cai = ultimo ? d>=dia || d0>=ultimoDiaDoMes(k) : d===dia;
-      if(!cai) return;
+    /* Avulso que já aconteceu (data até hoje, confirmado) está no saldo da
+       conta e não entra aqui — aparecia de novo e era descontado duas vezes
+       na curva diária. O que ainda vai acontecer é compromisso: cai no
+       primeiro bloco com dia >= a data dele (um 13º de data futura, p.ex.). */
+    avulsos.filter(aindaVaiAcontecer).forEach(l=>{
+      const d0=+String(l.data).slice(8,10);
+      const d = ordenados.find(x=>x>=d0) ?? ordenados[ordenados.length-1];
+      if(d!==dia) return;
       const it={desc:l.descricao, valor:+l.valor, tipo:'avulso', lancId:l.id,
                 categoria:l.categoria||'Outros', quem:l.quem||'Casal',
                 cartao:l.cartao||null, status:l.status, dataReal:l.data};
@@ -1090,12 +1095,7 @@ function vPainel(){
   const f=fluxo(12,null,MREF), mes=f[0], r=realizado(MREF);
   const meses=mesesDisponiveis();
   const blocos=blocosDoMes(MREF);
-  /* O mês não começa do zero: o que sobrou do último dia do mês anterior
-     (depois da reserva das faturas do dia 1) fica na conta e paga os gastos
-     até a primeira entrada. Sem isso, um gasto no dia 2 virava "falta caixa". */
-  const sobraAnterior=Math.max(0, Math.round(
-    blocosDoMes(addM(MREF,-1)).reduce((s,b)=>s+b.saldo,0)*100)/100);
-  let corrido=sobraAnterior;
+  let corrido=0;
   const comAcum=blocos.map(b=>{ corrido+=b.saldo; return {...b,acum:corrido}; });
   const apertados=comAcum.filter(b=>b.acum<0);
   const cats=Object.entries(r.porCat).sort((a,b)=>b[1]-a[1]).slice(0,8);
@@ -1191,8 +1191,8 @@ function vPainel(){
     Vai faltar caixa antes da próxima entrada.</div>`:''}
 
   <div class="kgroup">Fluxo por data em ${mLabel(MREF)} <small>clique para detalhar</small></div>
-  ${sobraAnterior?`<p class="note" style="margin:-4px 0 8px">Começa com <b>${BRL(sobraAnterior)}</b>:
-    a sobra prevista do fim de ${mLabel(addM(MREF,-1))}, já descontada a reserva das faturas do dia 1.</p>`:''}
+  <p class="note" style="margin:-4px 0 8px">Cada bloco é uma data com compromisso: o que entra e o que
+    sai nela. Gasto do dia a dia não entra aqui — fica em Lançamentos, no saldo e no Dashboard.</p>
   <div class="dayflow">
   ${comAcum.map(b=>`
     <details class="day">
@@ -3892,8 +3892,16 @@ function vFatura(){
     .map(a=>({a, vz:vezesAssinatura(a,comp)})).filter(x=>x.vz>0);
   const terceiros = D.terceiros.filter(t=>t.cartao===n && !t.recebido &&
     (!t.competencia || t.competencia===mLabel(comp)));
-  const avulsos = D.lancamentos.filter(l=>l.cartao===n && ym(l.data)===comp &&
-    l.categoria!=='Cartão' && l.categoria!=='Ajuste Fatura');
+  /* A lista tem que bater com a conta de "Sua parte": compras à vista (somam)
+     e créditos no cartão (abatem). Ficam de fora o total declarado e os
+     ajustes, que têm painel próprio, e o Reports, que é dinheiro protegido
+     e ganhou lista separada — antes aparecia aqui como se fosse compra
+     de vocês, e a lista não fechava com o valor usado. */
+  const avulsos = D.lancamentos.filter(l=>l.cartao===n && ym(l.data)===comp && !l.protegido &&
+    l.categoria!=='Ajuste Fatura' && !(l.categoria==='Cartão' && l.tipo!=='Entrada'));
+  const reportsCart = D.lancamentos.filter(l=>l.cartao===n && ym(l.data)===comp && l.protegido);
+  const somaAvulsos = avulsos.reduce((s,l)=>s+(l.tipo==='Entrada'? -(+l.valor) : +l.valor),0);
+  const somaReportsCart = reportsCart.reduce((s,l)=>s+ +l.valor,0);
   const somaParc = parcelas.reduce((s,p)=>s+ +p.valor_parcela,0);
   const somaAssin = assinaturas.reduce((s,x)=>s+(+x.a.valor)*x.vz,0);
   const somaTerc = terceiros.reduce((s,t)=>s+ +t.valor,0);
@@ -4035,6 +4043,15 @@ function vFatura(){
     </tbody></table></div>
     <div class="pbody"><p class="note">Está na fatura mas não é gasto de vocês.</p></div></div>`:''}
 
+  ${reportsCart.length?`<div class="panel"><h2>Pago com Reports <small>${BRL(somaReportsCart)}</small></h2>
+    <div class="tw"><table><thead><tr><th>Data</th><th>O que é</th><th class="r">Valor</th>
+    </tr></thead><tbody>
+    ${reportsCart.map(l=>`<tr><td class="mono">${String(l.data).split('-').reverse().join('/')}</td>
+      <td>${esc(l.descricao)}</td><td class="r">${BRL(l.valor)}</td></tr>`).join('')}
+    </tbody></table></div>
+    <div class="pbody"><p class="note">Está na fatura e sai do dinheiro já guardado no Reports —
+    não é gasto do casal, por isso fica fora de "Sua parte".</p></div></div>`:''}
+
   <div class="panel"><h2>Compras à vista <small>o que você gastou direto no cartão, sem parcelar — lançado pela tela de Lançamentos normal</small></h2>
   <div class="pbody">
     ${avulsos.length?`<div class="tw"><table><thead><tr><th>Data</th><th>Descrição</th>
@@ -4044,7 +4061,8 @@ function vFatura(){
       <td class="r" style="color:${l.tipo==='Entrada'?'var(--pos)':'inherit'}">${
         l.tipo==='Entrada'?'− ':''}${BRL(l.valor)}</td>
       <td class="r"><button class="btn dgr" onclick="delRow('lancamentos','${l.id}')">excluir</button></td></tr>`).join('')}
-    </tbody></table></div>`
+    </tbody><tfoot><tr><td colspan="2">Entra em "Sua parte"</td>
+      <td class="r"><b>${BRL(somaAvulsos)}</b></td><td></td></tr></tfoot></table></div>`
     :`<p class="note">Nenhuma compra à vista lançada neste mês — normal se você só lança o
     essencial, mas também pode ser a causa da diferença em "Compras do dia a dia" ali em cima.
     Pra lançar uma, use o Lançamentos normal, categoria "Compras", escolhendo este cartão — ela aparece aqui sozinha.</p>`}
