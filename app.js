@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v80';
+const APP_VER='v82';
 
 /* =====================================================================
    ESTADO
@@ -546,7 +546,15 @@ function avulsosDoMes(k){
 function aindaVaiAcontecer(l){
   return l.status==='Projetado' || String(l.data) > hoje();
 }
-function blocosDoMes(k){
+/* Dois modos, mesmas datas e mesma estrutura:
+   - SALDO (padrão): só renda, conta fixa e fatura de cartão. É daqui que sai
+     o saldo do mês, e é o que a Projeção, a Amortização e o Dashboard usam.
+     Gasto avulso NUNCA entra — nem o de data futura.
+   - PLANEJAMENTO: igualzinho, mais os lançamentos marcados "mostrar na
+     gaveta", tanto o que já foi pago quanto o que ainda vai. Serve pra
+     planejar e conferir o mês; não vale como saldo e não vai pra lugar
+     nenhum que decida dinheiro. */
+function blocosDoMes(k, comPlanejado){
   const cartoes = D.cartoes.length?D.cartoes:[];
   const dias = new Set();
   D.rendas.filter(r=>r.ativo&&!r.protegida).forEach(r=>dias.add(+r.dia||1));
@@ -555,7 +563,7 @@ function blocosDoMes(k){
   /* Os blocos são as datas em que há compromisso: renda, conta fixa e
      vencimento de fatura. Gasto avulso NÃO cria bloco — senão uma gasolina
      do dia 2 virava um "bloco dia 02" que não é data de entrada nenhuma. */
-  const avulsos = avulsosDoMes(k);
+  const avulsos = comPlanejado ? avulsosDoMes(k).filter(l=>l.na_gaveta) : [];
   dias.add(31);
   const ordenados=[...dias].filter(d=>d>1).sort((a,b)=>a-b);
 
@@ -586,30 +594,23 @@ function blocosDoMes(k){
     }
     /* Avulso não cria bloco: cai no primeiro bloco com dia >= a data dele.
        O que ainda vai acontecer é compromisso e entra na conta do bloco.
-       O que já aconteceu vai pra lista `feitos`: aparece na gaveta pra você
-       ver o que rolou naquele pedaço do mês, mas FORA do total e do
-       acumulado — esse dinheiro já saiu da conta e já está no saldo.
-       Se entrasse nos dois, sairia duas vezes. */
-    const feitos=[];
-    avulsos.forEach(l=>{
+       No modo Planejamento ele entra na conta do bloco; no modo Saldo não
+       entra nenhum, porque o saldo é só renda, fixa e fatura. */
+    (comPlanejado?avulsos:[]).forEach(l=>{
       const d0=+String(l.data).slice(8,10);
       const d = ordenados.find(x=>x>=d0) ?? ordenados[ordenados.length-1];
       if(d!==dia) return;
       const it={desc:l.descricao, valor:+l.valor, tipo:'avulso', lancId:l.id,
                 categoria:l.categoria||'Outros', quem:l.quem||'Casal',
                 cartao:l.cartao||null, status:l.status, dataReal:l.data,
+                planejado:true, jaPago:!aindaVaiAcontecer(l),
                 entrada:l.tipo==='Entrada'};
-      /* Futuro conta sempre (ainda vai sair da conta e precisa entrar na
-         previsão). Já realizado só aparece se você marcou "mostrar na
-         gaveta" — o resto é extrato do dia a dia e fica na aba Extrato. */
-      if(aindaVaiAcontecer(l)) (it.entrada?entradas:saidas).push(it);
-      else if(l.na_gaveta) feitos.push(it);
+      (it.entrada?entradas:saidas).push(it);
     });
     const tIn=entradas.reduce((s,x)=>s+x.valor,0);
     const tOut=saidas.reduce((s,x)=>s+x.valor,0);
-    const tFeito=feitos.reduce((s,x)=>s+(x.entrada? +x.valor : -x.valor),0);
     return {dia,label:ultimo?'Último dia útil':'Dia '+String(dia).padStart(2,'0'),
-            entradas,saidas,feitos,tFeito,tIn,tOut,saldo:tIn-tOut,ultimo};
+            entradas,saidas,tIn,tOut,saldo:tIn-tOut,ultimo};
   });
 }
 
@@ -1013,6 +1014,10 @@ const MENU_MAIS=[
 const MENU_CONFIG=['cad','backup','log'];
 const rotulo=id=>(PAGES.find(p=>p[0]===id)||[,id])[1];
 let MENU_ABERTO=null;
+/* 'saldo' = só renda/fixa/fatura (manda no saldo). 'plano' = o mesmo mais o
+   que foi marcado como planejado, só pra enxergar o mês. */
+let PAINEL_MODO='saldo';
+window.setPainelModo=m=>{ PAINEL_MODO=m; render(); };
 let PROJ_ABERTO=null;
 let PARC_ABERTO=null;
 window.toggleParc=id=>{ PARC_ABERTO = PARC_ABERTO===id ? null : id; render(); };
@@ -1104,7 +1109,8 @@ function ultimoMesParcela(){
 function vPainel(){
   const f=fluxo(12,null,MREF), mes=f[0], r=realizado(MREF);
   const meses=mesesDisponiveis();
-  const blocos=blocosDoMes(MREF);
+  const plano = PAINEL_MODO==='plano';
+  const blocos=blocosDoMes(MREF, plano);
   let corrido=0;
   const comAcum=blocos.map(b=>{ corrido+=b.saldo; return {...b,acum:corrido}; });
   const apertados=comAcum.filter(b=>b.acum<0);
@@ -1200,10 +1206,19 @@ function vPainel(){
     ${apertados.length===1?'no bloco':'nos blocos'} ${apertados.map(b=>b.label.toLowerCase()).join(', ')}.
     Vai faltar caixa antes da próxima entrada.</div>`:''}
 
-  <div class="kgroup">Fluxo por data em ${mLabel(MREF)} <small>clique para detalhar</small></div>
-  <p class="note" style="margin:-4px 0 8px">Cada bloco é uma data de compromisso: o que entra e o que sai
-    nela. Gasto avulso não cria bloco — abra a gaveta e ele aparece no período a que pertence; o que já
-    saiu da conta fica listado à parte, sem mexer no acumulado.</p>
+  <div class="kgroup" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+    <span>Fluxo por data em ${mLabel(MREF)}</span>
+    <span class="seg">
+      <button class="segb" aria-pressed="${!plano}" onclick="setPainelModo('saldo')">Saldo</button>
+      <button class="segb" aria-pressed="${plano}" onclick="setPainelModo('plano')">Planejamento</button>
+    </span>
+    <small>clique num bloco para detalhar</small></div>
+  <p class="note" style="margin:-4px 0 8px">${plano
+    ? `Mesmas datas da aba Saldo, <b>mais o que você marcou como planejado</b> — o que já pagou e o que
+       ainda vai pagar. Serve pra planejar e conferir o mês. <b>Não é o saldo</b>: a Projeção, a
+       Amortização e o Dashboard continuam usando a aba Saldo.`
+    : `Só o que é certo: renda contra conta fixa e fatura de cartão. É daqui que sai o saldo do mês.
+       Gasto avulso não entra aqui — veja na aba <b>Planejamento</b> ou em <b>Extrato</b>.`}</p>
   <div class="dayflow">
   ${comAcum.map(b=>`
     <details class="day">
@@ -1227,7 +1242,8 @@ function vPainel(){
               <span><input type="checkbox" ${L?'checked':''} onchange="marcarItem(${b.dia},'in',${ix})">
                 ${esc(e.desc)}${e.quem?` <span class="tag t-g">${esc(e.quem)}</span>`:''}
                 ${e.tipo==='avulso'?`<span class="tag t-i">${
-                  String(e.dataReal).slice(8,10)+'/'+String(e.dataReal).slice(5,7)}</span>`:''}
+                  String(e.dataReal).slice(8,10)+'/'+String(e.dataReal).slice(5,7)}</span>
+                  <span class="tag ${e.jaPago?'t-ok':'t-w'}">${e.jaPago?'já entrou':'planejado'}</span>`:''}
                 ${L&&Math.abs(L.valor-e.valor)>0.01?`<span class="tag t-w">lançado ${BRL(L.valor)}</span>`:''}</span>
               <b style="color:var(--pos)">${BRL(e.valor)}</b></div>`;}).join('')}</div>`:''}
         ${b.saidas.length?`<div class="dcol"><h5>Sai — marque quando pagar</h5>
@@ -1240,20 +1256,11 @@ function vPainel(){
                 ${x.tipo==='reserva'?'<span class="tag t-w">reserva</span>':''}
                 ${x.tipo==='cartao'?'<span class="tag t-i">fatura</span>':''}
                 ${x.tipo==='avulso'?`<span class="tag t-g">${
-                  String(x.dataReal).slice(8,10)+'/'+String(x.dataReal).slice(5,7)}</span>`:''}
+                  String(x.dataReal).slice(8,10)+'/'+String(x.dataReal).slice(5,7)}</span>
+                  <span class="tag ${x.jaPago?'t-ok':'t-w'}">${x.jaPago?'já pago':'planejado'}</span>`:''}
                 ${L&&Math.abs(L.valor-x.valor)>0.01?`<span class="tag t-w">lançado ${BRL(L.valor)}</span>`:''}</span>
               <b style="color:var(--neg)">${BRL(x.valor)}</b></div>`;}).join('')}</div>`:''}
-        ${b.feitos.length?`<div class="dcol feitos"><h5>Já saiu da conta — não entra no acumulado</h5>
-          ${b.feitos.map(x=>`<div class="dline jafoi">
-            <span>${esc(x.desc)} <span class="tag t-g">${
-              String(x.dataReal).slice(8,10)+'/'+String(x.dataReal).slice(5,7)}</span>
-              ${x.categoria?`<span class="tag t-i">${esc(x.categoria)}</span>`:''}</span>
-            <b style="color:${x.entrada?'var(--pos)':'var(--neg)'}">${
-              (x.entrada?'+':'−')+BRL(x.valor)}</b></div>`).join('')}
-          <div class="dline jafoi tot"><span><b>Soma do período</b></span>
-            <b class="${b.tFeito<0?'neg':''}">${BRL(b.tFeito)}</b></div>
-          <p class="note" style="margin-top:6px">Já está no "Saldo hoje" lá em cima — por isso não desconta
-          de novo aqui.</p></div>`:''}
+
       </div>
     </details>`).join('')}
   </div>
@@ -1423,8 +1430,8 @@ function vLanc(){
       <option value="">À vista (débito, Pix, dinheiro)</option>
       ${cartoesAtivos.map(c=>`<option>${esc(c.nome)}</option>`).join('')}</select></div>
     <div class="fld" style="grid-column:span 2"><label>&nbsp;</label>
-      <label class="chkfld"><input type="checkbox" id="l_gav">
-        Mostrar na gaveta do Painel</label></div>`;
+      <label class="chkfld"><input type="checkbox" id="l_gav" checked>
+        Contar no Planejamento do Painel</label></div>`;
 
   const camposCaixinha = `
     <div class="fld" style="grid-column:span 2"><label>Guardar em</label><select id="l_meta">
@@ -1467,7 +1474,7 @@ function vLanc(){
   </div>
   <div class="tw"><table><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th>
     <th>Quem</th><th class="r">Valor</th>
-    <th class="c" title="Mostrar na gaveta do Painel">Gaveta</th><th></th></tr></thead><tbody>
+    <th class="c" title="Contar no Planejamento do Painel">Planej.</th><th></th></tr></thead><tbody>
   ${ls.map(l=>`<tr class="${l.protegido||l.beneficio?'dim':''}">
     <td class="mono">${String(l.data).split('-').reverse().join('/')}</td>
     <td>${esc(l.descricao)}${l.protegido?' <span class="tag t-g">protegido</span>':''}${l.beneficio?' <span class="tag t-g">benefício</span>':''}${
@@ -1477,7 +1484,7 @@ function vLanc(){
     <td class="r" style="font-weight:600;color:${l.tipo==='Entrada'?'var(--pos)':'var(--neg)'}">
       ${l.tipo==='Entrada'?'+':'−'} ${BRL(l.valor)}</td>
     <td class="c"><input type="checkbox" ${l.na_gaveta?'checked':''} ${l.cartao?'disabled':''}
-      title="${l.cartao?'Compra no cartão aparece na fatura, não na gaveta':'Mostrar na gaveta do Painel'}"
+      title="${l.cartao?'Compra no cartão aparece na fatura, não aqui':'Contar no Planejamento do Painel'}"
       onchange="setRow('lancamentos','${l.id}','na_gaveta',this.checked)"></td>
     <td class="r"><button class="btn dgr" onclick="delRow('lancamentos','${l.id}')">excluir</button></td></tr>`).join('')
     ||`<tr><td colspan="7" class="note" style="padding:20px;text-align:center">${

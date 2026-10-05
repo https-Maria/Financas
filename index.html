@@ -339,7 +339,11 @@ td.c input[type=checkbox]:disabled{opacity:.3;cursor:not-allowed}
 .fbox .fnote{font-size:11px;color:var(--amber);margin-top:6px;line-height:1.35}
 
 /* ---------- tables ---------- */
-.tw{overflow-x:auto}
+.tw{overflow-x:auto;max-width:100%;min-width:0;-webkit-overflow-scrolling:touch}
+/* painel dentro de grade não pode crescer com o conteúdo: sem min-width:0 a
+   tabela larga empurra a coluna inteira e a página rola pro lado no celular */
+.panel{min-width:0}
+.grid2>*,.grid3>*,.kpis>*{min-width:0}
 table{width:100%;border-collapse:collapse;font-size:13.5px}
 th{
   text-align:left;font-weight:600;font-size:11.5px;color:var(--muted);
@@ -507,6 +511,6 @@ input:focus,select:focus{border-color:var(--steel);outline:none;box-shadow:0 0 0
 <div id="root"><div class="gate"><div class="gatebox"><h1>Carregando…</h1>
 <p class="sub">Conectando ao banco de dados.</p></div></div></div>
 <div class="toast" id="toast"></div>
-<script type="module" src="app.js?v=80"></script>
+<script type="module" src="app.js?v=82"></script>
 </body>
 </html>
