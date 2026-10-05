@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v78';
+const APP_VER='v80';
 
 /* =====================================================================
    ESTADO
@@ -584,23 +584,32 @@ function blocosDoMes(k){
                              quem:'Casal',competencia:prox});
       });
     }
-    /* Avulso que já aconteceu (data até hoje, confirmado) está no saldo da
-       conta e não entra aqui — aparecia de novo e era descontado duas vezes
-       na curva diária. O que ainda vai acontecer é compromisso: cai no
-       primeiro bloco com dia >= a data dele (um 13º de data futura, p.ex.). */
-    avulsos.filter(aindaVaiAcontecer).forEach(l=>{
+    /* Avulso não cria bloco: cai no primeiro bloco com dia >= a data dele.
+       O que ainda vai acontecer é compromisso e entra na conta do bloco.
+       O que já aconteceu vai pra lista `feitos`: aparece na gaveta pra você
+       ver o que rolou naquele pedaço do mês, mas FORA do total e do
+       acumulado — esse dinheiro já saiu da conta e já está no saldo.
+       Se entrasse nos dois, sairia duas vezes. */
+    const feitos=[];
+    avulsos.forEach(l=>{
       const d0=+String(l.data).slice(8,10);
       const d = ordenados.find(x=>x>=d0) ?? ordenados[ordenados.length-1];
       if(d!==dia) return;
       const it={desc:l.descricao, valor:+l.valor, tipo:'avulso', lancId:l.id,
                 categoria:l.categoria||'Outros', quem:l.quem||'Casal',
-                cartao:l.cartao||null, status:l.status, dataReal:l.data};
-      (l.tipo==='Entrada'?entradas:saidas).push(it);
+                cartao:l.cartao||null, status:l.status, dataReal:l.data,
+                entrada:l.tipo==='Entrada'};
+      /* Futuro conta sempre (ainda vai sair da conta e precisa entrar na
+         previsão). Já realizado só aparece se você marcou "mostrar na
+         gaveta" — o resto é extrato do dia a dia e fica na aba Extrato. */
+      if(aindaVaiAcontecer(l)) (it.entrada?entradas:saidas).push(it);
+      else if(l.na_gaveta) feitos.push(it);
     });
     const tIn=entradas.reduce((s,x)=>s+x.valor,0);
     const tOut=saidas.reduce((s,x)=>s+x.valor,0);
+    const tFeito=feitos.reduce((s,x)=>s+(x.entrada? +x.valor : -x.valor),0);
     return {dia,label:ultimo?'Último dia útil':'Dia '+String(dia).padStart(2,'0'),
-            entradas,saidas,tIn,tOut,saldo:tIn-tOut,ultimo};
+            entradas,saidas,feitos,tFeito,tIn,tOut,saldo:tIn-tOut,ultimo};
   });
 }
 
@@ -991,13 +1000,14 @@ window.confirmarCompra=async()=>{
 const PAGES=[['painel','Painel'],['dash','Dashboard'],['compra','Nova compra'],['lanc','Lançamentos'],
   ['parc','Parcelamentos'],['assin','Assinaturas'],['terc','Terceiros'],
   ['cal','Calendário'],['proj','Projeção'],['amort','Amortização'],['casa','Projeções Casa'],
-  ['cad','Cadastros'],['metas','Metas'],['backup','Cópias'],['log','Atividade'],['fatura','Fatura'],['notas','Bloco de notas']];
+  ['cad','Cadastros'],['metas','Metas'],['backup','Cópias'],['log','Atividade'],['fatura','Fatura'],['notas','Bloco de notas'],
+  ['extrato','Extrato']];
 
 /* O menu mostra só o dia a dia. O resto fica agrupado atrás de "Mais",
    e o que é manutenção vai para a engrenagem. */
 const MENU_FIXO=['painel','dash','lanc','cal','metas','notas'];
 const MENU_MAIS=[
-  ['Compromissos',['fatura','parc','assin','terc']],
+  ['Compromissos',['fatura','extrato','parc','assin','terc']],
   ['Análise',     ['proj','amort','casa']],
   ['Simular',     ['compra']]];
 const MENU_CONFIG=['cad','backup','log'];
@@ -1191,8 +1201,9 @@ function vPainel(){
     Vai faltar caixa antes da próxima entrada.</div>`:''}
 
   <div class="kgroup">Fluxo por data em ${mLabel(MREF)} <small>clique para detalhar</small></div>
-  <p class="note" style="margin:-4px 0 8px">Cada bloco é uma data com compromisso: o que entra e o que
-    sai nela. Gasto do dia a dia não entra aqui — fica em Lançamentos, no saldo e no Dashboard.</p>
+  <p class="note" style="margin:-4px 0 8px">Cada bloco é uma data de compromisso: o que entra e o que sai
+    nela. Gasto avulso não cria bloco — abra a gaveta e ele aparece no período a que pertence; o que já
+    saiu da conta fica listado à parte, sem mexer no acumulado.</p>
   <div class="dayflow">
   ${comAcum.map(b=>`
     <details class="day">
@@ -1232,6 +1243,17 @@ function vPainel(){
                   String(x.dataReal).slice(8,10)+'/'+String(x.dataReal).slice(5,7)}</span>`:''}
                 ${L&&Math.abs(L.valor-x.valor)>0.01?`<span class="tag t-w">lançado ${BRL(L.valor)}</span>`:''}</span>
               <b style="color:var(--neg)">${BRL(x.valor)}</b></div>`;}).join('')}</div>`:''}
+        ${b.feitos.length?`<div class="dcol feitos"><h5>Já saiu da conta — não entra no acumulado</h5>
+          ${b.feitos.map(x=>`<div class="dline jafoi">
+            <span>${esc(x.desc)} <span class="tag t-g">${
+              String(x.dataReal).slice(8,10)+'/'+String(x.dataReal).slice(5,7)}</span>
+              ${x.categoria?`<span class="tag t-i">${esc(x.categoria)}</span>`:''}</span>
+            <b style="color:${x.entrada?'var(--pos)':'var(--neg)'}">${
+              (x.entrada?'+':'−')+BRL(x.valor)}</b></div>`).join('')}
+          <div class="dline jafoi tot"><span><b>Soma do período</b></span>
+            <b class="${b.tFeito<0?'neg':''}">${BRL(b.tFeito)}</b></div>
+          <p class="note" style="margin-top:6px">Já está no "Saldo hoje" lá em cima — por isso não desconta
+          de novo aqui.</p></div>`:''}
       </div>
     </details>`).join('')}
   </div>
@@ -1399,7 +1421,10 @@ function vLanc(){
     <div class="fld"><label>Valor</label><input type="number" step="0.01" id="l_v" placeholder="0,00"></div>
     <div class="fld"><label id="l_cart_lbl">Pago com${$('l_c')&&$('l_c').value==='Cartão'?' *':''}</label><select id="l_cart">
       <option value="">À vista (débito, Pix, dinheiro)</option>
-      ${cartoesAtivos.map(c=>`<option>${esc(c.nome)}</option>`).join('')}</select></div>`;
+      ${cartoesAtivos.map(c=>`<option>${esc(c.nome)}</option>`).join('')}</select></div>
+    <div class="fld" style="grid-column:span 2"><label>&nbsp;</label>
+      <label class="chkfld"><input type="checkbox" id="l_gav">
+        Mostrar na gaveta do Painel</label></div>`;
 
   const camposCaixinha = `
     <div class="fld" style="grid-column:span 2"><label>Guardar em</label><select id="l_meta">
@@ -1441,7 +1466,8 @@ function vLanc(){
       tipos:[['Entrada','Entradas'],['Saída','Saídas']], categorias:cats})}
   </div>
   <div class="tw"><table><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th>
-    <th>Quem</th><th class="r">Valor</th><th></th></tr></thead><tbody>
+    <th>Quem</th><th class="r">Valor</th>
+    <th class="c" title="Mostrar na gaveta do Painel">Gaveta</th><th></th></tr></thead><tbody>
   ${ls.map(l=>`<tr class="${l.protegido||l.beneficio?'dim':''}">
     <td class="mono">${String(l.data).split('-').reverse().join('/')}</td>
     <td>${esc(l.descricao)}${l.protegido?' <span class="tag t-g">protegido</span>':''}${l.beneficio?' <span class="tag t-g">benefício</span>':''}${
@@ -1450,8 +1476,11 @@ function vLanc(){
     <td>${esc(l.categoria)}</td><td>${esc(l.quem)}</td>
     <td class="r" style="font-weight:600;color:${l.tipo==='Entrada'?'var(--pos)':'var(--neg)'}">
       ${l.tipo==='Entrada'?'+':'−'} ${BRL(l.valor)}</td>
+    <td class="c"><input type="checkbox" ${l.na_gaveta?'checked':''} ${l.cartao?'disabled':''}
+      title="${l.cartao?'Compra no cartão aparece na fatura, não na gaveta':'Mostrar na gaveta do Painel'}"
+      onchange="setRow('lancamentos','${l.id}','na_gaveta',this.checked)"></td>
     <td class="r"><button class="btn dgr" onclick="delRow('lancamentos','${l.id}')">excluir</button></td></tr>`).join('')
-    ||`<tr><td colspan="6" class="note" style="padding:20px;text-align:center">${
+    ||`<tr><td colspan="7" class="note" style="padding:20px;text-align:center">${
       doMes.length?'Nenhum lançamento bate com o filtro.':'Nenhum lançamento neste mês.'}</td></tr>`}
   </tbody></table></div></div>`;
 }
@@ -1478,7 +1507,8 @@ window.addLanc=async()=>{
   if(!n||!v) return toast('Preencha descrição e valor');
   if(cat==='Cartão' && !cart) return toast('Escolha o cartão — senão isso não abate a fatura de ninguém', 4400);
   const ok=await inserir('lancamentos',{data:d,descricao:n,categoria:cat,cartao:cart,
-    tipo,quem:$('l_q').value,valor:v,status:'Confirmado',criado_por:USER.id});
+    tipo,quem:$('l_q').value,valor:v,status:'Confirmado',criado_por:USER.id,
+    na_gaveta: !cart && !!$('l_gav')?.checked});
   if(ok){
     MREF=ym(d);render();
     const msg = (cat==='Cartão'&&tipo==='Entrada')
@@ -1982,7 +2012,7 @@ function vCad(){
           ? rep.map(x=>`<span class="tag ${x.vz>1?'t-no':'t-w'}">${x.vz}x ${esc(x.a.descricao)}</span>`).join(' ')
           : '<span class="note">uma cobrança de cada</span>'}</td>
         <td class="r"><button class="btn dgr" onclick="delRow('ciclos','${c.id}')">excluir</button></td></tr>`;}).join('')
-      ||'<tr><td colspan="6" class="note" style="padding:16px;text-align:center">Nenhum ciclo cadastrado.</td></tr>'}
+      ||'<tr><td colspan="7" class="note" style="padding:16px;text-align:center">Nenhum ciclo cadastrado.</td></tr>'}
     </tbody></table></div>
     <div class="pbody"><div class="form">
       <div class="fld"><label>Cartão</label><select id="ci_c">
@@ -4280,8 +4310,75 @@ window.notaTecla=async t=>{
   notaVisor();
 };
 
+/* Extrato: TUDO do mês, agrupado nos mesmos períodos das gavetas do Painel,
+   com o saldo da conta correndo linha a linha. Diferente da gaveta, aqui
+   nada fica escondido: aparece o que saiu da conta, o que foi pro cartão,
+   o protegido e o benefício — cada um marcado com o que faz. */
+function vExtrato(){
+  const k=MREF, S=saldoConta();
+  const cortes=blocosDoMes(k).map(b=>b.dia);
+  const fim=cortes.length?Math.max(...cortes):31;
+  const ls=D.lancamentos.filter(l=>ym(l.data)===k).slice()
+    .sort((a,b)=>String(a.data).localeCompare(String(b.data))
+               || String(a.criado_em||'').localeCompare(String(b.criado_em||'')));
+  const periodo=l=>{
+    const d=+String(l.data).slice(8,10);
+    return cortes.find(x=>x>=d) ?? fim;
+  };
+  const rot=d=>d===fim?'Até o fim do mês':'Até o dia '+String(d).padStart(2,'0');
+  /* o que cada linha faz com o dinheiro da conta */
+  const efeito=l=>
+      l.beneficio          ? {tag:'benefício', cls:'t-g', conta:0}
+    : l.protegido          ? {tag:'Reports', cls:'t-g', conta:0}
+    : l.status==='Projetado'? {tag:'previsto', cls:'t-g', conta:0}
+    : !mexeNoBanco(l)      ? {tag:'fatura '+(l.cartao||''), cls:'t-i', conta:0}
+    : String(l.data)>hoje() ? {tag:'ainda vai sair', cls:'t-w', conta:0}
+    : {tag:'conta', cls:'t-ok', conta:(l.tipo==='Entrada'? +l.valor : -(+l.valor))};
+  const grupos=cortes.map(d=>({d, itens:ls.filter(l=>periodo(l)===d)})).filter(g=>g.itens.length);
+  const totalConta=ls.reduce((a,l)=>a+efeito(l).conta,0);
+  let corrido=0;
+  return head('Extrato','Todos os lançamentos do mês, agrupados como as gavetas do Painel. Aqui nada fica de fora.')
+  +`<div class="rowbar">
+    <div class="fld" style="max-width:160px"><label>Mês em foco</label>
+      <select onchange="setMes(this.value)">
+        ${mesesDisponiveis().map(m=>`<option value="${m}" ${m===k?'selected':''}>${mLabel(m)}</option>`).join('')}
+      </select></div>
+    <div style="flex:1"></div>
+    <button class="btn alt" onclick="go('lanc')">Lançar movimento</button>
+  </div>
+  <div class="kpis">
+    ${kpi('Mexeu na conta', BRL(totalConta), 'no mês em foco', totalConta<0?'neg':'pos')}
+    ${kpi('Lançamentos', String(ls.length), mLabel(k))}
+    ${kpi('Saldo hoje', S.atual==null?'—':BRL(S.atual),
+          S.desde?('conferido em '+String(S.desde).split('-').reverse().join('/')):'sem ponto de conferência')}
+  </div>
+  ${grupos.length? grupos.map(g=>{
+    const soma=g.itens.reduce((a,l)=>a+efeito(l).conta,0);
+    return `<div class="panel"><h2>${rot(g.d)} <small>${g.itens.length} ${
+      g.itens.length===1?'lançamento':'lançamentos'} · mexeu ${BRL(soma)} na conta</small></h2>
+    <div class="tw"><table><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th>
+      <th>O que faz</th><th class="r">Valor</th><th class="r">Saldo depois</th></tr></thead><tbody>
+      ${g.itens.map(l=>{
+        const e=efeito(l); corrido+=e.conta;
+        const mostra = S.base!=null && e.conta!==0;
+        return `<tr class="${e.conta?'':'dim'}">
+        <td class="mono">${String(l.data).split('-').reverse().join('/')}</td>
+        <td>${esc(l.descricao)}${l.na_gaveta?' <span class="tag t-i">gaveta</span>':''}</td>
+        <td>${esc(l.categoria||'')}</td>
+        <td><span class="tag ${e.cls}">${esc(e.tag)}</span></td>
+        <td class="r" style="font-weight:600;color:${l.tipo==='Entrada'?'var(--pos)':'var(--neg)'}">
+          ${l.tipo==='Entrada'?'+':'−'} ${BRL(l.valor)}</td>
+        <td class="r mono">${mostra?BRL(S.base+corrido):'—'}</td></tr>`;}).join('')}
+    </tbody></table></div></div>`;}).join('')
+  :`<div class="panel"><div class="pbody"><p class="note">Nenhum lançamento em ${mLabel(k)}.</p></div></div>`}
+  <p class="note"><b>O que faz</b> é o efeito de cada linha: <b>conta</b> já saiu ou entrou no banco;
+  <b>fatura</b> vai somar na fatura do cartão; <b>ainda vai sair</b> tem data futura; <b>previsto</b>,
+  <b>Reports</b> e <b>benefício</b> não mexem na conta. A marca <b>gaveta</b> é o que você escolheu
+  ver no Painel. O "Saldo depois" parte do último ponto de conferência.</p>`;
+}
+
 const VIEWS={painel:vPainel,dash:vDash,fatura:vFatura,compra:vCompra,lanc:vLanc,parc:vParc,assin:vAssin,
-             terc:vTerc,cal:vCal,proj:vProj,amort:vAmort,casa:vCasa,cad:vCad,metas:vMetas,backup:vBackup,log:vLog,notas:vNotas};
+             terc:vTerc,cal:vCal,proj:vProj,amort:vAmort,casa:vCasa,cad:vCad,metas:vMetas,backup:vBackup,log:vLog,notas:vNotas,extrato:vExtrato};
 
 function render(){
   const m=$('main'); if(!m) return montarShell();
