@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v82';
+const APP_VER='v85';
 
 /* =====================================================================
    ESTADO
@@ -114,6 +114,19 @@ function saldoConta(){
 /* Em que meses esta parcela cai. Normalmente é mensal e consecutiva a partir
    da primeira fatura — mas o cartão às vezes pula um mês, e aí a lista real
    fica guardada em `competencias`. */
+/* Crediário/carnê: parcelamento SEM cartão. Não tem fatura — a parcela sai
+   direto da conta, num dia do mês, até acabar. Por isso entra no fluxo de
+   caixa junto das contas fixas, e não no cálculo de fatura nenhuma. */
+const ehCrediario = p => !p.cartao;
+/* dia 31 = "último dia útil" (é sempre o último bloco do mês). */
+const diaDoCrediario = p => {
+  const d = +p.dia;
+  return d>=1 && d<=31 ? d : 1;
+};
+const crediariosDoMes = k =>
+  D.parcelamentos.filter(p=>ehCrediario(p) && +p.restantes>0 && parcelaCaiEm(p,k));
+const totCrediario = k => crediariosDoMes(k).reduce((s,p)=>s+ +p.valor_parcela,0);
+
 function mesesDaParcela(p){
   if(Array.isArray(p.competencias) && p.competencias.length)
     return p.competencias.slice(0, p.restantes);
@@ -317,13 +330,14 @@ function totFaturas(k, extra){
 function fluxo(n=24, extra, ini){
   let acc=0;
   return horizon(n,ini).map(k=>{
-    const av=avulsosDoMes(k);
-    const avIn =av.filter(l=>l.tipo==='Entrada').reduce((s,l)=>s+ +l.valor,0);
-    const avOut=av.filter(l=>l.tipo==='Saída').reduce((s,l)=>s+ +l.valor,0);
-    const renda=totRenda(k)+avIn, fix=totFixas()+avOut, cart=totFaturas(k,extra);
+    /* Mesma régua da aba Saldo do Painel: renda contra conta fixa, crediário
+       e fatura de cartão. Gasto avulso não entra — ele vive na aba
+       Planejamento e no Extrato, e não decide saldo. */
+    const renda=totRenda(k), credi=totCrediario(k),
+          fix=totFixas()+credi, cart=totFaturas(k,extra);
     const real=D.cartoes.some(c=>faturaLancada(c.nome,k));
     const out=fix+cart, sal=renda-out; acc+=sal;
-    return {k,renda,fix,cart,real,par:parcelasMes(k,extra),ass:totAssin(),
+    return {k,renda,fix,credi,cart,real,par:parcelasMes(k,extra),ass:totAssin(),
             out,sal,acc,pct:renda?out/renda:0};
   });
 }
@@ -560,21 +574,33 @@ function blocosDoMes(k, comPlanejado){
   D.rendas.filter(r=>r.ativo&&!r.protegida).forEach(r=>dias.add(+r.dia||1));
   D.fixas.filter(f=>f.ativo).forEach(f=>dias.add(+f.dia||1));
   cartoes.forEach(c=>{ if(c.ativo && +c.dia_venc>1) dias.add(+c.dia_venc); });
+  crediariosDoMes(k).forEach(p=>dias.add(diaDoCrediario(p)));
   /* Os blocos são as datas em que há compromisso: renda, conta fixa e
      vencimento de fatura. Gasto avulso NÃO cria bloco — senão uma gasolina
      do dia 2 virava um "bloco dia 02" que não é data de entrada nenhuma. */
   const avulsos = comPlanejado ? avulsosDoMes(k).filter(l=>l.na_gaveta) : [];
   dias.add(31);
   const ordenados=[...dias].filter(d=>d>1).sort((a,b)=>a-b);
+  /* Compromisso do dia 1 não some: cai no primeiro bloco do mês. Antes a
+     lista de dias jogava fora o dia 1 e a conta nunca aparecia em lugar
+     nenhum do fluxo. */
+  const primeiro = ordenados[0];
+  const noDia = (d, dia) => (+d||1)===dia || ((+d||1)<=1 && dia===primeiro);
 
   return ordenados.map(dia=>{
     const ultimo = dia===Math.max(...ordenados);
-    const entradas = D.rendas.filter(r=>r.ativo&&!r.protegida&&(+r.dia||1)===dia)
+    const entradas = D.rendas.filter(r=>r.ativo&&!r.protegida&&noDia(r.dia,dia))
       .map(r=>({desc:r.descricao,valor:+r.valor,quem:r.quem,
                 tipo:'renda',categoria:'Salário/Renda'}));
-    const saidas = D.fixas.filter(f=>f.ativo&&(+f.dia||1)===dia)
+    const saidas = D.fixas.filter(f=>f.ativo&&noDia(f.dia,dia))
       .map(f=>({desc:f.descricao,valor:+f.valor,tipo:'fixa',
                 categoria:f.categoria||'Outros',quem:'Casal'}));
+    crediariosDoMes(k).filter(p=>noDia(diaDoCrediario(p),dia)).forEach(p=>{
+      const qual=mesesDaParcela(p).indexOf(k)+1;
+      const jaPagas=(+p.total_parcelas||0)-(+p.restantes||0);
+      saidas.push({desc:p.descricao+(p.total_parcelas?` (${jaPagas+qual}/${p.total_parcelas})`:''),
+                   valor:+p.valor_parcela, tipo:'credi', categoria:'Crediário', quem:p.responsavel||'Casal'});
+    });
     cartoes.forEach(c=>{
       if(!c.ativo || +c.dia_venc!==dia) return;
       const v=faturaCartao(c.nome,k);
@@ -887,8 +913,15 @@ function vCompra(){
       <div class="fld" style="margin-bottom:11px"><label>Cartão</label>
         <select onchange="simSet('cartao',this.value)">
           <option value="">— escolher —</option>
+          <option value="__credi" ${SIM.cartao==='__credi'?'selected':''}>Crediário / carnê (sem cartão)</option>
           ${cartoes.map(n=>`<option ${n===SIM.cartao?'selected':''}>${esc(n)}</option>`).join('')}
         </select></div>
+      ${SIM.cartao==='__credi'?`<div class="fld" style="margin-bottom:11px"><label>Dia da parcela</label>
+        <select onchange="simSet('dia',this.value)">
+          <option value="31" ${String(SIM.dia||'31')==='31'?'selected':''}>Último dia útil</option>
+          ${Array.from({length:27},(_,i)=>i+1).map(d=>`<option value="${d}" ${
+            String(SIM.dia)===String(d)?'selected':''}>Dia ${String(d).padStart(2,'0')}</option>`).join('')}
+        </select></div>`:''}
       <div class="fld" style="margin-bottom:11px"><label>Responsável</label>
         <select onchange="simSet('quem',this.value)">
           ${['Casal','Maria','Jéssica'].map(q=>`<option ${q===SIM.quem?'selected':''}>${q}</option>`).join('')}
@@ -982,7 +1015,8 @@ window.confirmarCompra=async()=>{
     `Tem certeza que não é a mesma dívida, só cadastrada duas vezes? Confirmar mesmo assim?`
   )) return;
   const ok = await inserir('parcelamentos',{
-    descricao:SIM.desc.trim(), cartao:SIM.cartao||null,
+    descricao:SIM.desc.trim(), cartao:(SIM.cartao==='__credi'?null:SIM.cartao||null),
+    dia:(SIM.cartao==='__credi'? (+SIM.dia||31) : null),
     valor_parcela:+c.parcela.toFixed(2), total_parcelas:SIM.parcelas,
     restantes:SIM.parcelas, primeira_fatura:c.ini+'-01',
     responsavel:SIM.quem, origem:'simulacao_confirmada',
@@ -990,7 +1024,7 @@ window.confirmarCompra=async()=>{
   });
   if(ok){
     toast(SIM.desc+' adicionada · '+SIM.parcelas+'x de '+BRL(c.parcela));
-    SIM={desc:'',total:1800,cartao:'',parcelas:6,quem:'Casal',inicio:null};
+    SIM={desc:'',total:1800,cartao:'',parcelas:6,quem:'Casal',inicio:null,dia:31};
     go('parc');
   }
 };
@@ -1474,20 +1508,20 @@ function vLanc(){
   </div>
   <div class="tw"><table><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th>
     <th>Quem</th><th class="r">Valor</th>
-    <th class="c" title="Contar no Planejamento do Painel">Planej.</th><th></th></tr></thead><tbody>
+    <th></th></tr></thead><tbody>
   ${ls.map(l=>`<tr class="${l.protegido||l.beneficio?'dim':''}">
     <td class="mono">${String(l.data).split('-').reverse().join('/')}</td>
     <td>${esc(l.descricao)}${l.protegido?' <span class="tag t-g">protegido</span>':''}${l.beneficio?' <span class="tag t-g">benefício</span>':''}${
       mesDeCaixa(l)!==ym(l.data)?` <span class="tag t-w">sai do caixa em ${mLabel(mesDeCaixa(l))}</span>`:''}
-    ${l.status==='Projetado'?' <span class="tag t-g">previsto</span>':''}</td>
+    ${l.status==='Projetado'?' <span class="tag t-g">previsto</span>':''}
+    ${l.cartao||l.beneficio||l.protegido?'':`<button class="chip ${l.na_gaveta?'on':''}"
+      title="Contar no Planejamento do Painel"
+      onclick="setRow('lancamentos','${l.id}','na_gaveta',${!l.na_gaveta})">planej.</button>`}</td>
     <td>${esc(l.categoria)}</td><td>${esc(l.quem)}</td>
     <td class="r" style="font-weight:600;color:${l.tipo==='Entrada'?'var(--pos)':'var(--neg)'}">
       ${l.tipo==='Entrada'?'+':'−'} ${BRL(l.valor)}</td>
-    <td class="c"><input type="checkbox" ${l.na_gaveta?'checked':''} ${l.cartao?'disabled':''}
-      title="${l.cartao?'Compra no cartão aparece na fatura, não aqui':'Contar no Planejamento do Painel'}"
-      onchange="setRow('lancamentos','${l.id}','na_gaveta',this.checked)"></td>
     <td class="r"><button class="btn dgr" onclick="delRow('lancamentos','${l.id}')">excluir</button></td></tr>`).join('')
-    ||`<tr><td colspan="7" class="note" style="padding:20px;text-align:center">${
+    ||`<tr><td colspan="6" class="note" style="padding:20px;text-align:center">${
       doMes.length?'Nenhum lançamento bate com o filtro.':'Nenhum lançamento neste mês.'}</td></tr>`}
   </tbody></table></div></div>`;
 }
@@ -1555,7 +1589,14 @@ function vParc(){
     const quitada=+p.restantes<=0;
     return `<tr class="${quitada?'dim':''}"><td><b>${esc(p.descricao)}</b>${p.origem==='simulacao_confirmada'?' <span class="tag t-i">simulada</span>':''}
       ${irregular?' <span class="tag t-w">meses definidos</span>':''}</td>
-    <td>${esc(p.cartao||'—')}</td><td class="r">${BRL(p.valor_parcela)}</td>
+    <td>${p.cartao?esc(p.cartao):`<span class="tag t-w">crediário</span>
+      <select style="padding:2px 5px;margin-top:3px;font-size:12px"
+        onchange="setRow('parcelamentos','${p.id}','dia',+this.value)">
+        <option value="31" ${(+p.dia||31)===31?'selected':''}>último dia útil</option>
+        ${Array.from({length:27},(_,i)=>i+1).map(d=>`<option value="${d}" ${
+          +p.dia===d?'selected':''}>dia ${String(d).padStart(2,'0')}</option>`).join('')}
+      </select>`}</td>
+    <td class="r">${BRL(p.valor_parcela)}</td>
     <td class="c"><input type="number" min="0" value="${p.restantes}" style="width:56px;padding:3px 5px;text-align:center"
       onchange="setRow('parcelamentos','${p.id}','restantes',Math.max(0,+this.value))"></td>
     <td class="r"><b>${BRL(p.valor_parcela*p.restantes)}</b></td>
@@ -1571,7 +1612,7 @@ function vParc(){
       ${irregular?'<span class="note" style="margin-left:8px">este parcelamento pula mês</span>'
                  :'<span class="note" style="margin-left:8px">mensais consecutivas</span>'}
     </td></tr>`:''}`;}).join('')
-    ||`<tr><td colspan="7" class="note" style="padding:20px;text-align:center">${
+    ||`<tr><td colspan="6" class="note" style="padding:20px;text-align:center">${
       D.parcelamentos.length?'Nenhuma dívida bate com o filtro.':'Nenhum parcelamento. Use "Nova compra" para simular e adicionar.'}</td></tr>`}
   </tbody></table></div>
   <div class="pbody"><button class="btn" onclick="go('compra')">Simular nova compra</button></div></div>`;
@@ -1613,7 +1654,7 @@ function vAssin(){
         onchange="setRow('assinaturas','${a.id}','ativo_desde',this.value||null)">
       <span class="note" style="margin-left:8px">deixe em branco se ela sempre cobrou aqui — só preencha se mudou de cartão ou é nova, senão a projeção pode inventar uma cobrança antiga que nunca aconteceu</span>
     </td></tr>`:''}`;}).join('')
-    ||`<tr><td colspan="7" class="note" style="padding:20px;text-align:center">${
+    ||`<tr><td colspan="6" class="note" style="padding:20px;text-align:center">${
       D.assinaturas.length?'Nenhuma assinatura bate com o filtro.':'Nenhuma assinatura cadastrada.'}</td></tr>`}
   </tbody></table></div>
   <div class="pbody"><div class="form">
@@ -1631,6 +1672,7 @@ window.addAssin=async()=>{
 };
 
 let TERC_ORIG='Pix', GRUPO_ABERTO=null;
+window.TERC_FORM={p:'',d:'',v:''};  /* global: os campos do formulário gravam aqui */
 function vTerc(){
   const hj=hoje();
   const dias=t=>t.data_saida?Math.max(0,Math.round((new Date(hj)-new Date(t.data_saida))/86400000)):null;
@@ -1741,15 +1783,17 @@ function vTerc(){
   <div class="tw"><table><thead><tr><th class="c">Recebido</th><th>Quem</th><th>O que é</th>
     <th>Origem</th><th>Quando volta</th><th class="r">Valor</th><th></th></tr></thead><tbody>
   ${filtrados.filter(t=>!noCartao(t)).map(linha).join('')
-    ||`<tr><td colspan="7" class="note" style="padding:18px;text-align:center">${
+    ||`<tr><td colspan="6" class="note" style="padding:18px;text-align:center">${
       D.terceiros.some(t=>!noCartao(t))?'Nada bate com o filtro.':'Nada emprestado fora do cartão.'}</td></tr>`}
   </tbody></table></div>
   <div class="pbody">
     <div class="kgroup sub">Registrar o que você emprestou</div>
     <div class="form">
-      <div class="fld"><label>Quem</label><input id="t_p" placeholder="Ex.: Tia Rose"></div>
+      <div class="fld"><label>Quem</label><input id="t_p" placeholder="Ex.: Tia Rose"
+        value="${esc(TERC_FORM.p||'')}" oninput="TERC_FORM.p=this.value"></div>
       <div class="fld" style="grid-column:span 2"><label>O que é</label>
-        <input id="t_d" placeholder="Ex.: Pix emprestado para o conserto"></div>
+        <input id="t_d" placeholder="Ex.: compra da minha mãe no meu cartão"
+          value="${esc(TERC_FORM.d||'')}" oninput="TERC_FORM.d=this.value"></div>
       <div class="fld"><label>Saiu de onde</label><select id="t_o" onchange="setTercOrig(this.value)">
         <optgroup label="Fora do cartão">
           <option ${TERC_ORIG==='Pix'?'selected':''}>Pix</option>
@@ -1761,11 +1805,12 @@ function vTerc(){
             `<option ${TERC_ORIG===c.nome?'selected':''}>${esc(c.nome)}</option>`).join('')}
         </optgroup>
       </select></div>
-      <div class="fld"><label>Valor</label><input type="number" step="0.01" id="t_v"></div>
+      <div class="fld"><label>Valor</label><input type="number" step="0.01" id="t_v"
+        value="${TERC_FORM.v||''}" oninput="TERC_FORM.v=this.value"></div>
       ${D.cartoes.some(c=>c.nome===TERC_ORIG)
         ? `<div class="fld"><label>Em qual fatura</label>
             <select id="t_cp">${mesesDisponiveis().map(m=>
-              `<option value="${mLabel(m)}">${mLabel(m)}</option>`).join('')}</select></div>`
+              `<option value="${mLabel(m)}" ${m===MREF?'selected':''}>${mLabel(m)}</option>`).join('')}</select></div>`
         : `<div class="fld"><label>Quando saiu</label><input type="date" id="t_ds" value="${hoje()}"></div>
            <div class="fld"><label>Previsão de volta</label><input type="date" id="t_pv"></div>`}
       <div class="fld"><label>&nbsp;</label><button class="btn" onclick="addTerc()">Registrar</button></div>
@@ -1811,7 +1856,7 @@ function vTerc(){
           <td class="r"><button class="btn dgr" onclick="delRow('terceiros','${x.id}')">excluir</button></td>
         </tr>`).join('')
       : ''}`;}).join('')
-    ||`<tr><td colspan="7" class="note" style="padding:18px;text-align:center">${
+    ||`<tr><td colspan="6" class="note" style="padding:18px;text-align:center">${
       D.terceiros.some(noCartao)?'Nada bate com o filtro.':'Nenhuma compra de terceiro nos cartões.'}</td></tr>`}
   </tbody></table></div>
   <div class="pbody"><p class="note">Estes vêm das faturas e são abatidos da parte de vocês.
@@ -1830,10 +1875,18 @@ window.addTerc=async()=>{
     competencia: ehCartao ? ($('t_cp')?.value || mLabel(MREF)) : null,
     data_saida: ehCartao ? null : ($('t_ds')?.value || hoje()),
     previsao:   ehCartao ? null : ($('t_pv')?.value || null)});
-  if(ok){ render(); toast(p+' deve '+BRL(v)+(ehCartao?' na fatura':'')); }
+  if(ok){ window.TERC_FORM={p:'',d:'',v:''}; render();
+          toast(p+' deve '+BRL(v)+(ehCartao?' na fatura de '+origem:'')); }
 };
 /* marcar como recebido guarda também a data */
-window.setTercOrig=v=>{ TERC_ORIG=v; render(); };
+/* Trocar "saiu de onde" redesenha a tela (muda os campos seguintes). Sem
+   guardar o que já foi digitado, pessoa/descrição/valor se perdiam e o
+   botão Registrar reclamava que faltava preencher. */
+window.setTercOrig=v=>{
+  window.TERC_FORM={p:$('t_p')?.value||'', d:$('t_d')?.value||'', v:$('t_v')?.value||''};
+  TERC_ORIG=v; render();
+  setTimeout(()=>$('t_v')?.focus(),0);
+};
 window.setPlano=(campo,v)=>{
   if(campo==='vida'){ PLANO_VIDA=+v; PLANO_VIDA_AUTO=false; }
   else if(campo==='caixa') PLANO_CAIXA=+v;
@@ -1979,7 +2032,7 @@ function vCad(){
       onchange="setRow('cartoes','${c.id}','limite',this.value?+this.value:null)"></td>
     <td class="r">${v?BRL(v):'—'} ${v?`<span class="tag ${real?'t-ok':'t-g'}">${real?'lançada':'estimada'}</span>`:''}</td>
     <td class="r"><button class="btn dgr" onclick="delRow('cartoes','${c.id}')">excluir</button></td></tr>`;}).join('')
-    ||`<tr><td colspan="7" class="note" style="padding:16px;text-align:center">${
+    ||`<tr><td colspan="6" class="note" style="padding:16px;text-align:center">${
       D.cartoes.length?'Nenhum cartão bate com o filtro.':'Nenhum cartão cadastrado.'}</td></tr>`}
   </tbody></table></div>
   <div class="pbody"><div class="form">
@@ -2019,7 +2072,7 @@ function vCad(){
           ? rep.map(x=>`<span class="tag ${x.vz>1?'t-no':'t-w'}">${x.vz}x ${esc(x.a.descricao)}</span>`).join(' ')
           : '<span class="note">uma cobrança de cada</span>'}</td>
         <td class="r"><button class="btn dgr" onclick="delRow('ciclos','${c.id}')">excluir</button></td></tr>`;}).join('')
-      ||'<tr><td colspan="7" class="note" style="padding:16px;text-align:center">Nenhum ciclo cadastrado.</td></tr>'}
+      ||'<tr><td colspan="6" class="note" style="padding:16px;text-align:center">Nenhum ciclo cadastrado.</td></tr>'}
     </tbody></table></div>
     <div class="pbody"><div class="form">
       <div class="fld"><label>Cartão</label><select id="ci_c">
