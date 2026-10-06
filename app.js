@@ -210,55 +210,68 @@ function depoisDaFoto(l, foto){
 const cicloDe = (cartao,k) => D.ciclos.find(c=>c.cartao===cartao && c.competencia===k) || null;
 
 function janelaFatura(cartao,k){
-  const todos=D.ciclos.filter(c=>c.cartao===cartao).sort((a,b)=>a.fecha.localeCompare(b.fecha));
-  if(!todos.length) return null;   // cartão sem nenhum ciclo cadastrado: comportamento antigo (conta 1x)
+  const todos=D.ciclos.filter(c=>c.cartao===cartao).sort((a,b)=>a.competencia.localeCompare(b.competencia));
+  if(!todos.length) return null;
   const c=cicloDe(cartao,k);
   if(c){
     const idx=todos.findIndex(x=>x.competencia===k);
     const ant=todos[idx-1];
-    if(ant) return {ini:ant.fecha, fim:c.fecha};
-    /* é o primeiro ciclo que existe pra esse cartão: sem fechamento anterior
-       de verdade, assume um mês antes deste — só acontece uma vez, no início
-       do histórico. */
-    const f=new Date(c.fecha+'T12:00:00'); f.setMonth(f.getMonth()-1);
-    return {ini:f.toISOString().slice(0,10), fim:c.fecha, estimada:true};
+    if(ant) return {ini:ant.fecha, fim:c.fecha, inferida:!!c.inferido};
+    return {ini:addMesData(c.fecha,-1), fim:c.fecha, estimada:true, inferida:!!c.inferido};
   }
-  /* Esse mês não tem ciclo próprio. As cobranças que "cairiam" aqui já
-     pertencem à janela de algum ciclo vizinho de verdade — inventar uma
-     janela própria faria a mesma cobrança contar duas vezes (foi exatamente
-     esse o bug: assinatura somando na fatura vizinha). Sem janela própria,
-     sem contagem própria. */
+  const ult=todos[todos.length-1];
+  if(k>ult.competencia){
+    const passos=mesesEntre(ult.competencia,k);
+    return {ini:addMesData(ult.fecha,passos-1), fim:addMesData(ult.fecha,passos),
+            estimada:true, inferida:true, virtual:true};
+  }
   return null;
 }
 
-/* Quantas vezes o dia X aparece dentro de (ini, fim] */
-function vezesNoPeriodo(dia, ini, fim, ativoDesde){
+function assinaturaExcecao(a,k){
+  return D.assinatura_excecoes.find(x=>x.assinatura_id===a.id && x.competencia===k) || null;
+}
+function assinaturaAtivaNoMes(a,k){
+  if(k>ym(hoje()) && !a.projetar) return false;
+  const ini=k+'-01', fim=k+'-'+String(ultimoDiaDoMes(k)).padStart(2,'0');
+  return (!a.ativo_desde || a.ativo_desde<=fim) && (!a.cancelado_em || a.cancelado_em>=ini);
+}
+function vezesNoPeriodo(dia, ini, fim, ativoDesde, canceladoEm){
+  const valida = (!ativoDesde || ativoDesde<=fim) && (!canceladoEm || canceladoEm>ini);
+  if(!valida) return 0;
   if(!dia) return 1;
   let n=0;
   const a=new Date(ini+'T12:00:00'), b=new Date(fim+'T12:00:00');
   const desde = ativoDesde ? new Date(ativoDesde+'T12:00:00') : null;
+  const ate = canceladoEm ? new Date(canceladoEm+'T12:00:00') : null;
   const d=new Date(a.getFullYear(), a.getMonth(), 1);
   while(d <= b){
     const ult=new Date(d.getFullYear(), d.getMonth()+1, 0).getDate();
     const cob=new Date(d.getFullYear(), d.getMonth(), Math.min(dia,ult), 12);
-    if(cob > a && cob <= b && (!desde || cob >= desde)) n++;
+    if(cob > a && cob <= b && (!desde || cob >= desde) && (!ate || cob <= ate)) n++;
     d.setMonth(d.getMonth()+1);
   }
   return n;
 }
-
-/* Quantas cobranças desta assinatura entram na fatura do mês k. Se ela tem
-   "ativo_desde" (começou a cobrar num cartão específico a partir de uma
-   data), nenhuma ocorrência anterior a isso conta — sem isso, a primeira
-   janela (sem ciclo vizinho) sempre inventava uma cobrança "de sempre". */
-function vezesAssinatura(a, k){
-  const temCiclos = D.ciclos.some(c=>c.cartao===a.cartao);
-  if(!temCiclos) return 1;               // cartão sem ciclo cadastrado: comportamento antigo
+function vezesAssinaturaAuto(a,k){
+  if(k>ym(hoje()) && !a.projetar) return 0;
+  const temCiclos=D.ciclos.some(c=>c.cartao===a.cartao);
+  if(!temCiclos) return assinaturaAtivaNoMes(a,k) ? 1 : 0;
   const j=janelaFatura(a.cartao,k);
-  if(!j) return 0;                       // tem ciclos, mas não pra este mês: a cobrança é de um vizinho
-  return vezesNoPeriodo(+a.dia, j.ini, j.fim, a.ativo_desde);
+  if(!j) return 0;
+  return vezesNoPeriodo(+a.dia, j.ini, j.fim, a.ativo_desde, a.cancelado_em);
 }
-
+function vezesAssinatura(a,k){
+  const ex=assinaturaExcecao(a,k);
+  if(ex) return +ex.vezes;
+  return vezesAssinaturaAuto(a,k);
+}
+function assinaturasDaFatura(nome,k){
+  return D.assinaturas.filter(a=>(a.cartao||'')===nome).map(a=>{
+    const auto=vezesAssinaturaAuto(a,k), ex=assinaturaExcecao(a,k);
+    return {a,auto,ex,vz:ex?+ex.vezes:auto};
+  }).filter(x=>x.vz>0 || x.auto>0 || x.ex);
+}
 /* Fatura calculada: parcelas devidas + assinaturas projetadas do cartão. */
 function faturaCalculada(nome, k, extra){
   let t=0;
