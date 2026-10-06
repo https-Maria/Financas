@@ -4158,20 +4158,24 @@ function vFatura(){
   const real = faturaLancada(n,comp);
   const calc = faturaCalculada(n,comp);
   const valor = faturaCartao(n,comp);
+  const snap = faturaFechada(n,comp);
 
-  const parcelas = D.parcelamentos.filter(p=>(p.cartao||'')===n && parcelaCaiEm(p,comp));
-  const assinaturas = D.assinaturas.filter(a=>a.projetar && (a.cartao||'')===n)
-    .map(a=>({a, vz:vezesAssinatura(a,comp)})).filter(x=>x.vz>0);
-  const terceiros = D.terceiros.filter(t=>t.cartao===n && !t.recebido &&
-    (!t.competencia || t.competencia===mLabel(comp)));
+  const parcelas = snap ? (snap.composicao?.parcelas||[]) :
+    D.parcelamentos.filter(p=>(p.cartao||'')===n && parcelaCaiEm(p,comp));
+  const assinaturas = snap ? (snap.composicao?.assinaturas||[]).map(a=>({
+      a:{id:a.id,descricao:a.descricao,valor:a.valor,dia:a.dia},vz:+a.vz,auto:+a.auto,
+      ex:a.manual?{vezes:a.vz}:null
+    })) : assinaturasDaFatura(n,comp);
+  const terceiros = snap ? (snap.composicao?.terceiros||[]) :
+    D.terceiros.filter(t=>t.cartao===n && !t.recebido &&
+      (!t.competencia || t.competencia===mLabel(comp)));
   /* A lista tem que bater com a conta de "Sua parte": compras à vista (somam)
      e créditos no cartão (abatem). Ficam de fora o total declarado e os
      ajustes, que têm painel próprio, e o Reports, que é dinheiro protegido
      e ganhou lista separada — antes aparecia aqui como se fosse compra
      de vocês, e a lista não fechava com o valor usado. */
-  const avulsos = D.lancamentos.filter(l=>l.cartao===n && ym(l.data)===comp && !l.protegido &&
-    l.categoria!=='Ajuste Fatura' && !(l.categoria==='Cartão' && l.tipo!=='Entrada'));
-  const reportsCart = D.lancamentos.filter(l=>l.cartao===n && ym(l.data)===comp && l.protegido);
+  const avulsos = snap ? (snap.composicao?.avulsos||[]) : itensAvistaFatura(n,comp);
+  const reportsCart = snap ? (snap.composicao?.reports||[]) : reportsFatura(n,comp);
   const somaAvulsos = avulsos.reduce((s,l)=>s+(l.tipo==='Entrada'? -(+l.valor) : +l.valor),0);
   const somaReportsCart = reportsCart.reduce((s,l)=>s+ +l.valor,0);
   const somaParc = parcelas.reduce((s,p)=>s+ +p.valor_parcela,0);
@@ -4179,12 +4183,11 @@ function vFatura(){
   const somaTerc = terceiros.reduce((s,t)=>s+ +t.valor,0);
   /* Reports é dinheiro protegido — some no cartão de verdade (o banco não
      distingue), mas fica fora de "sua parte", igual terceiros. */
-  const reportsNoCartao = D.lancamentos.filter(l=>
-    l.protegido && (l.cartao||'')===n && ym(l.data)===comp && l.tipo!=='Entrada');
+  const reportsNoCartao = reportsCart.filter(l=>l.tipo!=='Entrada');
   const somaReports = reportsNoCartao.reduce((s,l)=>s+ +l.valor,0);
   const conhecido = somaParc+somaAssin;
   const naoIdentificado = real ? real.valor-conhecido : null;
-  const proximas = D.parcelamentos.filter(p=>(p.cartao||'')===n && +p.restantes>0
+  const proximas = snap ? [] : D.parcelamentos.filter(p=>(p.cartao||'')===n && +p.restantes>0
     && !parcelaCaiEm(p,comp) && mesesDaParcela(p).some(m=>m>comp));
 
   return head('Fatura','O que compõe a fatura de cada cartão, item por item.')
