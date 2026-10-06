@@ -1072,6 +1072,8 @@ window.marcarItem=async(dia,lado,ix)=>{
   const rel=lancRelacionado(it,MREF);
   const feito=rel && rel.itens.some(confirmado);
   if(feito){
+    if(it.tipo==='cartao' || it.tipo==='reserva')
+      await descongelarFatura(it.cartao, it.tipo==='reserva'?it.competencia:MREF);
     /* desmarcar: o que o painel criou some; o que veio de outra origem só
        volta a ser previsão, para não perder o valor real da fatura */
     for(const l of rel.itens.filter(confirmado)){
@@ -1086,6 +1088,11 @@ window.marcarItem=async(dia,lado,ix)=>{
     for(const l of rel.itens) await atualizar('lancamentos', l.id, {status:'Confirmado'});
     render(); toast(it.desc+' confirmado · '+BRL(rel.valor));
     return;
+  }
+  if(it.tipo==='cartao' || it.tipo==='reserva'){
+    const compFat=it.tipo==='reserva'?it.competencia:MREF;
+    const snap=await congelarFatura(it.cartao,compFat,it.valor);
+    if(!snap) return;
   }
   const criado=await inserir('lancamentos', montaLanc(it,MREF,dia));
   if(criado){ render(); toast(it.desc+' lançado · '+BRL(it.valor)); }
@@ -1720,7 +1727,7 @@ window.setRow=async(t,id,campo,val)=>{if(await atualizar(t,id,{[campo]:val})){re
 
 function vAssin(){
   const cartoes=[...new Set(D.assinaturas.map(a=>a.cartao).filter(Boolean))].sort();
-  const comStatus=D.assinaturas.map(a=>({...a, _status:a.projetar?'ativa':'pausada'}));
+  const comStatus=D.assinaturas.map(a=>({...a, _status:a.projetar?'ativa':'encerrada'}));
   const lista=aplicaFiltro('assin', comStatus, 'descricao', '_status', 'cartao');
   return head('Assinaturas','Desmarque para ver na hora quanto sobraria sem ela.')
   +`<div class="kpis">${kpi('Total ativo',BRL(totAssin()))}
@@ -1730,7 +1737,7 @@ function vAssin(){
     desde quando ela cobra nesse cartão</small></h2>
   <div class="pbody" style="padding-bottom:0">
     ${barraFiltro('assin', {placeholder:'Buscar assinatura…',
-      tipos:[['ativa','Ativas'],['pausada','Pausadas']], categorias:cartoes})}
+      tipos:[['ativa','Ativas'],['encerrada','Encerradas']], categorias:cartoes})}
   </div>
   <div class="tw"><table><thead><tr><th class="c">Projetar</th><th>Nome</th><th>Cartão</th>
     <th class="c">Dia</th><th class="r">Valor</th><th class="r">Por ano</th><th></th></tr></thead><tbody>
@@ -1738,20 +1745,23 @@ function vAssin(){
     const aberto=ASSIN_ABERTO===a.id;
     return `<tr class="${a.projetar?'':'dim'}">
     <td class="c"><input type="checkbox" ${a.projetar?'checked':''} style="width:auto;cursor:pointer"
-      onchange="setRow('assinaturas','${a.id}','projetar',this.checked)"></td>
+      onchange="toggleAssinatura('${a.id}',this.checked)"></td>
     <td><b style="cursor:pointer" onclick="toggleAssin('${a.id}')">${aberto?'▾ ':'▸ '}${esc(a.descricao)}</b>${a.observacao?`<br><span class="tag t-w">${esc(a.observacao)}</span>`:''}${
       !a.dia?' <span class="tag t-w">sem dia — projeção pode errar</span>':''}</td>
     <td>${esc(a.cartao||'—')}</td>
     <td class="c"><input type="number" min="1" max="31" value="${a.dia||''}" placeholder="—" style="width:48px;padding:3px 5px;text-align:center"
-      onchange="setRow('assinaturas','${a.id}','dia',this.value?+this.value:null)"></td>
+      onchange="mudarAssinatura('${a.id}','dia',this.value?+this.value:null)"></td>
     <td class="r">${BRL(a.valor)}</td>
     <td class="r">${a.projetar?BRL(a.valor*12):'—'}</td>
     <td class="r"><button class="btn dgr" onclick="delRow('assinaturas','${a.id}')">excluir</button></td></tr>
     ${aberto?`<tr class="sub"><td colspan="7" style="padding:4px 15px 10px">
-      <span class="note">Começou a cobrar neste cartão a partir de:</span>
+      <span class="note">Vigência nesta versão/cartão:</span>
       <input type="date" value="${a.ativo_desde||''}" style="padding:3px 7px;margin-left:6px"
         onchange="setRow('assinaturas','${a.id}','ativo_desde',this.value||null)">
-      <span class="note" style="margin-left:8px">deixe em branco se ela sempre cobrou aqui — só preencha se mudou de cartão ou é nova, senão a projeção pode inventar uma cobrança antiga que nunca aconteceu</span>
+      <span class="note" style="margin-left:8px">até</span>
+      <input type="date" value="${a.cancelado_em||''}" style="padding:3px 7px;margin-left:6px"
+        onchange="setFimAssinatura('${a.id}',this.value||null)">
+      <span class="note" style="margin-left:8px">encerrar não apaga meses anteriores; reativar cria uma nova vigência.</span>
     </td></tr>`:''}`;}).join('')
     ||`<tr><td colspan="6" class="note" style="padding:20px;text-align:center">${
       D.assinaturas.length?'Nenhuma assinatura bate com o filtro.':'Nenhuma assinatura cadastrada.'}</td></tr>`}
@@ -1766,8 +1776,42 @@ function vAssin(){
 window.addAssin=async()=>{
   const n=$('a_n').value.trim(),v=parseFloat($('a_v').value);
   if(!n||!v) return toast('Preencha nome e valor');
-  if(await inserir('assinaturas',{descricao:n,valor:v,cartao:$('a_c').value.trim()||null,projetar:true}))
+  if(await inserir('assinaturas',{descricao:n,valor:v,cartao:$('a_c').value.trim()||null,
+      projetar:true,ativo_desde:hoje(),cancelado_em:null}))
     {render();toast(n+' adicionada');}
+};
+window.setFimAssinatura=async(id,data)=>{
+  const a=D.assinaturas.find(x=>x.id===id); if(!a) return;
+  if(await atualizar('assinaturas',id,{cancelado_em:data||null,projetar:!data})){
+    render(); toast(data?'Assinatura encerrada sem apagar o histórico':'Fim removido');
+  }
+};
+window.toggleAssinatura=async(id,ativa)=>{
+  const a=D.assinaturas.find(x=>x.id===id); if(!a) return;
+  if(!ativa){
+    if(await atualizar('assinaturas',id,{projetar:false,cancelado_em:hoje()})){
+      render(); toast(a.descricao+' encerrada hoje; histórico preservado');
+    }
+    return;
+  }
+  if(a.cancelado_em){
+    const nova={descricao:a.descricao,valor:+a.valor,cartao:a.cartao||null,dia:a.dia||null,
+      projetar:true,observacao:a.observacao||null,ativo_desde:hoje(),cancelado_em:null};
+    if(await inserir('assinaturas',nova)){render();toast(a.descricao+' reativada numa nova vigência');}
+  }else if(await atualizar('assinaturas',id,{projetar:true})){render();toast(a.descricao+' voltou à projeção');}
+};
+window.mudarAssinatura=async(id,campo,val)=>{
+  const a=D.assinaturas.find(x=>x.id===id); if(!a || a[campo]===val) return;
+  if(!a.projetar || a.cancelado_em){
+    if(await atualizar('assinaturas',id,{[campo]:val})){render();toast('Histórico corrigido');}
+    return;
+  }
+  const fim=diaAnterior(hoje());
+  const velha=await atualizar('assinaturas',id,{projetar:false,cancelado_em:fim});
+  if(!velha) return;
+  const nova={descricao:a.descricao,valor:+a.valor,cartao:a.cartao||null,dia:a.dia||null,
+    projetar:true,observacao:a.observacao||null,ativo_desde:hoje(),cancelado_em:null,[campo]:val};
+  if(await inserir('assinaturas',nova)){render();toast('Nova vigência criada a partir de hoje');}
 };
 
 let TERC_ORIG='Pix', GRUPO_ABERTO=null;
