@@ -4112,6 +4112,7 @@ let FAT_CART=null;
    É o que acontece quando o cartão pula uma fatura. */
 window.pularMes=async(pid,k)=>{
   const p=D.parcelamentos.find(x=>x.id===pid); if(!p) return;
+  if(faturaFechada(p.cartao||'',k)) return toast('Fatura fechada — histórico protegido');
   const meses=mesesDaParcela(p);
   if(!meses.includes(k)) return;
   const novos=meses.map(m=> m>=k ? addM(m,1) : m);
@@ -4122,6 +4123,7 @@ window.pularMes=async(pid,k)=>{
 /* Traz de volta: desfaz o pulo mais recente deste mês. */
 window.voltarMes=async(pid,k)=>{
   const p=D.parcelamentos.find(x=>x.id===pid); if(!p) return;
+  if(faturaFechada(p.cartao||'',k)) return toast('Fatura fechada — histórico protegido');
   const meses=mesesDaParcela(p);
   const novos=meses.map(m=> m>k ? addM(m,-1) : m);
   if(await atualizar('parcelamentos',pid,{competencias:novos})){
