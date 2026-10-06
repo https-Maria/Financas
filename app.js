@@ -11,16 +11,16 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v86';
+const APP_VER='v87';
 
 /* =====================================================================
    ESTADO
    ===================================================================== */
 const TABELAS = ['rendas','fixas','beneficios','cartoes','parcelamentos',
-                 'assinaturas','lancamentos','terceiros','metas','casa_itens','financiamentos','agenda','snapshots','ciclos','auditoria','notas'];
+                 'assinaturas','assinatura_excecoes','lancamentos','terceiros','metas','casa_itens','financiamentos','agenda','snapshots','ciclos','faturas_fechadas','auditoria','notas'];
 let USER=null, GRUPO=null, EU=null;
 let D = {rendas:[],fixas:[],beneficios:[],cartoes:[],parcelamentos:[],
-         assinaturas:[],lancamentos:[],terceiros:[],metas:[],casa_itens:[],financiamentos:[],agenda:[],snapshots:[],ciclos:[],auditoria:[],notas:[],config:null};
+         assinaturas:[],assinatura_excecoes:[],lancamentos:[],terceiros:[],metas:[],casa_itens:[],financiamentos:[],agenda:[],snapshots:[],ciclos:[],faturas_fechadas:[],auditoria:[],notas:[],config:null};
 let ONLINE = navigator.onLine, SYNC='off', FALTANDO=[];
 
 /* =====================================================================
@@ -41,6 +41,16 @@ const diaChave = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')
 const mLabel = k => k.slice(5)+'/'+k.slice(0,4);
 function addM(k,n){let[y,m]=k.split('-').map(Number);m+=n;y+=Math.floor((m-1)/12);m=((m-1)%12+12)%12+1;
   return y+'-'+String(m).padStart(2,'0');}
+function addMesData(data,n){
+  const [y,m,d]=String(data).split('-').map(Number);
+  const base=(y*12)+(m-1)+n, ny=Math.floor(base/12), nm=((base%12)+12)%12+1;
+  const ult=new Date(ny,nm,0).getDate();
+  return ny+'-'+String(nm).padStart(2,'0')+'-'+String(Math.min(d,ult)).padStart(2,'0');
+}
+function diaAnterior(data){
+  const d=new Date(String(data)+'T12:00:00'); d.setDate(d.getDate()-1);
+  return diaChave(d);
+}
 function horizon(n,ini){const o=[];let k=ini||ym(hoje());for(let i=0;i<n;i++){o.push(k);k=addM(k,1);}return o;}
 /* Lista do seletor: 6 meses para trás, 12 para frente, mais qualquer mês
    que já tenha lançamento ou competência de terceiro registrada. */
@@ -65,8 +75,9 @@ const rendaAtiva = k => D.rendas.filter(r=>r.ativo && !r.protegida &&
   !(r.encerra_em && k && k >= ym(r.encerra_em)));
 const totRenda = k => rendaAtiva(k).reduce((s,r)=>s+ +r.valor,0);
 const totFixas = () => D.fixas.filter(f=>f.ativo).reduce((s,f)=>s+ +f.valor,0);
-const totAssin = (k) => D.assinaturas.filter(a=>a.projetar)
-  .reduce((s,a)=>s + (+a.valor) * (k ? vezesAssinatura(a,k) : 1), 0);
+const totAssin = (k) => k
+  ? D.assinaturas.reduce((s,a)=>s + (+a.valor) * vezesAssinatura(a,k), 0)
+  : D.assinaturas.filter(a=>a.projetar).reduce((s,a)=>s + (+a.valor), 0);
 const totVA    = () => D.beneficios.filter(b=>b.ativo).reduce((s,b)=>s+ +b.valor,0);
 const saldoParc= () => D.parcelamentos.reduce((s,p)=>s+ +p.valor_parcela*p.restantes,0);
 const aReceber = () => D.terceiros.filter(t=>!t.recebido).reduce((s,t)=>s+ +t.valor,0);
@@ -155,9 +166,23 @@ function mesesEntre(a,b){const[ay,am]=a.split('-').map(Number),[by,bm]=b.split('
    Entrada, categoria Cartão. SEMPRE abate, esteja a fatura vindo do cálculo
    ou de um total declarado. É a mesma tela de sempre, só a direção muda:
    Saída = uma cobrança; Entrada = o contrário de uma cobrança. */
+function temFaturaDeclarada(nome,k){
+  return D.lancamentos.some(l=>
+    ym(l.data)===k && !l.protegido && (l.cartao||'')===nome &&
+    l.tipo!=='Entrada' && (l.categoria==='Cartão' || /fatura/i.test(l.descricao||'')));
+}
+function lancamentoNoCiclo(l,nome,k){
+  /* Histórico já lançado não é realocado por uma regra nova. Em faturas
+     abertas/futuras, a data da compra é encaixada na janela real do ciclo. */
+  if(temFaturaDeclarada(nome,k)) return ym(l.data)===k;
+  const j=janelaFatura(nome,k);
+  if(!j) return !D.ciclos.some(c=>c.cartao===nome) && ym(l.data)===k;
+  const d=String(l.data);
+  return d>j.ini && d<=j.fim;
+}
 function creditosCartao(nome,k){
   return D.lancamentos.filter(l=>
-    ym(l.data)===k && !l.protegido && (l.cartao||'')===nome &&
+    lancamentoNoCiclo(l,nome,k) && !l.protegido && (l.cartao||'')===nome &&
     l.tipo==='Entrada' && l.categoria==='Cartão');
 }
 function somaValores(lista){ return lista.reduce((s,l)=>s+ +l.valor,0); }
@@ -199,55 +224,68 @@ function depoisDaFoto(l, foto){
 const cicloDe = (cartao,k) => D.ciclos.find(c=>c.cartao===cartao && c.competencia===k) || null;
 
 function janelaFatura(cartao,k){
-  const todos=D.ciclos.filter(c=>c.cartao===cartao).sort((a,b)=>a.fecha.localeCompare(b.fecha));
-  if(!todos.length) return null;   // cartão sem nenhum ciclo cadastrado: comportamento antigo (conta 1x)
+  const todos=D.ciclos.filter(c=>c.cartao===cartao).sort((a,b)=>a.competencia.localeCompare(b.competencia));
+  if(!todos.length) return null;
   const c=cicloDe(cartao,k);
   if(c){
     const idx=todos.findIndex(x=>x.competencia===k);
     const ant=todos[idx-1];
-    if(ant) return {ini:ant.fecha, fim:c.fecha};
-    /* é o primeiro ciclo que existe pra esse cartão: sem fechamento anterior
-       de verdade, assume um mês antes deste — só acontece uma vez, no início
-       do histórico. */
-    const f=new Date(c.fecha+'T12:00:00'); f.setMonth(f.getMonth()-1);
-    return {ini:f.toISOString().slice(0,10), fim:c.fecha, estimada:true};
+    if(ant) return {ini:ant.fecha, fim:c.fecha, inferida:!!c.inferido};
+    return {ini:addMesData(c.fecha,-1), fim:c.fecha, estimada:true, inferida:!!c.inferido};
   }
-  /* Esse mês não tem ciclo próprio. As cobranças que "cairiam" aqui já
-     pertencem à janela de algum ciclo vizinho de verdade — inventar uma
-     janela própria faria a mesma cobrança contar duas vezes (foi exatamente
-     esse o bug: assinatura somando na fatura vizinha). Sem janela própria,
-     sem contagem própria. */
+  const ult=todos[todos.length-1];
+  if(k>ult.competencia){
+    const passos=mesesEntre(ult.competencia,k);
+    return {ini:addMesData(ult.fecha,passos-1), fim:addMesData(ult.fecha,passos),
+            estimada:true, inferida:true, virtual:true};
+  }
   return null;
 }
 
-/* Quantas vezes o dia X aparece dentro de (ini, fim] */
-function vezesNoPeriodo(dia, ini, fim, ativoDesde){
+function assinaturaExcecao(a,k){
+  return D.assinatura_excecoes.find(x=>x.assinatura_id===a.id && x.competencia===k) || null;
+}
+function assinaturaAtivaNoMes(a,k){
+  if(k>ym(hoje()) && !a.projetar) return false;
+  const ini=k+'-01', fim=k+'-'+String(ultimoDiaDoMes(k)).padStart(2,'0');
+  return (!a.ativo_desde || a.ativo_desde<=fim) && (!a.cancelado_em || a.cancelado_em>=ini);
+}
+function vezesNoPeriodo(dia, ini, fim, ativoDesde, canceladoEm){
+  const valida = (!ativoDesde || ativoDesde<=fim) && (!canceladoEm || canceladoEm>ini);
+  if(!valida) return 0;
   if(!dia) return 1;
   let n=0;
   const a=new Date(ini+'T12:00:00'), b=new Date(fim+'T12:00:00');
   const desde = ativoDesde ? new Date(ativoDesde+'T12:00:00') : null;
+  const ate = canceladoEm ? new Date(canceladoEm+'T12:00:00') : null;
   const d=new Date(a.getFullYear(), a.getMonth(), 1);
   while(d <= b){
     const ult=new Date(d.getFullYear(), d.getMonth()+1, 0).getDate();
     const cob=new Date(d.getFullYear(), d.getMonth(), Math.min(dia,ult), 12);
-    if(cob > a && cob <= b && (!desde || cob >= desde)) n++;
+    if(cob > a && cob <= b && (!desde || cob >= desde) && (!ate || cob <= ate)) n++;
     d.setMonth(d.getMonth()+1);
   }
   return n;
 }
-
-/* Quantas cobranças desta assinatura entram na fatura do mês k. Se ela tem
-   "ativo_desde" (começou a cobrar num cartão específico a partir de uma
-   data), nenhuma ocorrência anterior a isso conta — sem isso, a primeira
-   janela (sem ciclo vizinho) sempre inventava uma cobrança "de sempre". */
-function vezesAssinatura(a, k){
-  const temCiclos = D.ciclos.some(c=>c.cartao===a.cartao);
-  if(!temCiclos) return 1;               // cartão sem ciclo cadastrado: comportamento antigo
+function vezesAssinaturaAuto(a,k){
+  if(k>ym(hoje()) && !a.projetar) return 0;
+  const temCiclos=D.ciclos.some(c=>c.cartao===a.cartao);
+  if(!temCiclos) return assinaturaAtivaNoMes(a,k) ? 1 : 0;
   const j=janelaFatura(a.cartao,k);
-  if(!j) return 0;                       // tem ciclos, mas não pra este mês: a cobrança é de um vizinho
-  return vezesNoPeriodo(+a.dia, j.ini, j.fim, a.ativo_desde);
+  if(!j) return 0;
+  return vezesNoPeriodo(+a.dia, j.ini, j.fim, a.ativo_desde, a.cancelado_em);
 }
-
+function vezesAssinatura(a,k){
+  const ex=assinaturaExcecao(a,k);
+  if(ex) return +ex.vezes;
+  return vezesAssinaturaAuto(a,k);
+}
+function assinaturasDaFatura(nome,k){
+  return D.assinaturas.filter(a=>(a.cartao||'')===nome).map(a=>{
+    const auto=vezesAssinaturaAuto(a,k), ex=assinaturaExcecao(a,k);
+    return {a,auto,ex,vz:ex?+ex.vezes:auto};
+  }).filter(x=>x.vz>0 || x.auto>0 || x.ex);
+}
 /* Fatura calculada: parcelas devidas + assinaturas projetadas do cartão. */
 function faturaCalculada(nome, k, extra){
   let t=0;
@@ -257,8 +295,10 @@ function faturaCalculada(nome, k, extra){
   };
   D.parcelamentos.forEach(conta);
   if(extra) conta(extra);
-  D.assinaturas.forEach(a=>{ if(a.projetar && (a.cartao||'')===nome)
-    t += (+a.valor) * vezesAssinatura(a,k); });
+  D.assinaturas.forEach(a=>{ if((a.cartao||'')===nome){
+    const vz=vezesAssinatura(a,k);
+    if(vz) t += (+a.valor) * vz;
+  }});
   return t;
 }
 
@@ -269,14 +309,27 @@ function faturaCalculada(nome, k, extra){
    os ajustes pontuais da própria aba Fatura (ver mais abaixo). */
 function comprasAVista(nome, k){
   return D.lancamentos.filter(l=>
-    ym(l.data)===k && !l.protegido && (l.cartao||'')===nome &&
+    lancamentoNoCiclo(l,nome,k) && !l.protegido && (l.cartao||'')===nome &&
     l.categoria!=='Cartão' && l.categoria!=='Ajuste Fatura' && l.tipo!=='Entrada');
 }
-function faturaCartao(nome, k){
+function itensAvistaFatura(nome,k){
+  return D.lancamentos.filter(l=>l.cartao===nome && lancamentoNoCiclo(l,nome,k) && !l.protegido &&
+    l.categoria!=='Ajuste Fatura' && !(l.categoria==='Cartão' && l.tipo!=='Entrada'));
+}
+function reportsFatura(nome,k){
+  return D.lancamentos.filter(l=>l.protegido && (l.cartao||'')===nome &&
+    lancamentoNoCiclo(l,nome,k) && l.tipo!=='Entrada');
+}
+const faturaFechada = (nome,k) => D.faturas_fechadas.find(f=>f.cartao===nome && f.competencia===k) || null;
+function faturaCartaoViva(nome,k){
   const real=faturaLancada(nome,k);
   const base = real ? real.valor
     : (faturaCalculada(nome,k) - somaValores(creditosCartao(nome,k)) + somaValores(comprasAVista(nome,k)));
   return base + somaAjustesFatura(nome,k,real);
+}
+function faturaCartao(nome,k){
+  const fechada=faturaFechada(nome,k);
+  return fechada ? +fechada.sua_parte : faturaCartaoViva(nome,k);
 }
 
 /* Ajustes pontuais da aba Fatura — cobrança que o cálculo não previu (ex.:
@@ -295,6 +348,52 @@ function somaAjustesFatura(nome, k, real){
   if(real===undefined) real=faturaLancada(nome,k);
   return ajustesFatura(nome,k).filter(l=>ajusteConta(l,real))
     .reduce((s,l)=> s + (l.tipo==='Entrada' ? -(+l.valor) : +l.valor), 0);
+}
+
+/* Quando uma fatura é paga, congela a composição. Futuro continua dinâmico. */
+function composicaoFatura(nome,k){
+  const parcelas=D.parcelamentos.filter(p=>(p.cartao||'')===nome && parcelaCaiEm(p,k))
+    .map(p=>({id:p.id,descricao:p.descricao,valor_parcela:+p.valor_parcela,total_parcelas:p.total_parcelas,
+      restantes:p.restantes,primeira_fatura:p.primeira_fatura,competencias:Array.isArray(p.competencias)?p.competencias:null}));
+  const assinaturas=assinaturasDaFatura(nome,k).filter(x=>x.vz>0).map(x=>({
+    id:x.a.id,descricao:x.a.descricao,valor:+x.a.valor,dia:x.a.dia||null,vz:x.vz,auto:x.auto,
+    manual:!!x.ex,ativo_desde:x.a.ativo_desde||null,cancelado_em:x.a.cancelado_em||null
+  }));
+  const avulsos=itensAvistaFatura(nome,k).map(l=>({
+    id:l.id,data:l.data,descricao:l.descricao,valor:+l.valor,tipo:l.tipo,categoria:l.categoria
+  }));
+  const reports=reportsFatura(nome,k).map(l=>({
+    id:l.id,data:l.data,descricao:l.descricao,valor:+l.valor,tipo:l.tipo,categoria:l.categoria
+  }));
+  const terceiros=D.terceiros.filter(t=>t.cartao===nome && !t.recebido &&
+    (!t.competencia || t.competencia===mLabel(k))).map(t=>({
+      id:t.id,pessoa:t.pessoa,descricao:t.descricao,valor:+t.valor,competencia:t.competencia
+    }));
+  const ajustes=ajustesFatura(nome,k).map(l=>({
+    id:l.id,data:l.data,descricao:l.descricao,valor:+l.valor,tipo:l.tipo
+  }));
+  return {parcelas,assinaturas,avulsos,reports,terceiros,ajustes};
+}
+async function congelarFatura(nome,k,valorForcado){
+  if(FALTANDO.includes('faturas_fechadas')) return null;
+  const existente=faturaFechada(nome,k); if(existente) return existente;
+  const ciclo=cicloDe(nome,k), jan=janelaFatura(nome,k), comp=composicaoFatura(nome,k);
+  const sua=valorForcado==null ? faturaCartaoViva(nome,k) : +valorForcado;
+  const terc=comp.terceiros.reduce((s,x)=>s+ +x.valor,0);
+  const rep=comp.reports.reduce((s,x)=>s+ +x.valor,0);
+  const linha={grupo_id:GRUPO,cartao:nome,competencia:k,fecha:ciclo?.fecha||jan?.fim||null,
+    vence:ciclo?.vence||null,sua_parte:sua,total_real:sua+terc+rep,composicao:comp,
+    criado_por:USER?.id||null};
+  const {data,error}=await sb.from('faturas_fechadas')
+    .upsert(linha,{onConflict:'grupo_id,cartao,competencia'}).select().single();
+  if(error){ toast('Não consegui congelar a fatura: '+error.message,5000); return null; }
+  const i=D.faturas_fechadas.findIndex(x=>x.id===data.id);
+  if(i>=0) D.faturas_fechadas[i]=data; else D.faturas_fechadas.push(data);
+  cacheSave(); return data;
+}
+async function descongelarFatura(nome,k){
+  const f=faturaFechada(nome,k); if(!f) return true;
+  return remover('faturas_fechadas',f.id);
 }
 
 /* Parcela de uma compra simulada neste mês. Independe de cartão escolhido:
@@ -973,6 +1072,8 @@ window.marcarItem=async(dia,lado,ix)=>{
   const rel=lancRelacionado(it,MREF);
   const feito=rel && rel.itens.some(confirmado);
   if(feito){
+    if(it.tipo==='cartao' || it.tipo==='reserva')
+      await descongelarFatura(it.cartao, it.tipo==='reserva'?it.competencia:MREF);
     /* desmarcar: o que o painel criou some; o que veio de outra origem só
        volta a ser previsão, para não perder o valor real da fatura */
     for(const l of rel.itens.filter(confirmado)){
@@ -987,6 +1088,11 @@ window.marcarItem=async(dia,lado,ix)=>{
     for(const l of rel.itens) await atualizar('lancamentos', l.id, {status:'Confirmado'});
     render(); toast(it.desc+' confirmado · '+BRL(rel.valor));
     return;
+  }
+  if(it.tipo==='cartao' || it.tipo==='reserva'){
+    const compFat=it.tipo==='reserva'?it.competencia:MREF;
+    const snap=await congelarFatura(it.cartao,compFat,it.valor);
+    if(!snap) return;
   }
   const criado=await inserir('lancamentos', montaLanc(it,MREF,dia));
   if(criado){ render(); toast(it.desc+' lançado · '+BRL(it.valor)); }
@@ -1621,7 +1727,7 @@ window.setRow=async(t,id,campo,val)=>{if(await atualizar(t,id,{[campo]:val})){re
 
 function vAssin(){
   const cartoes=[...new Set(D.assinaturas.map(a=>a.cartao).filter(Boolean))].sort();
-  const comStatus=D.assinaturas.map(a=>({...a, _status:a.projetar?'ativa':'pausada'}));
+  const comStatus=D.assinaturas.map(a=>({...a, _status:a.projetar?'ativa':'encerrada'}));
   const lista=aplicaFiltro('assin', comStatus, 'descricao', '_status', 'cartao');
   return head('Assinaturas','Desmarque para ver na hora quanto sobraria sem ela.')
   +`<div class="kpis">${kpi('Total ativo',BRL(totAssin()))}
@@ -1631,7 +1737,7 @@ function vAssin(){
     desde quando ela cobra nesse cartão</small></h2>
   <div class="pbody" style="padding-bottom:0">
     ${barraFiltro('assin', {placeholder:'Buscar assinatura…',
-      tipos:[['ativa','Ativas'],['pausada','Pausadas']], categorias:cartoes})}
+      tipos:[['ativa','Ativas'],['encerrada','Encerradas']], categorias:cartoes})}
   </div>
   <div class="tw"><table><thead><tr><th class="c">Projetar</th><th>Nome</th><th>Cartão</th>
     <th class="c">Dia</th><th class="r">Valor</th><th class="r">Por ano</th><th></th></tr></thead><tbody>
@@ -1639,20 +1745,23 @@ function vAssin(){
     const aberto=ASSIN_ABERTO===a.id;
     return `<tr class="${a.projetar?'':'dim'}">
     <td class="c"><input type="checkbox" ${a.projetar?'checked':''} style="width:auto;cursor:pointer"
-      onchange="setRow('assinaturas','${a.id}','projetar',this.checked)"></td>
+      onchange="toggleAssinatura('${a.id}',this.checked)"></td>
     <td><b style="cursor:pointer" onclick="toggleAssin('${a.id}')">${aberto?'▾ ':'▸ '}${esc(a.descricao)}</b>${a.observacao?`<br><span class="tag t-w">${esc(a.observacao)}</span>`:''}${
       !a.dia?' <span class="tag t-w">sem dia — projeção pode errar</span>':''}</td>
     <td>${esc(a.cartao||'—')}</td>
     <td class="c"><input type="number" min="1" max="31" value="${a.dia||''}" placeholder="—" style="width:48px;padding:3px 5px;text-align:center"
-      onchange="setRow('assinaturas','${a.id}','dia',this.value?+this.value:null)"></td>
+      onchange="mudarAssinatura('${a.id}','dia',this.value?+this.value:null)"></td>
     <td class="r">${BRL(a.valor)}</td>
     <td class="r">${a.projetar?BRL(a.valor*12):'—'}</td>
     <td class="r"><button class="btn dgr" onclick="delRow('assinaturas','${a.id}')">excluir</button></td></tr>
     ${aberto?`<tr class="sub"><td colspan="7" style="padding:4px 15px 10px">
-      <span class="note">Começou a cobrar neste cartão a partir de:</span>
+      <span class="note">Vigência nesta versão/cartão:</span>
       <input type="date" value="${a.ativo_desde||''}" style="padding:3px 7px;margin-left:6px"
         onchange="setRow('assinaturas','${a.id}','ativo_desde',this.value||null)">
-      <span class="note" style="margin-left:8px">deixe em branco se ela sempre cobrou aqui — só preencha se mudou de cartão ou é nova, senão a projeção pode inventar uma cobrança antiga que nunca aconteceu</span>
+      <span class="note" style="margin-left:8px">até</span>
+      <input type="date" value="${a.cancelado_em||''}" style="padding:3px 7px;margin-left:6px"
+        onchange="setFimAssinatura('${a.id}',this.value||null)">
+      <span class="note" style="margin-left:8px">encerrar não apaga meses anteriores; reativar cria uma nova vigência.</span>
     </td></tr>`:''}`;}).join('')
     ||`<tr><td colspan="6" class="note" style="padding:20px;text-align:center">${
       D.assinaturas.length?'Nenhuma assinatura bate com o filtro.':'Nenhuma assinatura cadastrada.'}</td></tr>`}
@@ -1667,8 +1776,42 @@ function vAssin(){
 window.addAssin=async()=>{
   const n=$('a_n').value.trim(),v=parseFloat($('a_v').value);
   if(!n||!v) return toast('Preencha nome e valor');
-  if(await inserir('assinaturas',{descricao:n,valor:v,cartao:$('a_c').value.trim()||null,projetar:true}))
+  if(await inserir('assinaturas',{descricao:n,valor:v,cartao:$('a_c').value.trim()||null,
+      projetar:true,ativo_desde:hoje(),cancelado_em:null}))
     {render();toast(n+' adicionada');}
+};
+window.setFimAssinatura=async(id,data)=>{
+  const a=D.assinaturas.find(x=>x.id===id); if(!a) return;
+  if(await atualizar('assinaturas',id,{cancelado_em:data||null,projetar:!data})){
+    render(); toast(data?'Assinatura encerrada sem apagar o histórico':'Fim removido');
+  }
+};
+window.toggleAssinatura=async(id,ativa)=>{
+  const a=D.assinaturas.find(x=>x.id===id); if(!a) return;
+  if(!ativa){
+    if(await atualizar('assinaturas',id,{projetar:false,cancelado_em:hoje()})){
+      render(); toast(a.descricao+' encerrada hoje; histórico preservado');
+    }
+    return;
+  }
+  if(a.cancelado_em){
+    const nova={descricao:a.descricao,valor:+a.valor,cartao:a.cartao||null,dia:a.dia||null,
+      projetar:true,observacao:a.observacao||null,ativo_desde:hoje(),cancelado_em:null};
+    if(await inserir('assinaturas',nova)){render();toast(a.descricao+' reativada numa nova vigência');}
+  }else if(await atualizar('assinaturas',id,{projetar:true})){render();toast(a.descricao+' voltou à projeção');}
+};
+window.mudarAssinatura=async(id,campo,val)=>{
+  const a=D.assinaturas.find(x=>x.id===id); if(!a || a[campo]===val) return;
+  if(!a.projetar || a.cancelado_em){
+    if(await atualizar('assinaturas',id,{[campo]:val})){render();toast('Histórico corrigido');}
+    return;
+  }
+  const fim=diaAnterior(hoje());
+  const velha=await atualizar('assinaturas',id,{projetar:false,cancelado_em:fim});
+  if(!velha) return;
+  const nova={descricao:a.descricao,valor:+a.valor,cartao:a.cartao||null,dia:a.dia||null,
+    projetar:true,observacao:a.observacao||null,ativo_desde:hoje(),cancelado_em:null,[campo]:val};
+  if(await inserir('assinaturas',nova)){render();toast('Nova vigência criada a partir de hoje');}
 };
 
 let TERC_ORIG='Pix', GRUPO_ABERTO=null;
@@ -3969,6 +4112,7 @@ let FAT_CART=null;
    É o que acontece quando o cartão pula uma fatura. */
 window.pularMes=async(pid,k)=>{
   const p=D.parcelamentos.find(x=>x.id===pid); if(!p) return;
+  if(faturaFechada(p.cartao||'',k)) return toast('Fatura fechada — histórico protegido');
   const meses=mesesDaParcela(p);
   if(!meses.includes(k)) return;
   const novos=meses.map(m=> m>=k ? addM(m,1) : m);
@@ -3979,6 +4123,7 @@ window.pularMes=async(pid,k)=>{
 /* Traz de volta: desfaz o pulo mais recente deste mês. */
 window.voltarMes=async(pid,k)=>{
   const p=D.parcelamentos.find(x=>x.id===pid); if(!p) return;
+  if(faturaFechada(p.cartao||'',k)) return toast('Fatura fechada — histórico protegido');
   const meses=mesesDaParcela(p);
   const novos=meses.map(m=> m>k ? addM(m,-1) : m);
   if(await atualizar('parcelamentos',pid,{competencias:novos})){
@@ -3990,7 +4135,24 @@ window.setFatCart=v=>{ FAT_CART=v; render(); };
 /* Adiciona um ajuste pontual (cobrança extra ou estorno) na fatura de um
    cartão/mês. Cada um vira um lançamento próprio, categoria "Ajuste Fatura" —
    soma em cima do calculado, nunca substitui. Excluir é o delRow padrão. */
+window.setAssinExcecao=async(id,k,val)=>{
+  if(faturaFechada(D.assinaturas.find(a=>a.id===id)?.cartao||'',k)) return toast('Fatura fechada — histórico protegido');
+  const ex=D.assinatura_excecoes.find(x=>x.assinatura_id===id && x.competencia===k);
+  if(val===''){
+    if(ex && await remover('assinatura_excecoes',ex.id)){render();toast('Voltou ao cálculo automático');}
+    return;
+  }
+  const vezes=Math.max(0,Math.min(6,+val||0));
+  const linha={grupo_id:GRUPO,assinatura_id:id,competencia:k,vezes,atualizado_em:new Date().toISOString()};
+  const {data,error}=await sb.from('assinatura_excecoes')
+    .upsert(linha,{onConflict:'grupo_id,assinatura_id,competencia'}).select().single();
+  if(error){toast('Erro ao salvar exceção: '+error.message,4200);return;}
+  if(ex){const i=D.assinatura_excecoes.findIndex(x=>x.id===ex.id);D.assinatura_excecoes[i]=data;}
+  else D.assinatura_excecoes.push(data);
+  cacheSave();render();toast('Esta fatura vai usar '+vezes+'x para a assinatura');
+};
 window.addAjusteFatura=async(nome,k)=>{
+  if(faturaFechada(nome,k)) return toast('Fatura fechada — histórico protegido');
   const desc=$('fat_desc')?.value.trim();
   const tipo=$('fat_tipo')?.value;
   const v=parseFloat($('fat_valor')?.value);
@@ -4015,20 +4177,24 @@ function vFatura(){
   const real = faturaLancada(n,comp);
   const calc = faturaCalculada(n,comp);
   const valor = faturaCartao(n,comp);
+  const snap = faturaFechada(n,comp);
 
-  const parcelas = D.parcelamentos.filter(p=>(p.cartao||'')===n && parcelaCaiEm(p,comp));
-  const assinaturas = D.assinaturas.filter(a=>a.projetar && (a.cartao||'')===n)
-    .map(a=>({a, vz:vezesAssinatura(a,comp)})).filter(x=>x.vz>0);
-  const terceiros = D.terceiros.filter(t=>t.cartao===n && !t.recebido &&
-    (!t.competencia || t.competencia===mLabel(comp)));
+  const parcelas = snap ? (snap.composicao?.parcelas||[]) :
+    D.parcelamentos.filter(p=>(p.cartao||'')===n && parcelaCaiEm(p,comp));
+  const assinaturas = snap ? (snap.composicao?.assinaturas||[]).map(a=>({
+      a:{id:a.id,descricao:a.descricao,valor:a.valor,dia:a.dia},vz:+a.vz,auto:+a.auto,
+      ex:a.manual?{vezes:a.vz}:null
+    })) : assinaturasDaFatura(n,comp);
+  const terceiros = snap ? (snap.composicao?.terceiros||[]) :
+    D.terceiros.filter(t=>t.cartao===n && !t.recebido &&
+      (!t.competencia || t.competencia===mLabel(comp)));
   /* A lista tem que bater com a conta de "Sua parte": compras à vista (somam)
      e créditos no cartão (abatem). Ficam de fora o total declarado e os
      ajustes, que têm painel próprio, e o Reports, que é dinheiro protegido
      e ganhou lista separada — antes aparecia aqui como se fosse compra
      de vocês, e a lista não fechava com o valor usado. */
-  const avulsos = D.lancamentos.filter(l=>l.cartao===n && ym(l.data)===comp && !l.protegido &&
-    l.categoria!=='Ajuste Fatura' && !(l.categoria==='Cartão' && l.tipo!=='Entrada'));
-  const reportsCart = D.lancamentos.filter(l=>l.cartao===n && ym(l.data)===comp && l.protegido);
+  const avulsos = snap ? (snap.composicao?.avulsos||[]) : itensAvistaFatura(n,comp);
+  const reportsCart = snap ? (snap.composicao?.reports||[]) : reportsFatura(n,comp);
   const somaAvulsos = avulsos.reduce((s,l)=>s+(l.tipo==='Entrada'? -(+l.valor) : +l.valor),0);
   const somaReportsCart = reportsCart.reduce((s,l)=>s+ +l.valor,0);
   const somaParc = parcelas.reduce((s,p)=>s+ +p.valor_parcela,0);
@@ -4036,12 +4202,11 @@ function vFatura(){
   const somaTerc = terceiros.reduce((s,t)=>s+ +t.valor,0);
   /* Reports é dinheiro protegido — some no cartão de verdade (o banco não
      distingue), mas fica fora de "sua parte", igual terceiros. */
-  const reportsNoCartao = D.lancamentos.filter(l=>
-    l.protegido && (l.cartao||'')===n && ym(l.data)===comp && l.tipo!=='Entrada');
+  const reportsNoCartao = reportsCart.filter(l=>l.tipo!=='Entrada');
   const somaReports = reportsNoCartao.reduce((s,l)=>s+ +l.valor,0);
   const conhecido = somaParc+somaAssin;
   const naoIdentificado = real ? real.valor-conhecido : null;
-  const proximas = D.parcelamentos.filter(p=>(p.cartao||'')===n && +p.restantes>0
+  const proximas = snap ? [] : D.parcelamentos.filter(p=>(p.cartao||'')===n && +p.restantes>0
     && !parcelaCaiEm(p,comp) && mesesDaParcela(p).some(m=>m>comp));
 
   return head('Fatura','O que compõe a fatura de cada cartão, item por item.')
@@ -4153,11 +4318,15 @@ function vFatura(){
 
   <div class="panel"><h2>Assinaturas <small>${BRL(somaAssin)}</small></h2>
   ${assinaturas.length?`<div class="tw"><table><thead><tr><th>Assinatura</th>
-    <th class="c">Dia da cobrança</th><th class="c">Vezes no ciclo</th><th class="r">Valor</th>
+    <th class="c">Dia da cobrança</th><th class="c">Vezes no ciclo</th><th class="c">Banco cobrou</th><th class="r">Valor</th>
   </tr></thead><tbody>
   ${assinaturas.map(x=>`<tr><td>${esc(x.a.descricao)}</td>
     <td class="c">${x.a.dia||'—'}</td>
     <td class="c">${x.vz>1?`<span class="tag t-no">${x.vz}x</span>`:x.vz}</td>
+    <td class="c">${snap?'—':`<select style="padding:3px 5px" onchange="setAssinExcecao(\'${x.a.id}\',\'${comp}\',this.value)">
+      <option value="" ${!x.ex?'selected':''}>auto (${x.auto}x)</option>
+      ${[0,1,2,3].map(v=>`<option value="${v}" ${x.ex&&+x.ex.vezes===v?'selected':''}>${v}x</option>`).join('')}
+    </select>`}</td>
     <td class="r">${BRL((+x.a.valor)*x.vz)}${x.vz>1?
       `<span class="note" style="display:block">${BRL(x.a.valor)} cada</span>`:''}</td></tr>`).join('')}
   </tbody></table></div>`
