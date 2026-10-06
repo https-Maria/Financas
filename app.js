@@ -166,9 +166,23 @@ function mesesEntre(a,b){const[ay,am]=a.split('-').map(Number),[by,bm]=b.split('
    Entrada, categoria Cartão. SEMPRE abate, esteja a fatura vindo do cálculo
    ou de um total declarado. É a mesma tela de sempre, só a direção muda:
    Saída = uma cobrança; Entrada = o contrário de uma cobrança. */
+function temFaturaDeclarada(nome,k){
+  return D.lancamentos.some(l=>
+    ym(l.data)===k && !l.protegido && (l.cartao||'')===nome &&
+    l.tipo!=='Entrada' && (l.categoria==='Cartão' || /fatura/i.test(l.descricao||'')));
+}
+function lancamentoNoCiclo(l,nome,k){
+  /* Histórico já lançado não é realocado por uma regra nova. Em faturas
+     abertas/futuras, a data da compra é encaixada na janela real do ciclo. */
+  if(temFaturaDeclarada(nome,k)) return ym(l.data)===k;
+  const j=janelaFatura(nome,k);
+  if(!j) return !D.ciclos.some(c=>c.cartao===nome) && ym(l.data)===k;
+  const d=String(l.data);
+  return d>j.ini && d<=j.fim;
+}
 function creditosCartao(nome,k){
   return D.lancamentos.filter(l=>
-    ym(l.data)===k && !l.protegido && (l.cartao||'')===nome &&
+    lancamentoNoCiclo(l,nome,k) && !l.protegido && (l.cartao||'')===nome &&
     l.tipo==='Entrada' && l.categoria==='Cartão');
 }
 function somaValores(lista){ return lista.reduce((s,l)=>s+ +l.valor,0); }
@@ -281,8 +295,10 @@ function faturaCalculada(nome, k, extra){
   };
   D.parcelamentos.forEach(conta);
   if(extra) conta(extra);
-  D.assinaturas.forEach(a=>{ if(a.projetar && (a.cartao||'')===nome)
-    t += (+a.valor) * vezesAssinatura(a,k); });
+  D.assinaturas.forEach(a=>{ if((a.cartao||'')===nome){
+    const vz=vezesAssinatura(a,k);
+    if(vz) t += (+a.valor) * vz;
+  }});
   return t;
 }
 
@@ -293,14 +309,27 @@ function faturaCalculada(nome, k, extra){
    os ajustes pontuais da própria aba Fatura (ver mais abaixo). */
 function comprasAVista(nome, k){
   return D.lancamentos.filter(l=>
-    ym(l.data)===k && !l.protegido && (l.cartao||'')===nome &&
+    lancamentoNoCiclo(l,nome,k) && !l.protegido && (l.cartao||'')===nome &&
     l.categoria!=='Cartão' && l.categoria!=='Ajuste Fatura' && l.tipo!=='Entrada');
 }
-function faturaCartao(nome, k){
+function itensAvistaFatura(nome,k){
+  return D.lancamentos.filter(l=>l.cartao===nome && lancamentoNoCiclo(l,nome,k) && !l.protegido &&
+    l.categoria!=='Ajuste Fatura' && !(l.categoria==='Cartão' && l.tipo!=='Entrada'));
+}
+function reportsFatura(nome,k){
+  return D.lancamentos.filter(l=>l.protegido && (l.cartao||'')===nome &&
+    lancamentoNoCiclo(l,nome,k) && l.tipo!=='Entrada');
+}
+const faturaFechada = (nome,k) => D.faturas_fechadas.find(f=>f.cartao===nome && f.competencia===k) || null;
+function faturaCartaoViva(nome,k){
   const real=faturaLancada(nome,k);
   const base = real ? real.valor
     : (faturaCalculada(nome,k) - somaValores(creditosCartao(nome,k)) + somaValores(comprasAVista(nome,k)));
   return base + somaAjustesFatura(nome,k,real);
+}
+function faturaCartao(nome,k){
+  const fechada=faturaFechada(nome,k);
+  return fechada ? +fechada.sua_parte : faturaCartaoViva(nome,k);
 }
 
 /* Ajustes pontuais da aba Fatura — cobrança que o cálculo não previu (ex.:
@@ -319,6 +348,52 @@ function somaAjustesFatura(nome, k, real){
   if(real===undefined) real=faturaLancada(nome,k);
   return ajustesFatura(nome,k).filter(l=>ajusteConta(l,real))
     .reduce((s,l)=> s + (l.tipo==='Entrada' ? -(+l.valor) : +l.valor), 0);
+}
+
+/* Quando uma fatura é paga, congela a composição. Futuro continua dinâmico. */
+function composicaoFatura(nome,k){
+  const parcelas=D.parcelamentos.filter(p=>(p.cartao||'')===nome && parcelaCaiEm(p,k))
+    .map(p=>({id:p.id,descricao:p.descricao,valor_parcela:+p.valor_parcela,total_parcelas:p.total_parcelas,
+      restantes:p.restantes,primeira_fatura:p.primeira_fatura,competencias:Array.isArray(p.competencias)?p.competencias:null}));
+  const assinaturas=assinaturasDaFatura(nome,k).filter(x=>x.vz>0).map(x=>({
+    id:x.a.id,descricao:x.a.descricao,valor:+x.a.valor,dia:x.a.dia||null,vz:x.vz,auto:x.auto,
+    manual:!!x.ex,ativo_desde:x.a.ativo_desde||null,cancelado_em:x.a.cancelado_em||null
+  }));
+  const avulsos=itensAvistaFatura(nome,k).map(l=>({
+    id:l.id,data:l.data,descricao:l.descricao,valor:+l.valor,tipo:l.tipo,categoria:l.categoria
+  }));
+  const reports=reportsFatura(nome,k).map(l=>({
+    id:l.id,data:l.data,descricao:l.descricao,valor:+l.valor,tipo:l.tipo,categoria:l.categoria
+  }));
+  const terceiros=D.terceiros.filter(t=>t.cartao===nome && !t.recebido &&
+    (!t.competencia || t.competencia===mLabel(k))).map(t=>({
+      id:t.id,pessoa:t.pessoa,descricao:t.descricao,valor:+t.valor,competencia:t.competencia
+    }));
+  const ajustes=ajustesFatura(nome,k).map(l=>({
+    id:l.id,data:l.data,descricao:l.descricao,valor:+l.valor,tipo:l.tipo
+  }));
+  return {parcelas,assinaturas,avulsos,reports,terceiros,ajustes};
+}
+async function congelarFatura(nome,k,valorForcado){
+  if(FALTANDO.includes('faturas_fechadas')) return null;
+  const existente=faturaFechada(nome,k); if(existente) return existente;
+  const ciclo=cicloDe(nome,k), jan=janelaFatura(nome,k), comp=composicaoFatura(nome,k);
+  const sua=valorForcado==null ? faturaCartaoViva(nome,k) : +valorForcado;
+  const terc=comp.terceiros.reduce((s,x)=>s+ +x.valor,0);
+  const rep=comp.reports.reduce((s,x)=>s+ +x.valor,0);
+  const linha={grupo_id:GRUPO,cartao:nome,competencia:k,fecha:ciclo?.fecha||jan?.fim||null,
+    vence:ciclo?.vence||null,sua_parte:sua,total_real:sua+terc+rep,composicao:comp,
+    criado_por:USER?.id||null};
+  const {data,error}=await sb.from('faturas_fechadas')
+    .upsert(linha,{onConflict:'grupo_id,cartao,competencia'}).select().single();
+  if(error){ toast('Não consegui congelar a fatura: '+error.message,5000); return null; }
+  const i=D.faturas_fechadas.findIndex(x=>x.id===data.id);
+  if(i>=0) D.faturas_fechadas[i]=data; else D.faturas_fechadas.push(data);
+  cacheSave(); return data;
+}
+async function descongelarFatura(nome,k){
+  const f=faturaFechada(nome,k); if(!f) return true;
+  return remover('faturas_fechadas',f.id);
 }
 
 /* Parcela de uma compra simulada neste mês. Independe de cartão escolhido:
