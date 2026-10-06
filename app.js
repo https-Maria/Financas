@@ -11,16 +11,16 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v86';
+const APP_VER='v87';
 
 /* =====================================================================
    ESTADO
    ===================================================================== */
 const TABELAS = ['rendas','fixas','beneficios','cartoes','parcelamentos',
-                 'assinaturas','lancamentos','terceiros','metas','casa_itens','financiamentos','agenda','snapshots','ciclos','auditoria','notas'];
+                 'assinaturas','assinatura_excecoes','lancamentos','terceiros','metas','casa_itens','financiamentos','agenda','snapshots','ciclos','faturas_fechadas','auditoria','notas'];
 let USER=null, GRUPO=null, EU=null;
 let D = {rendas:[],fixas:[],beneficios:[],cartoes:[],parcelamentos:[],
-         assinaturas:[],lancamentos:[],terceiros:[],metas:[],casa_itens:[],financiamentos:[],agenda:[],snapshots:[],ciclos:[],auditoria:[],notas:[],config:null};
+         assinaturas:[],assinatura_excecoes:[],lancamentos:[],terceiros:[],metas:[],casa_itens:[],financiamentos:[],agenda:[],snapshots:[],ciclos:[],faturas_fechadas:[],auditoria:[],notas:[],config:null};
 let ONLINE = navigator.onLine, SYNC='off', FALTANDO=[];
 
 /* =====================================================================
@@ -41,6 +41,16 @@ const diaChave = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')
 const mLabel = k => k.slice(5)+'/'+k.slice(0,4);
 function addM(k,n){let[y,m]=k.split('-').map(Number);m+=n;y+=Math.floor((m-1)/12);m=((m-1)%12+12)%12+1;
   return y+'-'+String(m).padStart(2,'0');}
+function addMesData(data,n){
+  const [y,m,d]=String(data).split('-').map(Number);
+  const base=(y*12)+(m-1)+n, ny=Math.floor(base/12), nm=((base%12)+12)%12+1;
+  const ult=new Date(ny,nm,0).getDate();
+  return ny+'-'+String(nm).padStart(2,'0')+'-'+String(Math.min(d,ult)).padStart(2,'0');
+}
+function diaAnterior(data){
+  const d=new Date(String(data)+'T12:00:00'); d.setDate(d.getDate()-1);
+  return diaChave(d);
+}
 function horizon(n,ini){const o=[];let k=ini||ym(hoje());for(let i=0;i<n;i++){o.push(k);k=addM(k,1);}return o;}
 /* Lista do seletor: 6 meses para trás, 12 para frente, mais qualquer mês
    que já tenha lançamento ou competência de terceiro registrada. */
@@ -65,8 +75,9 @@ const rendaAtiva = k => D.rendas.filter(r=>r.ativo && !r.protegida &&
   !(r.encerra_em && k && k >= ym(r.encerra_em)));
 const totRenda = k => rendaAtiva(k).reduce((s,r)=>s+ +r.valor,0);
 const totFixas = () => D.fixas.filter(f=>f.ativo).reduce((s,f)=>s+ +f.valor,0);
-const totAssin = (k) => D.assinaturas.filter(a=>a.projetar)
-  .reduce((s,a)=>s + (+a.valor) * (k ? vezesAssinatura(a,k) : 1), 0);
+const totAssin = (k) => k
+  ? D.assinaturas.reduce((s,a)=>s + (+a.valor) * vezesAssinatura(a,k), 0)
+  : D.assinaturas.filter(a=>a.projetar).reduce((s,a)=>s + (+a.valor), 0);
 const totVA    = () => D.beneficios.filter(b=>b.ativo).reduce((s,b)=>s+ +b.valor,0);
 const saldoParc= () => D.parcelamentos.reduce((s,p)=>s+ +p.valor_parcela*p.restantes,0);
 const aReceber = () => D.terceiros.filter(t=>!t.recebido).reduce((s,t)=>s+ +t.valor,0);
