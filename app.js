@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v85';
+const APP_VER='v86';
 
 /* =====================================================================
    ESTADO
@@ -1672,7 +1672,7 @@ window.addAssin=async()=>{
 };
 
 let TERC_ORIG='Pix', GRUPO_ABERTO=null;
-window.TERC_FORM={p:'',d:'',v:''};  /* global: os campos do formulário gravam aqui */
+window.TERC_FORM={p:'',d:'',v:'',n:'1'};  /* global: os campos do formulário gravam aqui */
 function vTerc(){
   const hj=hoje();
   const dias=t=>t.data_saida?Math.max(0,Math.round((new Date(hj)-new Date(t.data_saida))/86400000)):null;
@@ -1688,6 +1688,8 @@ function vTerc(){
   const parados=abertos.filter(t=>semPrazo(t) && dias(t)!==null && dias(t)>=30);
 
   const pessoasTodas=[...new Set(D.terceiros.map(t=>t.pessoa))].sort();
+  const ehCart = D.cartoes.some(c=>c.nome===TERC_ORIG);   /* a compra foi num cartão de vocês */
+  const vezes  = Math.max(1, +(TERC_FORM.n||1));          /* parcelas do terceiro */
   const comStatus=D.terceiros.map(t=>({...t, _status:t.recebido?'recebido':'pendente'}));
   const filtrados=aplicaFiltro('terc', comStatus, ['pessoa','descricao'], '_status', 'pessoa');
 
@@ -1790,10 +1792,10 @@ function vTerc(){
     <div class="kgroup sub">Registrar o que você emprestou</div>
     <div class="form">
       <div class="fld"><label>Quem</label><input id="t_p" placeholder="Ex.: Tia Rose"
-        value="${esc(TERC_FORM.p||'')}" oninput="TERC_FORM.p=this.value"></div>
+        value="${esc(TERC_FORM.p||'')}" oninput="tercSet('p',this.value)"></div>
       <div class="fld" style="grid-column:span 2"><label>O que é</label>
         <input id="t_d" placeholder="Ex.: compra da minha mãe no meu cartão"
-          value="${esc(TERC_FORM.d||'')}" oninput="TERC_FORM.d=this.value"></div>
+          value="${esc(TERC_FORM.d||'')}" oninput="tercSet('d',this.value)"></div>
       <div class="fld"><label>Saiu de onde</label><select id="t_o" onchange="setTercOrig(this.value)">
         <optgroup label="Fora do cartão">
           <option ${TERC_ORIG==='Pix'?'selected':''}>Pix</option>
@@ -1805,18 +1807,30 @@ function vTerc(){
             `<option ${TERC_ORIG===c.nome?'selected':''}>${esc(c.nome)}</option>`).join('')}
         </optgroup>
       </select></div>
-      <div class="fld"><label>Valor</label><input type="number" step="0.01" id="t_v"
-        value="${TERC_FORM.v||''}" oninput="TERC_FORM.v=this.value"></div>
-      ${D.cartoes.some(c=>c.nome===TERC_ORIG)
-        ? `<div class="fld"><label>Em qual fatura</label>
+      ${ehCart
+        ? `<div class="fld"><label>Em quantas vezes</label>
+            <select id="t_n" onchange="tercSet('n',this.value,true)">
+              ${Array.from({length:24},(_,i)=>i+1).map(n=>`<option value="${n}" ${
+                String(TERC_FORM.n||'1')===String(n)?'selected':''}>${n===1?'à vista':n+'x'}</option>`).join('')}
+            </select></div>
+           <div class="fld"><label>${vezes>1?'Valor de cada parcela':'Valor'}</label>
+             <input type="number" step="0.01" id="t_v" value="${TERC_FORM.v||''}"
+               oninput="tercSet('v',this.value)" onchange="tercSet('v',this.value,true)"></div>
+           <div class="fld"><label>${vezes>1?'Fatura da 1ª parcela':'Em qual fatura'}</label>
             <select id="t_cp">${mesesDisponiveis().map(m=>
               `<option value="${mLabel(m)}" ${m===MREF?'selected':''}>${mLabel(m)}</option>`).join('')}</select></div>`
-        : `<div class="fld"><label>Quando saiu</label><input type="date" id="t_ds" value="${hoje()}"></div>
+        : `<div class="fld"><label>Valor</label>
+             <input type="number" step="0.01" id="t_v" value="${TERC_FORM.v||''}"
+               oninput="tercSet('v',this.value)"></div>
+           <div class="fld"><label>Quando saiu</label><input type="date" id="t_ds" value="${hoje()}"></div>
            <div class="fld"><label>Previsão de volta</label><input type="date" id="t_pv"></div>`}
       <div class="fld"><label>&nbsp;</label><button class="btn" onclick="addTerc()">Registrar</button></div>
     </div>
-    <p class="note" style="margin-top:10px">${D.cartoes.some(c=>c.nome===TERC_ORIG)
-      ? 'Compra de terceiro no cartão: escolha a fatura em que ela cai. O valor é abatido da parte de vocês.'
+    <p class="note" style="margin-top:10px">${ehCart
+      ? (vezes>1
+          ? `${vezes} parcelas de ${BRL(+TERC_FORM.v||0)} — total ${BRL((+TERC_FORM.v||0)*vezes)},
+             da fatura escolhida em diante. Cada parcela vira uma linha, e a lista agrupa tudo numa só.`
+          : 'Compra de terceiro no cartão: escolha a fatura em que ela cai. O valor é abatido da parte de vocês.')
       : 'Deixe a previsão em branco quando não houver prazo combinado. O app conta os dias e destaca quando passa de 30, 60 e 90.'}</p>
   </div></div>
 
@@ -1869,21 +1883,46 @@ window.addTerc=async()=>{
   const origem=$('t_o')?.value||'Pix';
   TERC_ORIG=origem;
   const ehCartao=D.cartoes.some(c=>c.nome===origem);
-  const ok=await inserir('terceiros',{
-    pessoa:p, descricao:d, valor:v, recebido:false, origem,
-    cartao: ehCartao?origem:null,
-    competencia: ehCartao ? ($('t_cp')?.value || mLabel(MREF)) : null,
-    data_saida: ehCartao ? null : ($('t_ds')?.value || hoje()),
-    previsao:   ehCartao ? null : ($('t_pv')?.value || null)});
-  if(ok){ window.TERC_FORM={p:'',d:'',v:''}; render();
-          toast(p+' deve '+BRL(v)+(ehCartao?' na fatura de '+origem:'')); }
+  /* Parcelado: uma linha por fatura, com "Parcela i/n" na descrição — é o
+     formato que a própria lista agrupa de volta num compromisso só. */
+  const n = ehCartao ? Math.max(1, +(TERC_FORM.n||1)) : 1;
+  const comp1 = ehCartao ? ($('t_cp')?.value || mLabel(MREF)) : null;
+  const avanca = (comp, i) => {               /* 'MM/AAAA' + i meses */
+    const [mm,aa]=comp.split('/').map(Number);
+    const t=mm-1+i;
+    return String(t%12+1).padStart(2,'0')+'/'+(aa+Math.floor(t/12));
+  };
+  let gravadas=0;
+  for(let i=0;i<n;i++){
+    const ok=await inserir('terceiros',{
+      pessoa:p, descricao: n>1 ? `Parcela ${i+1}/${n} — ${d}` : d,
+      valor:v, recebido:false, origem,
+      cartao: ehCartao?origem:null,
+      competencia: ehCartao ? avanca(comp1,i) : null,
+      data_saida: ehCartao ? null : ($('t_ds')?.value || hoje()),
+      previsao:   ehCartao ? null : ($('t_pv')?.value || null)});
+    if(!ok) break;
+    gravadas++;
+  }
+  if(gravadas){
+    window.TERC_FORM={p:'',d:'',v:'',n:'1'}; render();
+    toast(gravadas>1
+      ? `${p} deve ${gravadas}x de ${BRL(v)} — ${BRL(v*gravadas)} no total, na fatura do ${origem}`
+      : p+' deve '+BRL(v)+(ehCartao?' na fatura de '+origem:''));
+  }
 };
 /* marcar como recebido guarda também a data */
 /* Trocar "saiu de onde" redesenha a tela (muda os campos seguintes). Sem
    guardar o que já foi digitado, pessoa/descrição/valor se perdiam e o
    botão Registrar reclamava que faltava preencher. */
+/* guarda o que foi digitado e redesenha — render() não é global */
+window.tercSet=(campo,val,redesenha)=>{
+  window.TERC_FORM[campo]=val;
+  if(redesenha) render();
+};
 window.setTercOrig=v=>{
-  window.TERC_FORM={p:$('t_p')?.value||'', d:$('t_d')?.value||'', v:$('t_v')?.value||''};
+  window.TERC_FORM={p:$('t_p')?.value||'', d:$('t_d')?.value||'',
+                    v:$('t_v')?.value||'', n:TERC_FORM.n||'1'};
   TERC_ORIG=v; render();
   setTimeout(()=>$('t_v')?.focus(),0);
 };
