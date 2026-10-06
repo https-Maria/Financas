@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v87';
+const APP_VER='v88';
 
 /* =====================================================================
    ESTADO
@@ -130,7 +130,10 @@ function saldoConta(){
    caixa junto das contas fixas, e não no cálculo de fatura nenhuma. */
 const ehCrediario = p => !p.cartao;
 /* dia 31 = "último dia útil" (é sempre o último bloco do mês). */
-const diaDoCrediario = p => {
+const diaDoCrediario = (p,k) => {
+  /* Mudança de dia não reescreve meses anteriores: antes de dia_desde,
+     mantém a regra histórica antiga (dia 1 = primeira gaveta disponível). */
+  if(p.dia_desde && k && k < ym(p.dia_desde)) return 1;
   const d = +p.dia;
   return d>=1 && d<=31 ? d : 1;
 };
@@ -673,7 +676,7 @@ function blocosDoMes(k, comPlanejado){
   D.rendas.filter(r=>r.ativo&&!r.protegida).forEach(r=>dias.add(+r.dia||1));
   D.fixas.filter(f=>f.ativo).forEach(f=>dias.add(+f.dia||1));
   cartoes.forEach(c=>{ if(c.ativo && +c.dia_venc>1) dias.add(+c.dia_venc); });
-  crediariosDoMes(k).forEach(p=>dias.add(diaDoCrediario(p)));
+  crediariosDoMes(k).forEach(p=>dias.add(diaDoCrediario(p,k)));
   /* Os blocos são as datas em que há compromisso: renda, conta fixa e
      vencimento de fatura. Gasto avulso NÃO cria bloco — senão uma gasolina
      do dia 2 virava um "bloco dia 02" que não é data de entrada nenhuma. */
@@ -694,7 +697,7 @@ function blocosDoMes(k, comPlanejado){
     const saidas = D.fixas.filter(f=>f.ativo&&noDia(f.dia,dia))
       .map(f=>({desc:f.descricao,valor:+f.valor,tipo:'fixa',
                 categoria:f.categoria||'Outros',quem:'Casal'}));
-    crediariosDoMes(k).filter(p=>noDia(diaDoCrediario(p),dia)).forEach(p=>{
+    crediariosDoMes(k).filter(p=>noDia(diaDoCrediario(p,k),dia)).forEach(p=>{
       const qual=mesesDaParcela(p).indexOf(k)+1;
       const jaPagas=(+p.total_parcelas||0)-(+p.restantes||0);
       saidas.push({desc:p.descricao+(p.total_parcelas?` (${jaPagas+qual}/${p.total_parcelas})`:''),
@@ -1018,7 +1021,7 @@ function vCompra(){
       ${SIM.cartao==='__credi'?`<div class="fld" style="margin-bottom:11px"><label>Dia da parcela</label>
         <select onchange="simSet('dia',this.value)">
           <option value="31" ${String(SIM.dia||'31')==='31'?'selected':''}>Último dia útil</option>
-          ${Array.from({length:27},(_,i)=>i+1).map(d=>`<option value="${d}" ${
+          ${Array.from({length:30},(_,i)=>i+1).map(d=>`<option value="${d}" ${
             String(SIM.dia)===String(d)?'selected':''}>Dia ${String(d).padStart(2,'0')}</option>`).join('')}
         </select></div>`:''}
       <div class="fld" style="margin-bottom:11px"><label>Responsável</label>
@@ -1123,6 +1126,7 @@ window.confirmarCompra=async()=>{
   const ok = await inserir('parcelamentos',{
     descricao:SIM.desc.trim(), cartao:(SIM.cartao==='__credi'?null:SIM.cartao||null),
     dia:(SIM.cartao==='__credi'? (+SIM.dia||31) : null),
+    dia_desde:(SIM.cartao==='__credi'? (c.ini+'-01') : null),
     valor_parcela:+c.parcela.toFixed(2), total_parcelas:SIM.parcelas,
     restantes:SIM.parcelas, primeira_fatura:c.ini+'-01',
     responsavel:SIM.quem, origem:'simulacao_confirmada',
@@ -1697,9 +1701,9 @@ function vParc(){
       ${irregular?' <span class="tag t-w">meses definidos</span>':''}</td>
     <td>${p.cartao?esc(p.cartao):`<span class="tag t-w">crediário</span>
       <select style="padding:2px 5px;margin-top:3px;font-size:12px"
-        onchange="setRow('parcelamentos','${p.id}','dia',+this.value)">
+        onchange="setDiaCrediario('${p.id}',+this.value)">
         <option value="31" ${(+p.dia||31)===31?'selected':''}>último dia útil</option>
-        ${Array.from({length:27},(_,i)=>i+1).map(d=>`<option value="${d}" ${
+        ${Array.from({length:30},(_,i)=>i+1).map(d=>`<option value="${d}" ${
           +p.dia===d?'selected':''}>dia ${String(d).padStart(2,'0')}</option>`).join('')}
       </select>`}</td>
     <td class="r">${BRL(p.valor_parcela)}</td>
@@ -1724,6 +1728,12 @@ function vParc(){
   <div class="pbody"><button class="btn" onclick="go('compra')">Simular nova compra</button></div></div>`;
 }
 window.setRow=async(t,id,campo,val)=>{if(await atualizar(t,id,{[campo]:val})){render();toast('Atualizado');}};
+window.setDiaCrediario=async(id,val)=>{
+  const desde=ym(hoje())+'-01';
+  if(await atualizar('parcelamentos',id,{dia:val,dia_desde:desde})){
+    render(); toast('Dia do crediário atualizado a partir de '+mLabel(ym(desde)));
+  }
+};
 
 function vAssin(){
   const cartoes=[...new Set(D.assinaturas.map(a=>a.cartao).filter(Boolean))].sort();
