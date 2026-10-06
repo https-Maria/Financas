@@ -4133,7 +4133,24 @@ window.setFatCart=v=>{ FAT_CART=v; render(); };
 /* Adiciona um ajuste pontual (cobrança extra ou estorno) na fatura de um
    cartão/mês. Cada um vira um lançamento próprio, categoria "Ajuste Fatura" —
    soma em cima do calculado, nunca substitui. Excluir é o delRow padrão. */
+window.setAssinExcecao=async(id,k,val)=>{
+  if(faturaFechada(D.assinaturas.find(a=>a.id===id)?.cartao||'',k)) return toast('Fatura fechada — histórico protegido');
+  const ex=D.assinatura_excecoes.find(x=>x.assinatura_id===id && x.competencia===k);
+  if(val===''){
+    if(ex && await remover('assinatura_excecoes',ex.id)){render();toast('Voltou ao cálculo automático');}
+    return;
+  }
+  const vezes=Math.max(0,Math.min(6,+val||0));
+  const linha={grupo_id:GRUPO,assinatura_id:id,competencia:k,vezes,atualizado_em:new Date().toISOString()};
+  const {data,error}=await sb.from('assinatura_excecoes')
+    .upsert(linha,{onConflict:'grupo_id,assinatura_id,competencia'}).select().single();
+  if(error){toast('Erro ao salvar exceção: '+error.message,4200);return;}
+  if(ex){const i=D.assinatura_excecoes.findIndex(x=>x.id===ex.id);D.assinatura_excecoes[i]=data;}
+  else D.assinatura_excecoes.push(data);
+  cacheSave();render();toast('Esta fatura vai usar '+vezes+'x para a assinatura');
+};
 window.addAjusteFatura=async(nome,k)=>{
+  if(faturaFechada(nome,k)) return toast('Fatura fechada — histórico protegido');
   const desc=$('fat_desc')?.value.trim();
   const tipo=$('fat_tipo')?.value;
   const v=parseFloat($('fat_valor')?.value);
@@ -4299,11 +4316,15 @@ function vFatura(){
 
   <div class="panel"><h2>Assinaturas <small>${BRL(somaAssin)}</small></h2>
   ${assinaturas.length?`<div class="tw"><table><thead><tr><th>Assinatura</th>
-    <th class="c">Dia da cobrança</th><th class="c">Vezes no ciclo</th><th class="r">Valor</th>
+    <th class="c">Dia da cobrança</th><th class="c">Vezes no ciclo</th><th class="c">Banco cobrou</th><th class="r">Valor</th>
   </tr></thead><tbody>
   ${assinaturas.map(x=>`<tr><td>${esc(x.a.descricao)}</td>
     <td class="c">${x.a.dia||'—'}</td>
     <td class="c">${x.vz>1?`<span class="tag t-no">${x.vz}x</span>`:x.vz}</td>
+    <td class="c">${snap?'—':`<select style="padding:3px 5px" onchange="setAssinExcecao(\'${x.a.id}\',\'${comp}\',this.value)">
+      <option value="" ${!x.ex?'selected':''}>auto (${x.auto}x)</option>
+      ${[0,1,2,3].map(v=>`<option value="${v}" ${x.ex&&+x.ex.vezes===v?'selected':''}>${v}x</option>`).join('')}
+    </select>`}</td>
     <td class="r">${BRL((+x.a.valor)*x.vz)}${x.vz>1?
       `<span class="note" style="display:block">${BRL(x.a.valor)} cada</span>`:''}</td></tr>`).join('')}
   </tbody></table></div>`
