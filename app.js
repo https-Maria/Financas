@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v90';
+const APP_VER='v91';
 
 /* =====================================================================
    ESTADO
@@ -1152,13 +1152,14 @@ const PAGES=[['painel','Painel'],['dash','Dashboard'],['compra','Nova compra'],[
   ['cad','Cadastros'],['metas','Metas'],['backup','Cópias'],['log','Atividade'],['fatura','Fatura'],['notas','Bloco de notas'],
   ['extrato','Extrato']];
 
-/* O menu mostra só o dia a dia. O resto fica agrupado atrás de "Mais",
-   e o que é manutenção vai para a engrenagem. */
-const MENU_FIXO=['painel','dash','lanc','cal','metas','notas'];
-const MENU_MAIS=[
-  ['Compromissos',['fatura','extrato','parc','assin','terc']],
-  ['Análise',     ['proj','amort','casa']],
-  ['Simular',     ['compra']]];
+/* Navegação v91: cinco destinos principais sempre visíveis.
+   O restante fica num menu único, organizado por contexto. */
+const MENU_FIXO=['painel','extrato','lanc','cal','metas'];
+const MENU_GRUPOS=[
+  ['Compromissos',['fatura','parc','assin','terc']],
+  ['Analisar',['dash','proj','amort','casa']],
+  ['Organizar',['notas']],
+  ['Ferramentas',['compra','cad','backup','log']]];
 const MENU_CONFIG=['cad','backup','log'];
 const rotulo=id=>(PAGES.find(p=>p[0]===id)||[,id])[1];
 let MENU_ABERTO=null;
@@ -4686,8 +4687,8 @@ function montarShell(){
       <div class="brand"><b class="brandname"><img class="brandmark" src="dueto-icon.svg" alt="" aria-hidden="true">Dueto</b><span>${esc(EU||'')}</span>
         <button class="eng" id="btntema" onclick="alternarTema()"
           title="Trocar entre claro e escuro">${temaAtual()==='light'?'☀':'☾'}</button>
-        <button class="eng" onclick="abrirMenu('config')" aria-expanded="false"
-          title="Configurações">⚙</button></div>
+        <button class="eng menubtn" onclick="abrirMenu('menu')" aria-expanded="${MENU_ABERTO==='menu'}"
+          title="Abrir menu completo">☰</button></div>
       <div id="busca"></div>
       <nav id="nav"></nav>
       <div id="menus"></div>
@@ -4783,35 +4784,28 @@ window.irBusca=(tipo,id)=>{
   BUSCA_ABERTA=false; BUSCA_Q=''; render(); window.scrollTo(0,0);
 };
 
-/* Desenha a barra: telas do dia a dia, o "Mais" e a engrenagem. */
+/* Cinco abas principais + um único menu completo.
+   O fluxo/gavetas do Painel continua exatamente com a mesma lógica de antes. */
 function montarNav(){
   const nav=$('nav'); if(!nav) return;
-  const menuConfig = MENU_CONFIG.filter(id=>id!=='log' || !FALTANDO.includes('auditoria'));
-  const emMais = MENU_MAIS.some(([,ids])=>ids.includes(CUR));
-  const emConfig = menuConfig.includes(CUR);
-  /* "Mais" virou um <select> nativo — o navegador cuida sozinho de abrir,
-     posicionar e fechar. Nada de CSS customizado pra dar errado. */
-  const selectMais = `<select class="maisnativo" aria-label="Mais páginas" onchange="if(this.value)go(this.value)"
-      ${emMais?'aria-current="true"':''}>
-      <option value="" ${!emMais?'selected':''}>Mais ▾</option>
-      ${MENU_MAIS.map(([g,ids])=>`<optgroup label="${g}">
-        ${ids.map(id=>`<option value="${id}" ${CUR===id?'selected':''}>${rotulo(id)}</option>`).join('')}
-      </optgroup>`).join('')}
-    </select>`;
-  nav.innerHTML =
-    MENU_FIXO.map(id=>`<button data-p="${id}" onclick="go('${id}')"
-      aria-current="${CUR===id}">${rotulo(id)}</button>`).join('')
-    + selectMais
-    + (emConfig?`<button aria-current="true" onclick="abrirMenu('config')">${rotulo(CUR)}</button>`:'');
+  nav.innerHTML = MENU_FIXO.map(id=>`<button data-p="${id}" onclick="go('${id}')"
+    aria-current="${CUR===id}">${rotulo(id)}</button>`).join('');
 
   const box=$('menus'); if(!box) return;
-  if(MENU_ABERTO==='config'){
-    box.innerHTML=`<div class="ddmenu dir"><div class="sep">Ajustes e manutenção</div>
-      ${menuConfig.map(id=>`<button onclick="go('${id}')"
-        aria-current="${CUR===id}">${rotulo(id)}</button>`).join('')}
-      <div class="sep" style="margin-top:6px;padding-top:9px;border-top:1px solid var(--rule-soft)">Conta</div>
-      <button onclick="abrirMenu(null);exportar()">Exportar backup</button>
-      <button onclick="abrirMenu(null);sair()" style="color:var(--neg)">Sair</button>
+  if(MENU_ABERTO==='menu'){
+    const grupos=MENU_GRUPOS.map(([nome,ids])=>{
+      const visiveis=ids.filter(id=>id!=='log' || !FALTANDO.includes('auditoria'));
+      if(!visiveis.length) return '';
+      return `<div class="menugrupo"><div class="sep">${nome}</div>
+        ${visiveis.map(id=>`<button onclick="go('${id}')"
+          aria-current="${CUR===id}">${rotulo(id)}</button>`).join('')}</div>`;
+    }).join('');
+    box.innerHTML=`<div class="ddmenu dir fullmenu">
+      <div class="menugrid">${grupos}</div>
+      <div class="menuconta">
+        <button onclick="abrirMenu(null);exportar()">Exportar backup</button>
+        <button onclick="abrirMenu(null);sair()" style="color:var(--neg)">Sair</button>
+      </div>
     </div>`;
   } else box.innerHTML='';
 }
