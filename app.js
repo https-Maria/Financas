@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v88';
+const APP_VER='v89';
 
 /* =====================================================================
    ESTADO
@@ -882,8 +882,10 @@ window.addEventListener('offline', ()=>{ONLINE=false;setSync('off');});
 let MODO='entrar';
 function telaLogin(erro){
   $('root').innerHTML = `<div class="gate"><div class="gatebox">
-    <h1>Controle Financeiro</h1>
-    <p class="sub">Maria &amp; Jéssica</p>
+    <div class="loginbrand"><img src="dueto-icon.svg" alt="" aria-hidden="true"><div>
+      <h1>Dueto</h1>
+      <p class="sub">Finanças a dois</p>
+    </div></div>
     ${erro?`<div class="gateerr">${esc(erro)}</div>`:''}
     <div class="fld"><label for="em">E-mail</label>
       <input id="em" type="email" autocomplete="email" placeholder="voce@email.com"></div>
@@ -4680,7 +4682,7 @@ window.go=id=>{CUR=id;MENU_ABERTO=null;render();window.scrollTo(0,0);};
 function montarShell(){
   $('root').innerHTML=`<div class="shell">
     <div class="rail"><div class="railin">
-      <div class="brand"><b>Financeiro</b><span>${esc(EU||'')}</span>
+      <div class="brand"><b class="brandname"><img class="brandmark" src="dueto-icon.svg" alt="" aria-hidden="true">Dueto</b><span>${esc(EU||'')}</span>
         <button class="eng" id="btntema" onclick="alternarTema()"
           title="Trocar entre claro e escuro">${temaAtual()==='light'?'☀':'☾'}</button>
         <button class="eng" onclick="abrirMenu('config')" aria-expanded="false"
