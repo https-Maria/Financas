@@ -547,14 +547,17 @@ input:focus,select:focus{border-color:var(--steel);outline:none;box-shadow:0 0 0
   const t=localStorage.getItem('tema');
   if(t==='light'||t==='dark') document.documentElement.setAttribute('data-theme',t);
 }catch(e){}
-window.addEventListener('load',()=>{
-  window.setTimeout(()=>document.getElementById('app-splash')?.classList.add('hide'),760);
-});
-window.setTimeout(()=>document.getElementById('app-splash')?.classList.add('hide'),2400);
+window.duetoSplashPronta=()=>{
+  const s=document.getElementById('app-splash');
+  if(!s || s.classList.contains('hide')) return;
+  const minimo=520;
+  const espera=Math.max(0,minimo-performance.now());
+  window.setTimeout(()=>s.classList.add('hide'),espera);
+};
 </script>
 <div id="root"><div class="gate"><div class="gatebox"><h1>Dueto</h1>
 <p class="sub">Preparando suas finanças…</p></div></div></div>
 <div class="toast" id="toast"></div>
-<script type="module" src="app.js?v=89"></script>
+<script type="module" src="app.js?v=90"></script>
 </body>
 </html>
