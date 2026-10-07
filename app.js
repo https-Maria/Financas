@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v89';
+const APP_VER='v90';
 
 /* =====================================================================
    ESTADO
@@ -820,7 +820,9 @@ async function carregarTudo(){
     D.lancamentos.sort((a,b)=>String(b.data).localeCompare(String(a.data)));
     cacheSave(); setSync('on');
     FALTANDO = faltando;
-    if(faltando.length) toast('Falta rodar a migração no banco: '+faltando.join(', '), 6000);
+    /* Auditoria é opcional: sem ela o app segue normal e sem aviso global. */
+    const faltandoVisivel = faltando.filter(t=>t!=='auditoria');
+    if(faltandoVisivel.length) toast('Falta rodar a migração no banco: '+faltandoVisivel.join(', '), 6000);
     return true;
   }catch(e){
     setSync('off');
@@ -3986,8 +3988,7 @@ function logFiltrado(){
 
 function vLog(){
   if(FALTANDO.includes('auditoria'))
-    return head('Atividade','Esta aba precisa da tabela de auditoria, que ainda não existe no seu banco.')
-      +`<div class="warn">Rode <b>migracao-auditoria.sql</b> no Supabase e recarregue.</div>`;
+    return head('Atividade','O histórico de alterações não está habilitado neste app.');
 
   const L=logFiltrado();
   const todos=D.auditoria;
@@ -4785,8 +4786,9 @@ window.irBusca=(tipo,id)=>{
 /* Desenha a barra: telas do dia a dia, o "Mais" e a engrenagem. */
 function montarNav(){
   const nav=$('nav'); if(!nav) return;
+  const menuConfig = MENU_CONFIG.filter(id=>id!=='log' || !FALTANDO.includes('auditoria'));
   const emMais = MENU_MAIS.some(([,ids])=>ids.includes(CUR));
-  const emConfig = MENU_CONFIG.includes(CUR);
+  const emConfig = menuConfig.includes(CUR);
   /* "Mais" virou um <select> nativo — o navegador cuida sozinho de abrir,
      posicionar e fechar. Nada de CSS customizado pra dar errado. */
   const selectMais = `<select class="maisnativo" aria-label="Mais páginas" onchange="if(this.value)go(this.value)"
@@ -4805,7 +4807,7 @@ function montarNav(){
   const box=$('menus'); if(!box) return;
   if(MENU_ABERTO==='config'){
     box.innerHTML=`<div class="ddmenu dir"><div class="sep">Ajustes e manutenção</div>
-      ${MENU_CONFIG.map(id=>`<button onclick="go('${id}')"
+      ${menuConfig.map(id=>`<button onclick="go('${id}')"
         aria-current="${CUR===id}">${rotulo(id)}</button>`).join('')}
       <div class="sep" style="margin-top:6px;padding-top:9px;border-top:1px solid var(--rule-soft)">Conta</div>
       <button onclick="abrirMenu(null);exportar()">Exportar backup</button>
@@ -4826,18 +4828,29 @@ window.exportar=()=>{
   toast('Backup baixado — pode subir no Git');
 };
 
+function splashPronta(){ try{ window.duetoSplashPronta?.(); }catch(e){} }
+
 async function iniciar(){
-  const {data:{user}} = await sb.auth.getUser();
-  if(!user) return telaLogin();
-  USER=user;
-  const {data:m,error} = await sb.from('membros').select('grupo_id,nome').limit(1).maybeSingle();
-  if(error) return telaLogin('Erro ao buscar seu grupo: '+error.message);
-  if(!m) return telaLogin('Sua conta existe, mas não está em nenhum grupo. Peça um código de convite.');
-  GRUPO=m.grupo_id; EU=m.nome;
-  try{ await carregarTudo(); }
-  catch(e){ return telaLogin('Não consegui carregar os dados: '+e.message); }
-  montarShell();
-  ligarTempoReal();
+  try{
+    const {data:{user},error:authError} = await sb.auth.getUser();
+    if(authError) throw authError;
+    if(!user){ telaLogin(); splashPronta(); return; }
+    USER=user;
+    const {data:m,error} = await sb.from('membros').select('grupo_id,nome').limit(1).maybeSingle();
+    if(error){ telaLogin('Erro ao buscar seu grupo: '+error.message); splashPronta(); return; }
+    if(!m){
+      telaLogin('Sua conta existe, mas não está em nenhum grupo. Peça um código de convite.');
+      splashPronta(); return;
+    }
+    GRUPO=m.grupo_id; EU=m.nome;
+    await carregarTudo();
+    montarShell();
+    ligarTempoReal();
+    splashPronta();
+  }catch(e){
+    telaLogin('Não consegui conectar: '+(e?.message||e));
+    splashPronta();
+  }
 }
 
 if('serviceWorker' in navigator)
