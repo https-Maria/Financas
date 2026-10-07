@@ -552,9 +552,10 @@ input:focus,select:focus{border-color:var(--steel);outline:none;box-shadow:0 0 0
   </div>
 </div>
 <script>try{
-  const t=localStorage.getItem('tema');
-  if(t==='light'||t==='dark') document.documentElement.setAttribute('data-theme',t);
-}catch(e){}
+  /* Lavanda clara é a aparência padrão da v91; quem já escolheu tema mantém a escolha. */
+  const t=localStorage.getItem('tema') || 'light';
+  document.documentElement.setAttribute('data-theme',t==='dark'?'dark':'light');
+}catch(e){ document.documentElement.setAttribute('data-theme','light'); }
 window.duetoSplashPronta=()=>{
   const s=document.getElementById('app-splash');
   if(!s || s.classList.contains('hide')) return;
