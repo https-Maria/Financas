@@ -1,7 +1,7 @@
 /* Service worker — cache do "casco" do app.
    Os dados vêm sempre do Supabase; aqui só guardamos a interface,
    para o app abrir mesmo sem internet. */
-const CACHE = 'dueto-v90';
+const CACHE = 'dueto-v91';
 const SHELL = ['./', './index.html', './app.js', './manifest.json',
                './dueto-icon.svg'];
 
