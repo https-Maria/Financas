@@ -3,12 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Controle Financeiro — Maria &amp; Jéssica</title>
+<title>Dueto — Finanças a dois</title>
 <meta name="theme-color" content="#0A0F0D">
 <link rel="manifest" href="manifest.json">
-<link rel="icon" type="image/png" href="icon-192.png">
-<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" type="image/svg+xml" href="dueto-icon.svg">
+<link rel="apple-touch-icon" href="dueto-icon.svg">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Dueto">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -59,6 +60,12 @@ button{cursor:pointer;border:none;background:none}
   padding:13px 0 0;gap:14px;flex-wrap:wrap}
 .brand b{font-size:15px;font-weight:700;color:var(--barra-txt);letter-spacing:-.01em}
 .brand span{font-size:12.5px;color:var(--barra-sub)}
+.brandname{display:inline-flex;align-items:center;gap:8px}
+.brandmark{width:24px;height:24px;border-radius:7px;display:block;box-shadow:0 2px 8px rgba(0,0,0,.16)}
+.loginbrand{display:flex;align-items:center;gap:12px;margin-bottom:20px}
+.loginbrand img{width:48px;height:48px;border-radius:14px;box-shadow:0 5px 18px rgba(0,0,0,.18)}
+.loginbrand h1{margin:0}
+.loginbrand .sub{margin:2px 0 0}
 .rail nav{display:flex;flex-wrap:wrap;row-gap:2px;margin-top:11px}
 .rail button{padding:9px 0;margin-right:20px;font-size:13.5px;color:var(--barra-sub);
   border-bottom:2px solid transparent;white-space:nowrap;font-weight:500;background:none}
@@ -509,16 +516,45 @@ input:focus,select:focus{border-color:var(--steel);outline:none;box-shadow:0 0 0
 .nt-tk.fn{color:var(--muted);font-size:14px;font-family:inherit;font-weight:600}
 .nt-tk.eq{background:var(--ink);color:var(--surface);border-color:var(--ink);font-weight:700}
 .nt-tk.anota{background:var(--steel);color:var(--surface);border-color:var(--steel);font-family:inherit;font-size:13px;font-weight:700;line-height:1.2}
+/* ---------- identidade Dueto / splash ---------- */
+.app-splash{
+  position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;
+  background:#0A0F0D;color:#E7EFEB;transition:opacity .34s ease,visibility .34s ease;
+}
+.app-splash.hide{opacity:0;visibility:hidden;pointer-events:none}
+.splash-inner{text-align:center;padding:28px}
+.splash-logo{width:104px;height:104px;border-radius:28px;display:block;margin:0 auto 18px;
+  box-shadow:0 18px 55px rgba(0,0,0,.32)}
+.splash-title{font-size:31px;font-weight:700;letter-spacing:-.03em}
+.splash-sub{font-size:13px;color:#7E9189;margin-top:5px;letter-spacing:.01em}
+.splash-pulse{width:42px;height:3px;border-radius:99px;background:#24322D;margin:22px auto 0;overflow:hidden}
+.splash-pulse::after{content:'';display:block;width:45%;height:100%;background:#4FAD7A;border-radius:99px;
+  animation:dueto-load 1s ease-in-out infinite alternate}
+@keyframes dueto-load{from{transform:translateX(-5%)}to{transform:translateX(125%)}}
+@media(prefers-reduced-motion:reduce){.splash-pulse::after{animation:none;width:100%}}
 </style>
 </head>
 <body>
+<div class="app-splash" id="app-splash" aria-hidden="true">
+  <div class="splash-inner">
+    <img class="splash-logo" src="dueto-icon.svg" alt="">
+    <div class="splash-title">Dueto</div>
+    <div class="splash-sub">Duas pessoas. Um só plano.</div>
+    <div class="splash-pulse"></div>
+  </div>
+</div>
 <script>try{
   const t=localStorage.getItem('tema');
   if(t==='light'||t==='dark') document.documentElement.setAttribute('data-theme',t);
-}catch(e){}</script>
-<div id="root"><div class="gate"><div class="gatebox"><h1>Carregando…</h1>
-<p class="sub">Conectando ao banco de dados.</p></div></div></div>
+}catch(e){}
+window.addEventListener('load',()=>{
+  window.setTimeout(()=>document.getElementById('app-splash')?.classList.add('hide'),760);
+});
+window.setTimeout(()=>document.getElementById('app-splash')?.classList.add('hide'),2400);
+</script>
+<div id="root"><div class="gate"><div class="gatebox"><h1>Dueto</h1>
+<p class="sub">Preparando suas finanças…</p></div></div></div>
 <div class="toast" id="toast"></div>
-<script type="module" src="app.js?v=88"></script>
+<script type="module" src="app.js?v=89"></script>
 </body>
 </html>
