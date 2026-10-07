@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Dueto — Finanças a dois</title>
-<meta name="theme-color" content="#0A0F0D">
+<meta name="theme-color" content="#2A2834">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/svg+xml" href="dueto-icon.svg">
 <link rel="apple-touch-icon" href="dueto-icon.svg">
@@ -17,24 +17,23 @@
 <style>
 
 :root{
-  /* Escuro (padrão) — verde é a cor da casa, de ponta a ponta: valores
-     positivos, destaque ativo, tudo a mesma cor. Sem se esconder em detalhe. */
-  --surface:#0A0F0D; --panel:#131C19; --ink:#E7EFEB; --muted:#7E9189;
-  --rule:#24322D; --rule-soft:#1C2622;
-  --pos:#4FAD7A; --neg:#E0695C; --amber:#D9A441; --steel:#4FAD7A;
-  --pos-bg:#16231C; --neg-bg:#2B1712; --amber-bg:#2A2010; --steel-bg:#16231C;
+  /* Grafite + lavanda — tema escuro sem o verde pesado da versão anterior. */
+  --surface:#17151E; --panel:#23202C; --ink:#F4F1FA; --muted:#A39DAF;
+  --rule:#393442; --rule-soft:#2D2937;
+  --pos:#70C99D; --neg:#E17A78; --amber:#D3A75E; --steel:#A99CFF;
+  --pos-bg:#1D3128; --neg-bg:#3A2326; --amber-bg:#332B1F; --steel-bg:#312D46;
   --mono:'JetBrains Mono',ui-monospace,monospace;
-  --barra:#0A0F0D; --barra-borda:#1C2622; --barra-txt:#E7EFEB;
-  --barra-sub:#7E9189; --barra-ativo:#4FAD7A;
+  --barra:#2A2834; --barra-borda:#3B3746; --barra-txt:#F7F5FB;
+  --barra-sub:#AAA5B9; --barra-ativo:#A99CFF;
 }
 :root[data-theme="light"]{
-  /* Claro — creme de fundo, o mesmo verde vivo em cima, sem versão apagada. */
-  --surface:#F6F1E6; --panel:#FFFFFF; --ink:#2A241D; --muted:#8C7F6B;
-  --rule:#E4D9C3; --rule-soft:#EFE8D8;
-  --pos:#2F7A52; --neg:#9C4A34; --amber:#8C6A1E; --steel:#2F7A52;
-  --pos-bg:#E5F1EA; --neg-bg:#FAF1EF; --amber-bg:#FCF4E4; --steel-bg:#E5F1EA;
-  --barra:#F6F1E6; --barra-borda:#E4D9C3; --barra-txt:#2A241D;
-  --barra-sub:#8C7F6B; --barra-ativo:#2F7A52;
+  /* Lavanda clara no conteúdo e grafite fixo na navegação. */
+  --surface:#F5F3FA; --panel:#FFFFFF; --ink:#252333; --muted:#817D91;
+  --rule:#E3DFEC; --rule-soft:#F0EDF5;
+  --pos:#2F8B65; --neg:#C25A58; --amber:#B47A28; --steel:#7466D9;
+  --pos-bg:#E8F3ED; --neg-bg:#F8EAEA; --amber-bg:#FBF1E2; --steel-bg:#EFECFF;
+  --barra:#2A2834; --barra-borda:#3B3746; --barra-txt:#F7F5FB;
+  --barra-sub:#AAA5B9; --barra-ativo:#A99CFF;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html{-webkit-text-size-adjust:100%}
@@ -56,8 +55,8 @@ button{cursor:pointer;border:none;background:none}
 .shell{min-height:100vh}
 .rail{background:var(--barra);border-bottom:1px solid var(--barra-borda)}
 .railin{max-width:1180px;margin:0 auto;padding:0 18px}
-.brand{display:flex;justify-content:space-between;align-items:baseline;
-  padding:13px 0 0;gap:14px;flex-wrap:wrap}
+.brand{display:flex;justify-content:space-between;align-items:center;
+  padding:13px 0 0;gap:12px;flex-wrap:nowrap}
 .brand b{font-size:15px;font-weight:700;color:var(--barra-txt);letter-spacing:-.01em}
 .brand span{font-size:12.5px;color:var(--barra-sub)}
 .brandname{display:inline-flex;align-items:center;gap:8px}
@@ -66,8 +65,10 @@ button{cursor:pointer;border:none;background:none}
 .loginbrand img{width:48px;height:48px;border-radius:14px;box-shadow:0 5px 18px rgba(0,0,0,.18)}
 .loginbrand h1{margin:0}
 .loginbrand .sub{margin:2px 0 0}
-.rail nav{display:flex;flex-wrap:wrap;row-gap:2px;margin-top:11px}
-.rail button{padding:9px 0;margin-right:20px;font-size:13.5px;color:var(--barra-sub);
+.rail nav{display:flex;flex-wrap:nowrap;gap:20px;margin-top:10px;overflow-x:auto;
+  scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.rail nav::-webkit-scrollbar{display:none}
+.rail nav button{padding:10px 0;margin-right:0;font-size:13px;color:var(--barra-sub);
   border-bottom:2px solid transparent;white-space:nowrap;font-weight:500;background:none}
 .rail button:hover{color:var(--barra-txt)}
 .rail button[aria-current="true"]{color:var(--barra-txt);border-bottom-color:var(--barra-ativo);font-weight:700}
@@ -76,16 +77,23 @@ button{cursor:pointer;border:none;background:none}
 .rodape-v{opacity:.7}
 
 /* engrenagem e menus suspensos */
-.brand .eng{background:var(--rule-soft);border:none;color:var(--barra-txt);
-  width:30px;height:30px;border-radius:4px;font-size:15px;cursor:pointer;line-height:1;
-  flex:0 0 30px}
-.brand .eng:hover{background:var(--rule)}
+.brand .eng{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.09);color:var(--barra-txt);
+  width:32px;height:32px;border-radius:10px;font-size:15px;cursor:pointer;line-height:1;
+  flex:0 0 32px}
+.brand .eng:hover{background:rgba(255,255,255,.12)}
 .brand .eng:first-of-type{margin-left:auto}
-.brand .eng+.eng{margin-left:6px}
+.brand .eng+.eng{margin-left:0}
+.brand .menubtn{font-size:16px}
 .ddmenu{position:absolute;z-index:40;background:var(--panel);border:1px solid var(--rule);
-  border-radius:4px;padding:6px;margin-top:4px;min-width:196px;
-  box-shadow:0 6px 20px rgba(13,23,22,.16)}
-.ddmenu.dir{right:18px}
+  border-radius:14px;padding:8px;margin-top:7px;min-width:220px;
+  box-shadow:0 16px 42px rgba(26,22,38,.18)}
+.ddmenu.dir{right:0}
+.ddmenu.fullmenu{width:min(560px,calc(100vw - 36px));padding:10px}
+.menugrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 12px}
+.menugrupo{min-width:0}
+.menuconta{display:flex;gap:6px;border-top:1px solid var(--rule-soft);margin-top:8px;padding-top:8px}
+.menuconta button{flex:1}
+@media(max-width:620px){.menugrid{grid-template-columns:1fr}.ddmenu.fullmenu{width:calc(100vw - 28px)}}
 .ddmenu button{display:block;width:100%;text-align:left;font-size:13px;padding:7px 12px;
   border:none;background:none;border-radius:3px;color:var(--ink);cursor:pointer}
 .ddmenu button:hover{background:var(--surface)}
@@ -148,7 +156,7 @@ select.maisnativo option,select.maisnativo optgroup{color:var(--ink);background:
 .phead p{color:var(--muted);font-size:13.5px;margin-top:4px;max-width:74ch}
 
 /* ---------- panels ---------- */
-.panel{background:var(--panel);border:1px solid var(--rule);border-radius:3px;margin-bottom:18px}
+.panel{background:var(--panel);border:1px solid var(--rule);border-radius:10px;margin-bottom:18px;overflow:hidden}
 .panel>h2{
   font-size:13px;padding:10px 15px;border-bottom:1px solid var(--rule-soft);
   color:var(--steel);font-weight:700;background:var(--steel-bg);
@@ -275,7 +283,7 @@ i.pt{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:6p
   .pontos i{width:4px;height:4px}
 }
 /* ---------- fluxo por dia (accordion) ---------- */
-.dayflow{border:1px solid var(--rule);border-radius:3px;overflow:hidden;margin-bottom:18px;background:var(--panel)}
+.dayflow{border:1px solid var(--rule);border-radius:10px;overflow:hidden;margin-bottom:18px;background:var(--panel)}
 .day{border-bottom:1px solid var(--rule-soft)}
 .day:last-child{border-bottom:none}
 .day>summary{display:grid;grid-template-columns:1.4fr .9fr .9fr .9fr 1.1fr;gap:10px;align-items:center;
@@ -519,16 +527,16 @@ input:focus,select:focus{border-color:var(--steel);outline:none;box-shadow:0 0 0
 /* ---------- identidade Dueto / splash ---------- */
 .app-splash{
   position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;
-  background:#0A0F0D;color:#E7EFEB;transition:opacity .34s ease,visibility .34s ease;
+  background:#2A2834;color:#F7F5FB;transition:opacity .34s ease,visibility .34s ease;
 }
 .app-splash.hide{opacity:0;visibility:hidden;pointer-events:none}
 .splash-inner{text-align:center;padding:28px}
 .splash-logo{width:104px;height:104px;border-radius:28px;display:block;margin:0 auto 18px;
   box-shadow:0 18px 55px rgba(0,0,0,.32)}
 .splash-title{font-size:31px;font-weight:700;letter-spacing:-.03em}
-.splash-sub{font-size:13px;color:#7E9189;margin-top:5px;letter-spacing:.01em}
-.splash-pulse{width:42px;height:3px;border-radius:99px;background:#24322D;margin:22px auto 0;overflow:hidden}
-.splash-pulse::after{content:'';display:block;width:45%;height:100%;background:#4FAD7A;border-radius:99px;
+.splash-sub{font-size:13px;color:#AAA5B9;margin-top:5px;letter-spacing:.01em}
+.splash-pulse{width:42px;height:3px;border-radius:99px;background:#3B3746;margin:22px auto 0;overflow:hidden}
+.splash-pulse::after{content:'';display:block;width:45%;height:100%;background:#A99CFF;border-radius:99px;
   animation:dueto-load 1s ease-in-out infinite alternate}
 @keyframes dueto-load{from{transform:translateX(-5%)}to{transform:translateX(125%)}}
 @media(prefers-reduced-motion:reduce){.splash-pulse::after{animation:none;width:100%}}
@@ -558,6 +566,6 @@ window.duetoSplashPronta=()=>{
 <div id="root"><div class="gate"><div class="gatebox"><h1>Dueto</h1>
 <p class="sub">Preparando suas finanças…</p></div></div></div>
 <div class="toast" id="toast"></div>
-<script type="module" src="app.js?v=90"></script>
+<script type="module" src="app.js?v=91"></script>
 </body>
 </html>
