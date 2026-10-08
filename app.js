@@ -11,16 +11,16 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v91';
+const APP_VER='v92';
 
 /* =====================================================================
    ESTADO
    ===================================================================== */
 const TABELAS = ['rendas','fixas','beneficios','cartoes','parcelamentos',
-                 'assinaturas','assinatura_excecoes','lancamentos','terceiros','metas','casa_itens','financiamentos','agenda','snapshots','ciclos','faturas_fechadas','auditoria','notas'];
+                 'assinaturas','assinatura_excecoes','lancamentos','terceiros','metas','casa_itens','financiamentos','agenda','snapshots','ciclos','faturas_fechadas','auditoria','notas','notas_salvas'];
 let USER=null, GRUPO=null, EU=null;
 let D = {rendas:[],fixas:[],beneficios:[],cartoes:[],parcelamentos:[],
-         assinaturas:[],assinatura_excecoes:[],lancamentos:[],terceiros:[],metas:[],casa_itens:[],financiamentos:[],agenda:[],snapshots:[],ciclos:[],faturas_fechadas:[],auditoria:[],notas:[],config:null};
+         assinaturas:[],assinatura_excecoes:[],lancamentos:[],terceiros:[],metas:[],casa_itens:[],financiamentos:[],agenda:[],snapshots:[],ciclos:[],faturas_fechadas:[],auditoria:[],notas:[],notas_salvas:[],config:null};
 let ONLINE = navigator.onLine, SYNC='off', FALTANDO=[];
 
 /* =====================================================================
@@ -1203,7 +1203,7 @@ const MIGRACAO_DE = {
   casa_itens:'migracao-casa.sql', financiamentos:'migracao-financiamento.sql',
   agenda:'migracao-agenda.sql', snapshots:'migracao-backup.sql',
   ciclos:'migracao-ciclos.sql', auditoria:'migracao-auditoria.sql',
-  notas:'migracao-notas.sql',
+  notas:'migracao-notas.sql', notas_salvas:'migracao-notas-salvas.sql',
 };
 function head(t,p){
   /* Tabelas que têm migração própria (casa, financiamento, agenda, cópias,
@@ -4451,6 +4451,7 @@ let NOTA_PEND={};      // o que foi digitado e ainda não voltou do banco: {id:{
 let NOTA_TIMER={};     // salvamento automático por linha
 let NOTA_CALC='';      // o que está na calculadora
 let NOTA_FOCO=null;    // campo pra focar depois do próximo desenho
+let NOTA_OBS='';       // observação do rascunho antes de virar uma nota salva
 
 function notaLinhas(){
   return D.notas.map(n=>({...n, ...(NOTA_PEND[n.id]||{})}))
@@ -4473,11 +4474,18 @@ function notaVisor(){
     : v.toLocaleString('pt-BR',Number.isInteger(v)?{maximumFractionDigits:0}:{minimumFractionDigits:2,maximumFractionDigits:2}));
 }
 
+function notaDataSalva(x){
+  try{return new Date(x).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});}
+  catch(e){return String(x||'');}
+}
+function notaSalvas(){
+  return [...(D.notas_salvas||[])].sort((a,b)=>String(b.criado_em).localeCompare(String(a.criado_em)));
+}
 function vNotas(){
   const cab=head('Bloco de notas','Rascunho do casal: uma lista que soma sozinha e uma calculadora do lado. Não entra no orçamento.');
   if(FALTANDO.includes('notas'))
     return cab+`<div class="warn">Esta aba precisa da tabela de notas. Rode <b>migracao-notas.sql</b> no Supabase e recarregue.</div>`;
-  const ls=notaLinhas(), tot=notaTotal();
+  const ls=notaLinhas(), tot=notaTotal(), salvas=notaSalvas();
   const teclas=[['C','fn'],['⌫','fn'],['÷','op'],['×','op'],['7'],['8'],['9'],['−','op'],
     ['4'],['5'],['6'],['+','op'],['1'],['2'],['3'],['=','eq'],['0'],[','],['( )','fn'],['Usar na lista','anota']];
   return cab+`<div class="nt-grid">
@@ -4499,6 +4507,17 @@ function vNotas(){
         ${ls.length?`<button class="btn dgr" onclick="notaLimpar()">Limpar lista</button>`:''}
       </div>
       <div class="nt-total"><span>Total</span><b id="nt_total" class="${tot<0?'neg':''}">${BRL(tot)}</b></div>
+
+      <div class="nt-savebox">
+        <label for="nt_obs">Observação da nota</label>
+        <textarea id="nt_obs" rows="3" placeholder="Ex.: separar este valor para o fim do mês"
+          oninput="notaObs(this.value)">${esc(NOTA_OBS)}</textarea>
+        <div class="nt-saveactions">
+          <span class="note">A lista já salva cada linha automaticamente. Este botão guarda uma <b>cópia fechada</b> dela com a observação.</span>
+          <button class="btn" onclick="notaSalvarBloco()" ${ls.length?'':'disabled'}>Salvar esta nota</button>
+        </div>
+      </div>
+
       <p class="note" style="margin-top:8px">No valor dá pra digitar a conta direto: <b>2x18,50</b>, <b>150-10</b>, <b>(80+40)/2</b>.</p>
     </div></div>
     <div class="panel"><h2>Calculadora</h2><div class="pbody">
@@ -4506,13 +4525,70 @@ function vNotas(){
       <div class="nt-teclas">${teclas.map(([t,c])=>`<button type="button" class="nt-tk ${c||''}" onclick="notaTecla('${t}')">${t}</button>`).join('')}</div>
       <p class="note" style="margin-top:10px">Toque num valor da lista para trazer ele para cá.</p>
     </div></div>
-  </div>`;
+  </div>
+  ${FALTANDO.includes('notas_salvas')
+    ? `<div class="warn">Para guardar cópias fechadas das notas, rode <b>migracao-notas-salvas.sql</b>.</div>`
+    : `<div class="panel nt-salvas"><h2>Notas salvas <small>${salvas.length}</small></h2>
+       <div class="pbody">
+       ${salvas.length ? salvas.map(n=>{
+          const linhas=Array.isArray(n.linhas)?n.linhas:[];
+          return `<details class="nt-salva">
+            <summary>
+              <span><b>${esc(n.titulo||'Nota salva')}</b><small>${notaDataSalva(n.criado_em)} · ${linhas.length} linha${linhas.length===1?'':'s'}</small></span>
+              <strong>${BRL(n.total)}</strong>
+            </summary>
+            <div class="nt-salva-corpo">
+              ${n.observacao?`<p class="nt-obs-salva">${esc(n.observacao)}</p>`:''}
+              <div class="nt-salva-linhas">
+                ${linhas.map(l=>`<div><span>${esc(l.descricao||'Sem descrição')}</span><b>${BRL(l.valor==null?notaCalcular(l.conta):l.valor)}</b></div>`).join('')}
+              </div>
+              <div class="rowbar" style="margin:10px 0 0">
+                <button class="btn dgr" onclick="notaExcluirSalva('${n.id}')">Excluir nota salva</button>
+              </div>
+            </div>
+          </details>`;
+       }).join('') : `<p class="note">Nenhuma nota fechada ainda. Monte a lista, escreva uma observação e toque em <b>Salvar esta nota</b>.</p>`}
+       </div></div>`}
+  `;
 }
 /* Depois de desenhar: visor da calculadora e foco pedido. */
 function notaDepois(){
   notaVisor();
   if(NOTA_FOCO){ const el=$(NOTA_FOCO); NOTA_FOCO=null; if(el){ el.focus(); } }
 }
+
+window.notaObs=v=>{ NOTA_OBS=v; };
+
+window.notaSalvarBloco=async()=>{
+  if(FALTANDO.includes('notas_salvas')) return toast('Falta a tabela de notas salvas');
+  const ids=Object.keys(NOTA_PEND);
+  for(const id of ids) await notaSalvar(id);
+  const ls=notaLinhas();
+  if(!ls.length) return toast('Adicione pelo menos uma linha antes de salvar');
+  const agora=new Date();
+  const titulo='Nota de '+agora.toLocaleDateString('pt-BR');
+  const linhas=ls.map(n=>({
+    descricao:n.descricao||'',
+    conta:n.conta||'',
+    valor:notaCalcular(n.conta)
+  }));
+  const n=await inserir('notas_salvas',{
+    titulo,
+    observacao:NOTA_OBS.trim()||null,
+    linhas,
+    total:notaTotal(),
+    criado_por:USER?.id||null
+  });
+  if(!n) return;
+  NOTA_OBS='';
+  render();
+  toast('Nota salva · '+BRL(n.total));
+};
+
+window.notaExcluirSalva=async id=>{
+  if(!confirm('Excluir esta nota salva? A lista atual não será alterada.')) return;
+  if(await remover('notas_salvas',id)){ render(); toast('Nota salva excluída'); }
+};
 
 window.notaDigitar=(id,campo,val)=>{
   NOTA_PEND[id]={...(NOTA_PEND[id]||{}),[campo]:val};
