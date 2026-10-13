@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v92';
+const APP_VER='v93';
 
 /* =====================================================================
    ESTADO
@@ -320,7 +320,7 @@ function itensAvistaFatura(nome,k){
     l.categoria!=='Ajuste Fatura' && !(l.categoria==='Cartão' && l.tipo!=='Entrada'));
 }
 function reportsFatura(nome,k){
-  return D.lancamentos.filter(l=>l.protegido && (l.cartao||'')===nome &&
+  return D.lancamentos.filter(l=>l.protegido && l.categoria==='Reports' && (l.cartao||'')===nome &&
     lancamentoNoCiclo(l,nome,k) && l.tipo!=='Entrada');
 }
 const faturaFechada = (nome,k) => D.faturas_fechadas.find(f=>f.cartao===nome && f.competencia===k) || null;
@@ -756,7 +756,10 @@ function mesDeCaixa(l){
    sobra não é do orçamento do casal. Precisa ser visível, senão dinheiro
    se move sem ninguém ver. */
 function reportsMes(k){
-  const ls=D.lancamentos.filter(l=>mesDeCaixa(l)===k && l.protegido);
+  /* Reports é legado do antigo trabalho: só entra aqui o que estiver
+     explicitamente na categoria Reports. "protegido" sozinho também serve
+     para reservas/caixinhas e não pode mais ser sinônimo de Reports. */
+  const ls=D.lancamentos.filter(l=>mesDeCaixa(l)===k && l.protegido && l.categoria==='Reports');
   const ent=ls.filter(l=>l.tipo==='Entrada').reduce((s,l)=>s+ +l.valor,0);
   const sai=ls.filter(l=>l.tipo==='Saída');
   const tot=sai.reduce((s,l)=>s+ +l.valor,0);
@@ -764,8 +767,14 @@ function reportsMes(k){
     !(r.encerra_em && k>=ym(r.encerra_em))).reduce((s,r)=>s+ +r.valor,0);
   return {ent,sai,tot,saldo:ent-tot,previsto:rendaRep,
           temMovimento: ls.length>0,
-          /* só está encerrado se não há entrada prevista nem lançada */
           encerrado: rendaRep===0 && ent===0};
+}
+function reservasMes(k){
+  const ls=D.lancamentos.filter(l=>mesDeCaixa(l)===k && l.protegido && l.categoria==='Reserva');
+  const ent=ls.filter(l=>l.tipo==='Entrada').reduce((s,l)=>s+ +l.valor,0);
+  const sai=ls.filter(l=>l.tipo==='Saída');
+  const tot=sai.reduce((s,l)=>s+ +l.valor,0);
+  return {ent,sai,tot,saldo:ent-tot,temMovimento:ls.length>0};
 }
 
 function realizado(k){
@@ -1328,7 +1337,7 @@ function vPainel(){
           ${kpi('Saldo hoje',BRL(S.atual),'segundo os lançamentos',S.atual<0?'neg':'pos')}
           ${kpi('Entrou desde então','+'+BRL(S.ent))}
           ${kpi('Saiu desde então','−'+BRL(S.sai))}
-          ${S.protegido>0?kpi('Disso, é Reports',BRL(S.protegido),'protegido, não é sobra','amb')
+          ${S.protegido>0?kpi('Dinheiro separado',BRL(S.protegido),'reserva/valor protegido','amb')
                         :kpi('Ponto de conferência',BRL(S.base),'em '+S.desde.split('-').reverse().join('/'))}
         </div>
         <div class="kgroup sub">Conferir com o extrato do banco</div>
@@ -1483,7 +1492,7 @@ function vPainel(){
   ${(()=>{
     const rp=reportsMes(MREF);
     if(!rp.temMovimento) return '';
-    return `<div class="panel"><h2>Reports <small>pago com dinheiro já guardado — fora do orçamento do casal</small></h2>
+    return `<div class="panel"><h2>Reports <small>saldo legado do antigo trabalho — fora do orçamento do casal</small></h2>
       <div class="pbody">
         ${rp.ent?`<div class="dline"><span>Entrada recebida</span>
           <b style="color:var(--pos)">${BRL(rp.ent)}</b></div>`:''}
@@ -1492,7 +1501,23 @@ function vPainel(){
           <b>${BRL(l.valor)}</b></div>`).join('')}
         ${rp.sai.length>1?`<div class="dline" style="border-top:1px solid var(--rule);margin-top:4px;padding-top:6px">
           <span><b>Total pago com o Reports</b></span><b>${BRL(rp.tot)}</b></div>`:''}
-        <p class="note" style="margin-top:10px">Dinheiro já guardado para isso — não entra no orçamento do casal.</p>
+        <p class="note" style="margin-top:10px">Só aparece aqui o que foi pago com o saldo antigo do Reports.</p>
+      </div></div>`;
+  })()}
+
+  ${(()=>{
+    const rv=reservasMes(MREF);
+    if(!rv.temMovimento) return '';
+    return `<div class="panel"><h2>Reservas / caixinhas <small>dinheiro separado por você — não é Reports</small></h2>
+      <div class="pbody">
+        ${rv.ent?`<div class="dline"><span>Entrada na reserva</span>
+          <b style="color:var(--pos)">${BRL(rv.ent)}</b></div>`:''}
+        ${rv.sai.map(l=>`<div class="dline"><span>${esc(l.descricao)}
+          <span class="note">${String(l.data).split('-').reverse().join('/')}</span></span>
+          <b>${BRL(l.valor)}</b></div>`).join('')}
+        ${rv.sai.length>1?`<div class="dline" style="border-top:1px solid var(--rule);margin-top:4px;padding-top:6px">
+          <span><b>Total separado</b></span><b>${BRL(rv.tot)}</b></div>`:''}
+        <p class="note" style="margin-top:10px">É dinheiro movido para uma caixinha/objetivo: não é gasto de consumo e continua disponível para uso.</p>
       </div></div>`;
   })()}
 
