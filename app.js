@@ -1783,7 +1783,7 @@ window.confirmarCompra=async()=>{
 const PAGES=[['painel','Painel'],['dash','Dashboard'],['compra','Nova compra'],['lanc','Lançamentos'],
   ['parc','Parcelamentos'],['assin','Assinaturas'],['terc','Terceiros'],
   ['cal','Calendário'],['proj','Projeção'],['amort','Amortização'],['casa','Projeções Casa'],
-  ['cad','Cadastros'],['metas','Metas'],['backup','Cópias'],['log','Atividade'],['fatura','Fatura'],['notas','Bloco de notas'],
+  ['cad','Cadastros'],['metas','Metas'],['backup','Cópias'],['log','Atividade'],['integridade','Integridade dos dados'],['fatura','Fatura'],['notas','Bloco de notas'],
   ['extrato','Extrato']];
 
 /* Navegação v91: cinco destinos principais sempre visíveis.
@@ -1793,7 +1793,7 @@ const MENU_GRUPOS=[
   ['Compromissos',['fatura','parc','assin','terc']],
   ['Analisar',['dash','proj','amort','casa']],
   ['Organizar',['notas']],
-  ['Ferramentas',['compra','cad','backup','log']]];
+  ['Ferramentas',['compra','cad','integridade','backup','log']]];
 const MENU_CONFIG=['cad','backup','log'];
 const rotulo=id=>(PAGES.find(p=>p[0]===id)||[,id])[1];
 let MENU_ABERTO=null;
@@ -1852,7 +1852,22 @@ function head(t,p){
      ${faltandoGeral.length===1?'A tabela':'As tabelas'} <b>${faltandoGeral.join(', ')}</b>
      ${faltandoGeral.length===1?'ainda não existe':'ainda não existem'} no Supabase.
      Rode <b>schema.sql</b> no SQL Editor e recarregue. Até lá, esta parte fica vazia.</div>`:'');}
-function kpi(k,v,s,cls){return `<div class="kpi"><span class="k">${k}</span>
+const REGRAS_DUETO={
+  saldo:['Saldo em conta','Parte do último saldo conferido com o banco e soma somente movimentos confirmados que realmente mexem na conta. Compra no cartão não reduz o banco no dia da compra; o pagamento da fatura reduz.'],
+  projecao:['Saldo previsto','Usa renda, contas fixas, crediário e faturas previstas. Não é saldo bancário e pode mudar conforme novos lançamentos aparecem.'],
+  fatura:['Sua parte da fatura','É o que pertence ao casal. Terceiros e dinheiro protegido ficam separados para não parecer gasto de vocês.'],
+  total_cartao:['Total real do cartão','É o valor físico que o banco cobra no cartão: sua parte + terceiros + valores protegidos que pertencem àquela fatura.'],
+  protegido:['Dinheiro protegido','Reserva/caixinha continua sendo dinheiro de vocês, mas fica fora do orçamento disponível. Reports só entra aqui quando a categoria é explicitamente Reports.'],
+  terceiros:['Terceiros','Compra de outra pessoa no cartão entra no total físico da fatura, mas não pesa como gasto do casal.'],
+  extrato:['Extrato','Movimento confirmado à vista mexe no banco. Compra no cartão vai para a fatura. Projetado ainda não mexe no saldo. Benefício não é dinheiro da conta.']
+};
+const REGRA_KPI={'Saldo hoje':'saldo','Saldo previsto':'projecao','Sua parte da fatura':'fatura',
+  'Total real do cartão':'total_cartao','Dinheiro separado':'protegido','A receber':'terceiros'};
+function regraPill(id){
+  const r=REGRAS_DUETO[id]; if(!r)return '';
+  return `<details class="rule-tip" onclick="event.stopPropagation()"><summary title="${esc(r[0])}">?</summary><div><b>${esc(r[0])}</b><p>${esc(r[1])}</p></div></details>`;
+}
+function kpi(k,v,s,cls){const rid=REGRA_KPI[k];return `<div class="kpi"><span class="k">${k}${rid?regraPill(rid):''}</span>
   <span class="v ${cls||''}">${v}</span>${s?`<span class="s">${s}</span>`:''}</div>`;}
 function bar(l,v,lim){const w=Math.min(100,v*100),
   c=v>lim?'var(--neg)':(v>lim*.75?'var(--amber)':'var(--pos)');
@@ -5428,8 +5443,109 @@ function vExtrato(){
   ver no Painel. O "Saldo depois" parte do último ponto de conferência.</p>`;
 }
 
+
+function integridadeItens(){
+  const itens=[], add=(nivel,titulo,desc,dest)=>itens.push({nivel,titulo,desc,dest});
+  const h=hoje(), atual=ym(h), prox=addM(atual,1);
+  const cardNames=new Set(D.cartoes.map(c=>c.nome));
+  const diasDesde=d=>{
+    if(!d)return Infinity;
+    return Math.floor((new Date(h+'T12:00:00')-new Date(String(d).slice(0,10)+'T12:00:00'))/86400000);
+  };
+
+  if(cfg().saldo_conferido==null || !cfg().saldo_conferido_em)
+    add('crit','Saldo ainda não tem ponto de conferência','Sem um saldo conferido com o banco, o Dueto não consegue validar o saldo em conta.','painel');
+  else{
+    const d=diasDesde(cfg().saldo_conferido_em);
+    if(d>30) add('crit','Saldo não é conferido há '+d+' dias','O saldo calculado pode ter se afastado do banco.','painel');
+    else if(d>14) add('warn','Saldo não é conferido há '+d+' dias','Vale conferir com o banco quando puder.','painel');
+  }
+
+  D.cartoes.filter(c=>c.ativo).forEach(c=>{
+    const falt=[];
+    if(!c.dia_fecha)falt.push('fechamento');
+    if(!c.dia_venc)falt.push('vencimento');
+    if(c.limite==null)falt.push('limite');
+    if(!c.final4)falt.push('final 4');
+    if(falt.length) add('warn',c.nome+' incompleto','Falta cadastrar: '+falt.join(', ')+'.','cad');
+  });
+
+  const inferidos=D.ciclos.filter(c=>c.inferido && (c.competencia===atual||c.competencia===prox));
+  if(inferidos.length) add('warn',inferidos.length+' ciclo(s) de cartão ainda inferido(s)',
+    'Fechamento/vencimento inferido é útil como estimativa, mas vale confirmar no app do banco.','fatura');
+
+  const refs=[
+    ['Parcelamento',D.parcelamentos,'parc'],['Assinatura',D.assinaturas,'assin'],
+    ['Lançamento',D.lancamentos,'lanc'],['Terceiro',D.terceiros,'terc']
+  ];
+  refs.forEach(([rot,arr,dest])=>{
+    arr.filter(x=>x.cartao && !cardNames.has(x.cartao)).slice(0,5).forEach(x=>
+      add('crit',rot+' aponta para cartão inexistente',
+        (x.descricao||x.pessoa||x.cartao)+' → '+x.cartao,dest));
+  });
+
+  const tercSemComp=D.terceiros.filter(t=>!t.recebido && (!t.competencia||!/^\d{2}\/\d{4}$/.test(t.competencia)));
+  if(tercSemComp.length) add('warn',tercSemComp.length+' terceiro(s) sem competência válida',
+    'Sem competência, a cobrança pode cair na fatura errada.','terc');
+
+  const passados=D.lancamentos.filter(l=>l.status==='Projetado' && String(l.data)<h);
+  if(passados.length) add('warn',passados.length+' lançamento(s) projetado(s) no passado',
+    'Confirme, corrija a data ou remova o que não aconteceu.','lanc');
+
+  const dup=new Map();
+  D.lancamentos.forEach(l=>{
+    const key=[l.data,String(l.descricao||'').trim().toLowerCase(),(+l.valor).toFixed(2),l.tipo,l.cartao||'',l.status||''].join('|');
+    if(!dup.has(key))dup.set(key,[]);
+    dup.get(key).push(l);
+  });
+  const duplicados=[...dup.values()].filter(a=>a.length>1);
+  if(duplicados.length) add('warn',duplicados.length+' possível(is) duplicidade(s) exata(s)',
+    'Mesma data, descrição, valor, tipo, cartão e status aparecem mais de uma vez.','lanc');
+
+  D.parcelamentos.forEach(p=>{
+    if(+p.restantes<0 || (+p.total_parcelas>0 && +p.restantes>+p.total_parcelas))
+      add('crit','Parcelamento com quantidade inválida',p.descricao+' está com '+p.restantes+' restantes de '+p.total_parcelas+'.','parc');
+  });
+
+  const encerradas=D.rendas.filter(r=>r.ativo && r.encerra_em && ym(r.encerra_em)<=atual);
+  if(encerradas.length) add('info',encerradas.length+' renda(s) encerrada(s) ainda marcada(s) ativa(s)',
+    'O cálculo já ignora essas rendas depois da data de encerramento; isto é só uma limpeza de cadastro.','cad');
+
+  D.ciclos.filter(c=>c.fecha&&c.vence&&String(c.fecha)>=String(c.vence)).forEach(c=>
+    add('crit','Ciclo de fatura com datas incoerentes',c.cartao+' '+mLabel(c.competencia)+': fechamento não pode ser no mesmo dia ou depois do vencimento.','fatura'));
+
+  return itens;
+}
+
+function vIntegridade(){
+  const I=integridadeItens();
+  const n=niv=>I.filter(x=>x.nivel===niv).length;
+  const cls={crit:'integrity-crit',warn:'integrity-warn',info:'integrity-info'};
+  const icon={crit:'⛔',warn:'⚠️',info:'ℹ️'};
+  const regras=Object.entries(REGRAS_DUETO);
+  return head('Integridade dos dados','O Dueto procura incoerências sozinho. Ele não corrige nada sem você mandar.')
+  +`<div class="kpis">
+    ${kpi('Críticos',n('crit')+'','precisam de atenção',n('crit')?'neg':'pos')}
+    ${kpi('Atenção',n('warn')+'','vale revisar',n('warn')?'amb':'pos')}
+    ${kpi('Informativos',n('info')+'','não quebram o cálculo')}
+    ${kpi('Total de checagens',I.length+'',I.length?'achados agora':'nenhum problema encontrado')}
+  </div>
+  <div class="panel"><h2>Diagnóstico <small>calculado agora, sem alterar seus dados</small></h2>
+    ${I.length?`<div class="integrity-list">${I.map(x=>`<div class="integrity-item ${cls[x.nivel]}">
+      <div class="integrity-ico">${icon[x.nivel]}</div><div><b>${esc(x.titulo)}</b><p>${esc(x.desc)}</p></div>
+      ${x.dest?`<button class="btn alt sm" onclick="go('${x.dest}')">abrir</button>`:''}
+    </div>`).join('')}</div>`
+    :'<div class="pbody"><div class="okbox"><b>✓ Tudo consistente nas regras que o Dueto consegue verificar.</b><p>Isso não substitui a conferência com o banco; só elimina incoerências internas da base.</p></div></div>'}
+  </div>
+  <div class="panel"><h2>Regras do Dueto <small>por que cada número se comporta desse jeito</small></h2>
+    <div class="pbody"><div class="rules-grid">${regras.map(([id,r])=>`<details class="rule-card">
+      <summary>${esc(r[0])}<span>?</span></summary><p>${esc(r[1])}</p>
+    </details>`).join('')}</div></div>
+  </div>`;
+}
+
 const VIEWS={painel:vPainel,dash:vDash,fatura:vFatura,compra:vCompra,lanc:vLanc,parc:vParc,assin:vAssin,
-             terc:vTerc,cal:vCal,proj:vProj,amort:vAmort,casa:vCasa,cad:vCad,metas:vMetas,backup:vBackup,log:vLog,notas:vNotas,extrato:vExtrato};
+             terc:vTerc,cal:vCal,proj:vProj,amort:vAmort,casa:vCasa,cad:vCad,metas:vMetas,backup:vBackup,log:vLog,integridade:vIntegridade,notas:vNotas,extrato:vExtrato};
 
 function entrarDemo(){
   if(DEMO_MODE) return;
