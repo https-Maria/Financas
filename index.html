@@ -603,6 +603,23 @@ input:focus,select:focus{border-color:var(--steel);outline:none;box-shadow:0 0 0
 .dc-bb4 .dc-face{background:linear-gradient(135deg,#ffdf61,#e8bd15 62%,#ad8500);color:#173d77}
 .dc-dueto .dc-face{background:linear-gradient(135deg,#2b2731,#6f5b92 60%,#a98ee0)}
 @media(max-width:700px){.dc-track{grid-auto-columns:86%}.dc-scene{height:184px}.dc-summary>span{min-width:calc(50% - 6px);flex:1}}
+
+/* v95 — Cofre de cartões */
+.dc-fullpan{grid-column:1/-1}
+.dc-vaultbar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px;padding:10px 12px;border:1px solid var(--rule-soft);border-radius:14px;background:var(--rule-soft);font-size:11px;color:var(--muted)}
+.dc-vaultbar>span:last-child{display:flex;gap:7px;flex-wrap:wrap}
+.dc-safe{display:flex;align-items:center;justify-content:space-between;gap:9px;position:relative;z-index:2;font-size:9px;opacity:.92}
+.dc-vaultbtn{border:1px solid rgba(255,255,255,.25);background:rgba(0,0,0,.16);color:inherit;border-radius:10px;padding:7px 9px;font-weight:700}
+.dc-neon .dc-vaultbtn{border-color:rgba(7,42,54,.28);background:rgba(255,255,255,.28)}
+.cofre-overlay{position:fixed;inset:0;z-index:9999;background:rgba(10,9,14,.70);backdrop-filter:blur(7px);display:grid;place-items:center;padding:18px}
+.cofre-dialog{width:min(430px,100%);background:var(--panel);border:1px solid var(--rule);border-radius:20px;box-shadow:0 26px 80px rgba(0,0,0,.38);padding:20px}
+.cofre-dialog h3{font-size:18px;margin:0 0 7px}.cofre-dialog>p{font-size:12px;color:var(--muted);line-height:1.5;margin:0 0 16px}
+.cofre-corpo{display:grid;gap:11px}.cofre-fld{display:grid;gap:5px}.cofre-fld span{font-size:11px;color:var(--muted);font-weight:700}
+.cofre-fld input{width:100%;padding:12px 13px;border:1px solid var(--rule);border-radius:12px;background:var(--surface);color:var(--ink);outline:none}
+.cofre-fld input:focus{border-color:var(--steel);box-shadow:0 0 0 3px color-mix(in srgb,var(--steel) 18%,transparent)}
+.cofre-msg{min-height:16px;color:var(--neg);font-size:11px}
+.cofre-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:15px}
+@media(max-width:700px){.dc-safe{align-items:flex-start;flex-direction:column}.dc-vaultbar{align-items:flex-start}}
 </style>
 </head>
 <body>
@@ -630,6 +647,6 @@ window.duetoSplashPronta=()=>{
 <div id="root"><div class="gate"><div class="gatebox"><h1>Dueto</h1>
 <p class="sub">Preparando suas finanças…</p></div></div></div>
 <div class="toast" id="toast"></div>
-<script type="module" src="app.js?v=94"></script>
+<script type="module" src="app.js?v=95"></script>
 </body>
 </html>
