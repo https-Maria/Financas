@@ -455,58 +455,46 @@ function dataCurta(d){
 function centralCartoes(k){
   const cards=D.cartoes.filter(c=>c.ativo);
   if(!cards.length) return '';
-  let bb=0, totLim=0, totDisp=0, comLim=0;
+  let bb=0;
   const html=cards.map(c=>{
     const ehBB=/\bbb\b|banco do brasil/i.test(String(c.banco||c.nome||''));
     const tema=temaCartao(c,ehBB?bb++:0);
-    const total=totalVisualCartao(c.nome,k);
-    const lim=c.limite==null||c.limite===''?null:+c.limite;
-    const disp=c.limite_disponivel==null||c.limite_disponivel===''
-      ? (lim==null?null:Math.max(0,lim-total))
-      : +c.limite_disponivel;
-    if(lim!=null){totLim+=lim;comLim++;}
-    if(disp!=null) totDisp+=disp;
-    const ciclo=cicloDe(c.nome,k);
-    const fecha=ciclo?.fecha ? dataCurta(ciclo.fecha) : (c.dia_fecha?'dia '+c.dia_fecha:'—');
-    const vence=ciclo?.vence ? dataCurta(ciclo.vence) : (c.dia_venc?'dia '+c.dia_venc:'—');
-    const final=c.final4 ? '•••• '+esc(c.final4) : 'final não informado';
-    const validade=(c.validade_mes&&c.validade_ano)
-      ? String(c.validade_mes).padStart(2,'0')+'/'+String(c.validade_ano).slice(-2) : '—';
-    const titular=esc(c.nome_impresso||c.titular||'');
-    const rede=esc(c.bandeira||'');
-    const banco=esc(c.banco||c.nome);
-    return `<div class="dc-scene dc-${tema}"
-      onclick="if(event.target.closest('.dc-eye')) return; this.classList.toggle('flipped')"
-      role="button" tabindex="0"
-      onkeydown="if(event.target.closest('.dc-eye')) return; if(event.key==='Enter'||event.key===' '){event.preventDefault();this.classList.toggle('flipped')}">
+    return `<div class="dc-scene dc-${tema}" id="cofre_scene_${c.id}"
+      onclick="if(event.target.closest('.dc-eye')) return; if(!this.classList.contains('cofre-open')){toast('Use o olho para desbloquear este cartão',2200);return;} this.classList.toggle('flipped')"
+      role="button" tabindex="0">
       <div class="dc-card">
         <div class="dc-face dc-front">
-          <div class="dc-top"><b>${banco}</b><span>${rede}</span></div>
-          <div>
-            <span class="dc-label">limite disponível agora</span>
-            <strong class="dc-money">${disp==null?'—':BRL(disp)}</strong>
+          <div class="dc-top">
+            <b id="cofre_banco_${c.id}" data-cofre-field data-mask="Cartão protegido">Cartão protegido</b>
+            <button id="cofre_eye_${c.id}" class="dc-eye dc-eye-front" title="Mostrar dados protegidos"
+              aria-label="Mostrar dados protegidos"
+              onclick="event.stopPropagation();toggleCofreCartao('${c.id}')">👁</button>
           </div>
-          <div class="dc-bottom"><div><span class="dc-number">${final}</span><small>${titular}</small></div>
-            <span class="dc-chip"></span></div>
+          <div class="dc-lockedmsg" id="cofre_locked_${c.id}">
+            <span>🔒</span><b>Dados ocultos</b><small>toque no olho para autenticar</small>
+          </div>
+          <div class="dc-frontdata" id="cofre_frontdata_${c.id}">
+            <span class="dc-label">limite disponível</span>
+            <strong class="dc-money" id="cofre_disp_${c.id}" data-cofre-field data-mask="••••••">••••••</strong>
+          </div>
+          <div class="dc-bottom"><div>
+            <span class="dc-number" id="cofre_final_front_${c.id}" data-cofre-field data-mask="•••• ••••">•••• ••••</span>
+            <small id="cofre_titular_${c.id}" data-cofre-field data-mask="••••••••">••••••••</small>
+          </div><span class="dc-chip"></span></div>
         </div>
         <div class="dc-face dc-back">
-          <div class="dc-top"><b>${esc(c.nome)}</b>
-            <span class="dc-backactions"><span>↻ voltar</span>
-              <button id="cofre_eye_${c.id}" class="dc-eye" title="Mostrar dados protegidos"
-                aria-label="Mostrar dados protegidos"
-                onclick="event.stopPropagation();toggleCofreCartao('${c.id}')">👁</button>
-            </span>
-          </div>
+          <div class="dc-top"><b id="cofre_nome_${c.id}" data-cofre-field data-mask="Cartão protegido">Cartão protegido</b>
+            <span>↻ voltar</span></div>
           <div class="dc-backgrid">
-            <div><span>Fatura de ${mLabel(k)}</span><b>${BRL(total)}</b>${c.responsavel_fatura_atual&&c.fatura_competencia===k?`<small>${esc(c.responsavel_fatura_atual)}</small>`:''}</div>
-            <div><span>Vence</span><b>${vence}</b></div>
-            <div><span>Fecha</span><b>${fecha}</b></div>
-            <div><span>Limite total</span><b>${lim==null?'—':BRL(lim)}</b></div>
-            <div><span>Final</span><b>${final}</b></div>
-            <div><span>Validade</span>
-              <b id="cofre_validade_${c.id}" data-cofre-validade data-mask="••/••">••/••</b></div>
+            <div><span>Fatura de ${mLabel(k)}</span><b id="cofre_fatura_${c.id}" data-cofre-field data-mask="••••••">••••••</b>
+              <small id="cofre_resp_${c.id}" data-cofre-field data-mask=""></small></div>
+            <div><span>Vence</span><b id="cofre_vence_${c.id}" data-cofre-field data-mask="••/••">••/••</b></div>
+            <div><span>Fecha</span><b id="cofre_fecha_${c.id}" data-cofre-field data-mask="••/••">••/••</b></div>
+            <div><span>Limite total</span><b id="cofre_limite_${c.id}" data-cofre-field data-mask="••••••">••••••</b></div>
+            <div><span>Final</span><b id="cofre_final_back_${c.id}" data-cofre-field data-mask="••••">••••</b></div>
+            <div><span>Validade</span><b id="cofre_validade_${c.id}" data-cofre-field data-mask="••/••">••/••</b></div>
             <div class="dc-fullpan"><span>Número completo</span>
-              <b id="cofre_pan_${c.id}" data-cofre-pan data-mask="${final}">${final}</b></div>
+              <b id="cofre_pan_${c.id}" data-cofre-field data-mask="•••• •••• •••• ••••">•••• •••• •••• ••••</b></div>
           </div>
           <div class="dc-safe"><span>CVV nunca é armazenado.</span></div>
         </div>
@@ -515,17 +503,11 @@ function centralCartoes(k){
   }).join('');
 
   return `<div class="panel dc-panel"><h2>Cartões e limites
-    <small>clique no cartão para virar · cores seguem a identidade do banco</small></h2>
+    <small>dados ocultos até autenticar</small></h2>
     <div class="pbody">
-      <div class="dc-vaultbar"><span>👁 No verso do cartão, toque no olho para autenticar e mostrar os dados protegidos. Toque de novo para esconder.</span></div>
-      <div class="dc-summary">
-        <span><small>Limite conhecido</small><b>${comLim?BRL(totLim):'—'}</b></span>
-        <span><small>Disponível conhecido</small><b>${comLim?BRL(totDisp):'—'}</b></span>
-        <span><small>Cartões ativos</small><b>${cards.length}</b></span>
-      </div>
+      <div class="dc-vaultbar"><span>👁 Toque no olho na frente do cartão. Após autenticar, os dados aparecem e o cartão pode ser virado. Toque novamente para bloquear.</span></div>
       <div class="dc-track">${html}</div>
-      <p class="note" style="margin-top:10px">Os valores de limite são a última atualização salva no Dueto.
-        Cartões sem limite cadastrado continuam aparecendo e podem ser completados depois.</p>
+      ${DEMO_MODE?'<p class="note"><b>Modo demo:</b> a autenticação é simulada e todos os números são fictícios.</p>':''}
     </div></div>`;
 }
 
@@ -578,11 +560,8 @@ async function cofreDecryptJSON(key,row){
   return JSON.parse(decCofre.decode(out));
 }
 function cofreMascararTudo(){
-  document.querySelectorAll('[data-cofre-pan]').forEach(el=>{
-    el.textContent=el.dataset.mask||'••••';
-  });
-  document.querySelectorAll('[data-cofre-validade]').forEach(el=>{
-    el.textContent=el.dataset.mask||'••/••';
+  document.querySelectorAll('[data-cofre-field]').forEach(el=>{
+    el.textContent=el.dataset.mask||'';
   });
   document.querySelectorAll('.dc-eye').forEach(el=>{
     el.textContent='👁';
@@ -590,6 +569,8 @@ function cofreMascararTudo(){
     el.setAttribute('aria-label','Mostrar dados protegidos');
     el.classList.remove('open');
   });
+  document.querySelectorAll('.dc-scene').forEach(el=>el.classList.remove('cofre-open','flipped'));
+  document.querySelectorAll('.dc-lockedmsg').forEach(el=>el.style.display='flex');
   COFRE_ESTADO.visivel=null;
 }
 function cofreBloquear(){
@@ -852,22 +833,42 @@ async function cofreSalvarPan(cartao){
 function cofreFmtPan(pan){return String(pan).replace(/(.{4})/g,'$1 ').trim();}
 function cofreRevelar(cartao,payload){
   cofreMascararTudo();
-  const pan=document.getElementById('cofre_pan_'+cartao.id);
-  const val=document.getElementById('cofre_validade_'+cartao.id);
+  const set=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=v==null?'—':v;};
+  const ciclo=cicloDe(cartao.nome,MREF);
+  const total=totalVisualCartao(cartao.nome,MREF);
+  const lim=cartao.limite==null?null:+cartao.limite;
+  const disp=cartao.limite_disponivel==null
+    ? (lim==null?null:Math.max(0,lim-total)) : +cartao.limite_disponivel;
+  const fecha=ciclo?.fecha?dataCurta(ciclo.fecha):(cartao.dia_fecha?'dia '+cartao.dia_fecha:'—');
+  const vence=ciclo?.vence?dataCurta(ciclo.vence):(cartao.dia_venc?'dia '+cartao.dia_venc:'—');
+  const final=cartao.final4?('•••• '+cartao.final4):'—';
+  const vm=payload.validade_mes||cartao.validade_mes, va=payload.validade_ano||cartao.validade_ano;
+  const validade=(vm&&va)?String(vm).padStart(2,'0')+'/'+String(va).slice(-2):'—';
+
+  set('cofre_banco_'+cartao.id,cartao.banco||cartao.nome);
+  set('cofre_disp_'+cartao.id,disp==null?'—':BRL(disp));
+  set('cofre_final_front_'+cartao.id,final);
+  set('cofre_titular_'+cartao.id,cartao.nome_impresso||cartao.titular||'—');
+  set('cofre_nome_'+cartao.id,cartao.nome);
+  set('cofre_fatura_'+cartao.id,BRL(total));
+  set('cofre_resp_'+cartao.id,cartao.responsavel_fatura_atual&&cartao.fatura_competencia===MREF
+    ? cartao.responsavel_fatura_atual : '');
+  set('cofre_vence_'+cartao.id,vence);
+  set('cofre_fecha_'+cartao.id,fecha);
+  set('cofre_limite_'+cartao.id,lim==null?'—':BRL(lim));
+  set('cofre_final_back_'+cartao.id,cartao.final4||'—');
+  set('cofre_validade_'+cartao.id,validade);
+  set('cofre_pan_'+cartao.id,cofreFmtPan(payload.pan));
+
   const eye=document.getElementById('cofre_eye_'+cartao.id);
-  if(!pan)return;
-  pan.textContent=cofreFmtPan(payload.pan);
-  const vm=payload.validade_mes||cartao.validade_mes;
-  const va=payload.validade_ano||cartao.validade_ano;
-  if(val) val.textContent=(vm&&va)
-    ? String(vm).padStart(2,'0')+'/'+String(va).slice(-2)
-    : '—';
+  const scene=document.getElementById('cofre_scene_'+cartao.id);
+  const locked=document.getElementById('cofre_locked_'+cartao.id);
   if(eye){
-    eye.textContent='🙈';
-    eye.title='Esconder e bloquear';
-    eye.setAttribute('aria-label','Esconder e bloquear');
-    eye.classList.add('open');
+    eye.textContent='🙈'; eye.title='Esconder e bloquear';
+    eye.setAttribute('aria-label','Esconder e bloquear'); eye.classList.add('open');
   }
+  if(scene) scene.classList.add('cofre-open');
+  if(locked) locked.style.display='none';
   COFRE_ESTADO.visivel=cartao.id;
 }
 async function cofreAutenticarOlho(){
@@ -908,6 +909,17 @@ window.toggleCofreCartao=async(id)=>{
     }
 
     const cartao=D.cartoes.find(c=>c.id===id); if(!cartao)return;
+
+    if(DEMO_MODE){
+      cofreRevelar(cartao,{
+        pan:cartao.demo_pan||'4111111111111111',
+        validade_mes:cartao.validade_mes,
+        validade_ano:cartao.validade_ano
+      });
+      toast('Modo demo — autenticação simulada, dados fictícios.',2600);
+      return;
+    }
+
     if(!isSecureContext) return toast('O cofre só funciona em HTTPS.',4500);
 
     const ok=await cofreAutenticarOlho();
