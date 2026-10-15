@@ -1836,7 +1836,7 @@ function mediaVidaReal(nMeses){
 const MIGRACAO_DE = {
   casa_itens:'migracao-casa.sql', financiamentos:'migracao-financiamento.sql',
   agenda:'migracao-agenda.sql', snapshots:'migracao-backup.sql',
-  ciclos:'migracao-ciclos.sql', auditoria:'migracao-auditoria.sql',
+  ciclos:'migracao-ciclos.sql', auditoria:'migracao-auditoria.sql', login_historico:'migracao-auditoria.sql',
   notas:'migracao-notas.sql', notas_salvas:'migracao-notas-salvas.sql',
 };
 function head(t,p){
@@ -4624,7 +4624,8 @@ let LOG_TAB='', LOG_ACAO='', LOG_QUEM='', LOG_PER='30', LOG_BUSCA='';
 const NOME_TABELA={lancamentos:'Lançamentos',rendas:'Renda',fixas:'Contas fixas',
   beneficios:'Benefícios',cartoes:'Cartões',parcelamentos:'Parcelamentos',
   assinaturas:'Assinaturas',terceiros:'Terceiros',metas:'Metas',casa_itens:'Itens da casa',
-  financiamentos:'Financiamentos',agenda:'Agenda',ciclos:'Ciclos de fatura',config:'Configuração'};
+  financiamentos:'Financiamentos',agenda:'Agenda',ciclos:'Ciclos de fatura',config:'Configuração',
+  assinatura_excecoes:'Exceções de assinatura',faturas_fechadas:'Faturas fechadas',notas:'Notas',notas_salvas:'Notas salvas'};
 
 function logFiltrado(){
   const lim = LOG_PER==='tudo' ? null
@@ -4639,6 +4640,15 @@ function logFiltrado(){
   ).sort((x,y)=>String(y.quando).localeCompare(String(x.quando)));
 }
 
+const LOG_UNDO_TABELAS=new Set(['rendas','fixas','beneficios','cartoes','parcelamentos','assinaturas',
+  'assinatura_excecoes','lancamentos','terceiros','metas','casa_itens','financiamentos','agenda','config','notas','notas_salvas']);
+
+function loginDispositivo(x){
+  const ua=String(x.user_agent||'');
+  const plat=x.plataforma||'';
+  const nav=ua.includes('Edg/')?'Edge':ua.includes('Chrome/')?'Chrome':ua.includes('Firefox/')?'Firefox':ua.includes('Safari/')?'Safari':'Navegador';
+  return [nav,plat].filter(Boolean).join(' · ');
+}
 function vLog(){
   if(FALTANDO.includes('auditoria'))
     return head('Atividade','O histórico de alterações não está habilitado neste app.');
