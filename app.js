@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v98';
+const APP_VER='v99';
 
 /* =====================================================================
    ESTADO
@@ -390,8 +390,10 @@ function centralCartoes(k){
     const titular=esc(c.nome_impresso||c.titular||'');
     const rede=esc(c.bandeira||'');
     const banco=esc(c.banco||c.nome);
-    return `<div class="dc-scene dc-${tema}" onclick="this.classList.toggle('flipped')" role="button" tabindex="0"
-      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.classList.toggle('flipped')}">
+    return `<div class="dc-scene dc-${tema}"
+      onclick="if(event.target.closest('.dc-eye')) return; this.classList.toggle('flipped')"
+      role="button" tabindex="0"
+      onkeydown="if(event.target.closest('.dc-eye')) return; if(event.key==='Enter'||event.key===' '){event.preventDefault();this.classList.toggle('flipped')}">
       <div class="dc-card">
         <div class="dc-face dc-front">
           <div class="dc-top"><b>${banco}</b><span>${rede}</span></div>
