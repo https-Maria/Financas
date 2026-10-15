@@ -22,7 +22,7 @@ let USER=null, GRUPO=null, EU=null;
 let D = {rendas:[],fixas:[],beneficios:[],cartoes:[],parcelamentos:[],
          assinaturas:[],assinatura_excecoes:[],lancamentos:[],terceiros:[],metas:[],casa_itens:[],financiamentos:[],agenda:[],snapshots:[],ciclos:[],faturas_fechadas:[],auditoria:[],notas:[],notas_salvas:[],config:null};
 let ONLINE = navigator.onLine, SYNC='off', FALTANDO=[];
-let DEMO_MODE=false, DEMO_REAL_D=null, DEMO_REAL_EU=null;
+let DEMO_MODE=false, DEMO_REAL_D=null, DEMO_REAL_EU=null, DEMO_REAL_FALTANDO=null;
 
 /* =====================================================================
    HELPERS
@@ -5382,10 +5382,10 @@ const VIEWS={painel:vPainel,dash:vDash,fatura:vFatura,compra:vCompra,lanc:vLanc,
 function entrarDemo(){
   if(DEMO_MODE) return;
   cofreBloquear();
-  DEMO_REAL_D=D; DEMO_REAL_EU=EU;
+  DEMO_REAL_D=D; DEMO_REAL_EU=EU; DEMO_REAL_FALTANDO=FALTANDO.slice();
   DEMO_MODE=true;
   D=criarDadosDemo();
-  EU='Dueto Demo';
+  EU='Dueto Demo'; FALTANDO=[];
   CUR='painel'; MREF=ym(hoje());
   montarShell();
   toast('Modo demo ativo — nenhum dado real está sendo exibido.',4200);
@@ -5393,8 +5393,8 @@ function entrarDemo(){
 function sairDemo(){
   if(!DEMO_MODE) return;
   cofreBloquear();
-  D=DEMO_REAL_D||D; EU=DEMO_REAL_EU||EU;
-  DEMO_REAL_D=null; DEMO_REAL_EU=null; DEMO_MODE=false;
+  D=DEMO_REAL_D||D; EU=DEMO_REAL_EU||EU; FALTANDO=DEMO_REAL_FALTANDO||FALTANDO;
+  DEMO_REAL_D=null; DEMO_REAL_EU=null; DEMO_REAL_FALTANDO=null; DEMO_MODE=false;
   CUR='painel'; MREF=ym(hoje());
   montarShell();
   toast('Você voltou aos dados reais.',3000);
@@ -5553,7 +5553,7 @@ window.abrirMenu=q=>{ MENU_ABERTO = MENU_ABERTO===q ? null : q; montarNav(); };
 
 window.sair=sair;
 window.exportar=()=>{
-  const blob=new Blob([JSON.stringify({exportado_em:new Date().toISOString(),grupo:GRUPO,dados:D},null,2)],
+  const blob=new Blob([JSON.stringify({exportado_em:new Date().toISOString(),grupo:DEMO_MODE?'demo':GRUPO,dados:D},null,2)],
     {type:'application/json'});
   const a=document.createElement('a');
   a.href=URL.createObjectURL(blob);
