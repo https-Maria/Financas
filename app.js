@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v95';
+const APP_VER='v96';
 
 /* =====================================================================
    ESTADO
@@ -710,7 +710,10 @@ async function cofreAtivarBiometria(cfg){
 window.cofreAtivarBiometriaUI=async()=>{
   try{
     let cfg=await cofreConfig();
-    if(!cfg){toast('Abra o cofre de um cartão primeiro para criar sua senha-mestra.',4500);return;}
+    if(!cfg){
+      cfg=await cofreCriar();
+      return;
+    }
     if(cfg.credential_id){toast('A biometria/Windows Hello já está configurada neste cofre.',4200);return;}
     await cofreAtivarBiometria(cfg);
   }catch(e){toast('Cofre: '+(e?.message||e),5500);}
