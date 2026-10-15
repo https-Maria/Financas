@@ -357,7 +357,10 @@ function totalVisualCartao(nome,k){
   if(fechada && fechada.total_real!=null) return +fechada.total_real;
   const terc=terceirosCartaoMes(nome,k);
   const rep=reportsFatura(nome,k).reduce((s,l)=>s+ +l.valor,0);
-  return faturaCartao(nome,k)+terc+rep;
+  const modelado=faturaCartao(nome,k)+terc+rep;
+  if(modelado) return modelado;
+  const c=D.cartoes.find(x=>x.nome===nome);
+  return c && c.fatura_competencia===k && c.fatura_atual!=null ? +c.fatura_atual : 0;
 }
 function dataCurta(d){
   if(!d) return '—';
@@ -402,7 +405,7 @@ function centralCartoes(k){
         <div class="dc-face dc-back">
           <div class="dc-top"><b>${esc(c.nome)}</b><span>↻ voltar</span></div>
           <div class="dc-backgrid">
-            <div><span>Fatura de ${mLabel(k)}</span><b>${BRL(total)}</b></div>
+            <div><span>Fatura de ${mLabel(k)}</span><b>${BRL(total)}</b>${c.responsavel_fatura_atual&&c.fatura_competencia===k?`<small>${esc(c.responsavel_fatura_atual)}</small>`:''}</div>
             <div><span>Vence</span><b>${vence}</b></div>
             <div><span>Fecha</span><b>${fecha}</b></div>
             <div><span>Limite total</span><b>${lim==null?'—':BRL(lim)}</b></div>
