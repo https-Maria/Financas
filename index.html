@@ -639,6 +639,25 @@ input:focus,select:focus{border-color:var(--steel);outline:none;box-shadow:0 0 0
 .demo-banner button{margin-left:auto;color:var(--ink);font-weight:700;text-decoration:underline}
 .demo-pill{display:inline-flex;align-items:center;justify-content:center;padding:3px 7px;border-radius:999px;background:#d7b54a;color:#2a2412!important;font-size:9px!important;font-weight:800;letter-spacing:.08em}
 @media(max-width:700px){.demo-banner button{margin-left:0}.dc-lockedmsg{inset:48px 14px 46px}}
+
+/* v102 — integridade, regras explicáveis e atividade */
+.rule-tip{display:inline-block;position:relative;margin-left:5px;vertical-align:middle}
+.rule-tip>summary{list-style:none;width:17px;height:17px;border:1px solid var(--rule);border-radius:50%;display:inline-grid;place-items:center;font-size:10px;font-weight:800;color:var(--muted);cursor:pointer;background:var(--surface)}
+.rule-tip>summary::-webkit-details-marker{display:none}
+.rule-tip>div{position:absolute;z-index:40;left:0;top:23px;width:min(300px,72vw);padding:11px 12px;border:1px solid var(--rule);border-radius:12px;background:var(--panel);box-shadow:0 16px 40px rgba(0,0,0,.22);font-size:11px;line-height:1.45;color:var(--ink)}
+.rule-tip>div p{margin:5px 0 0;color:var(--muted)}
+.integrity-list{display:grid;gap:8px;padding:12px}
+.integrity-item{display:grid;grid-template-columns:28px 1fr auto;align-items:center;gap:10px;padding:11px 12px;border:1px solid var(--rule);border-radius:14px;background:var(--surface)}
+.integrity-item b{font-size:12px}.integrity-item p{margin:3px 0 0;font-size:11px;color:var(--muted);line-height:1.4}
+.integrity-ico{font-size:17px}.integrity-crit{border-left:3px solid var(--neg)}.integrity-warn{border-left:3px solid var(--amber)}.integrity-info{border-left:3px solid var(--steel)}
+.rules-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+.rule-card{border:1px solid var(--rule);border-radius:14px;background:var(--surface);padding:0 12px}
+.rule-card summary{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 0;cursor:pointer;font-size:12px;font-weight:700}
+.rule-card summary span{width:19px;height:19px;border:1px solid var(--rule);border-radius:50%;display:grid;place-items:center;color:var(--muted);font-size:10px}
+.rule-card p{margin:0 0 12px;color:var(--muted);font-size:11px;line-height:1.5}
+.okbox{padding:14px;border:1px solid var(--rule);border-radius:14px;background:var(--surface)}.okbox p{margin:5px 0 0;color:var(--muted);font-size:11px}
+.log-undo{display:block;margin-top:6px;white-space:nowrap}
+@media(max-width:700px){.rules-grid{grid-template-columns:1fr}.integrity-item{grid-template-columns:25px 1fr}.integrity-item .btn{grid-column:2;justify-self:start}.rule-tip>div{left:auto;right:-20px}}
 </style>
 </head>
 <body>
@@ -666,6 +685,6 @@ window.duetoSplashPronta=()=>{
 <div id="root"><div class="gate"><div class="gatebox"><h1>Dueto</h1>
 <p class="sub">Preparando suas finanças…</p></div></div></div>
 <div class="toast" id="toast"></div>
-<script type="module" src="app.js?v=101"></script>
+<script type="module" src="app.js?v=102"></script>
 </body>
 </html>
