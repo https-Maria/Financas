@@ -4649,6 +4649,18 @@ function loginDispositivo(x){
   const nav=ua.includes('Edg/')?'Edge':ua.includes('Chrome/')?'Chrome':ua.includes('Firefox/')?'Firefox':ua.includes('Safari/')?'Safari':'Navegador';
   return [nav,plat].filter(Boolean).join(' · ');
 }
+function botaoDesfazerLog(a,ultimoPorRegistro){
+  const k=a.tabela+'|'+a.registro_id;
+  if(!LOG_UNDO_TABELAS.has(a.tabela) || ultimoPorRegistro.get(k)!==a.id) return '';
+  return `<button class="btn alt sm log-undo" onclick="desfazerAtividade(${a.id})">↶ desfazer</button>`;
+}
+function painelLogins(quando,acessos){
+  if(FALTANDO.includes('login_historico')) return `<div class="panel"><h2>Acessos ao Dueto</h2><div class="pbody"><p class="note">Histórico de login ainda não está habilitado.</p></div></div>`;
+  if(!acessos.length) return `<div class="panel"><h2>Acessos ao Dueto <small>logins explícitos com e-mail e senha</small></h2><div class="pbody"><p class="note">Nenhum login foi registrado desde que o histórico foi ativado.</p></div></div>`;
+  return `<div class="panel"><h2>Acessos ao Dueto <small>logins explícitos com e-mail e senha</small></h2><div class="tw"><table><thead><tr><th>Quando</th><th>Quem</th><th>Dispositivo</th><th>Método</th></tr></thead><tbody>
+    ${acessos.slice(0,50).map(x=>`<tr><td class="mono">${quando(x.quando)}</td><td>${esc(x.nome||'—')}</td><td>${esc(loginDispositivo(x)||'—')}</td><td><span class="tag t-g">${x.metodo==='conta_criada'?'criação de conta':'senha'}</span></td></tr>`).join('')}
+  </tbody></table></div></div>`;
+}
 function vLog(){
   if(FALTANDO.includes('auditoria'))
     return head('Atividade','O histórico de alterações não está habilitado neste app.');
@@ -4660,6 +4672,10 @@ function vLog(){
   const hoje7=new Date(Date.now()-7*86400000).toISOString();
   const semana=todos.filter(a=>a.quando>=hoje7);
   const exclusoes=L.filter(a=>a.acao==='excluiu');
+  const acessos=(D.login_historico||[]).slice().sort((a,b)=>String(b.quando).localeCompare(String(a.quando)));
+  const ultimoPorRegistro=new Map();
+  todos.slice().sort((a,b)=>String(b.quando).localeCompare(String(a.quando))||(+b.id)-(+a.id))
+    .forEach(a=>{const k=a.tabela+'|'+a.registro_id;if(!ultimoPorRegistro.has(k))ultimoPorRegistro.set(k,a.id);});
 
   const quando=x=>{
     const d=new Date(x), ag=new Date(), dif=(ag-d)/1000;
@@ -4686,6 +4702,7 @@ function vLog(){
     ${kpi('Nesta semana',semana.length+'',semana.length===1?'alteração':'alterações')}
     ${kpi('Exclusões no período',exclusoes.length+'','',exclusoes.length?'amb':'')}
     ${kpi('Registros no log',todos.length+'',todos.length>=400?'mostrando os 400 mais recentes':'')}
+    ${kpi('Acessos registrados',acessos.length+'',acessos.length?'último: '+quando(acessos[0].quando):'nenhum ainda')}
     ${kpi('Mostrando agora',L.length+'','com os filtros aplicados')}
   </div>
 
@@ -4753,13 +4770,15 @@ function vLog(){
              </div></details>`
         : ''}</td>
     <td><span class="tag t-g">${NOME_TABELA[a.tabela]||a.tabela}</span></td>
-    <td>${esc(a.quem_nome||'—')}${a.origem!=='app'?` <span class="tag t-w">${esc(a.origem)}</span>`:''}</td>
+    <td>${esc(a.quem_nome||'—')}${a.origem!=='app'?` <span class="tag t-w">${esc(a.origem)}</span>`:''}${botaoDesfazerLog(a,ultimoPorRegistro)}</td>
   </tr>`).join('')}
   </tbody></table></div>
   ${L.length>150?`<div class="pbody"><p class="note">Mostrando os 150 mais recentes de ${L.length}.
     Use os filtros para estreitar.</p></div>`:''}`
   :`<div class="pbody"><p class="note">Nada no período escolhido.</p></div>`}
   </div>
+
+  ${painelLogins(quando,acessos)}
 
   <div class="panel"><h2>Como isso ajuda</h2><div class="pbody"><div class="dl">
     <div class="di"><b>O log vem do banco, não do app</b><p>Ele é escrito por gatilho, então
@@ -4778,6 +4797,16 @@ window.setLog=(campo,v)=>{
   if(campo==='busca'){ const el=$('lg_b'); if(el){ el.focus(); el.setSelectionRange?.(v.length,v.length); } }
 };
 window.limparLog=()=>{ LOG_TAB=LOG_ACAO=LOG_QUEM=LOG_BUSCA=''; LOG_PER='30'; render(); };
+window.desfazerAtividade=async id=>{
+  if(DEMO_MODE) return toast('Modo demo: nada é alterado.',2600);
+  const a=D.auditoria.find(x=>+x.id===+id);
+  if(!a) return toast('Atividade não encontrada.',3000);
+  if(!confirm('Desfazer esta alteração em '+(NOME_TABELA[a.tabela]||a.tabela)+'?')) return;
+  const {error}=await sb.rpc('dueto_desfazer_auditoria',{p_audit_id:+id});
+  if(error) return toast('Não consegui desfazer: '+error.message,6000);
+  await carregarTudo(); render(); toast('Alteração desfeita e registrada no histórico.',4200);
+};
+
 
 /* =====================================================================
    FATURA — detalhe de um cartão num mês
