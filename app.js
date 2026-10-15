@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v94';
+const APP_VER='v95';
 
 /* =====================================================================
    ESTADO
@@ -411,8 +411,13 @@ function centralCartoes(k){
             <div><span>Limite total</span><b>${lim==null?'—':BRL(lim)}</b></div>
             <div><span>Final</span><b>${final}</b></div>
             <div><span>Validade</span><b>${validade}</b></div>
+            <div class="dc-fullpan"><span>Número completo</span>
+              <b id="cofre_pan_${c.id}" data-cofre-pan data-mask="${final}">${final}</b></div>
           </div>
-          <div class="dc-safe">🔒 número completo e CVV não ficam armazenados no Dueto</div>
+          <div class="dc-safe">
+            <button class="dc-vaultbtn" onclick="event.stopPropagation();abrirCofreCartao('${c.id}')">🔐 Abrir cofre</button>
+            <span>CVV nunca é armazenado.</span>
+          </div>
         </div>
       </div>
     </div>`;
@@ -421,6 +426,9 @@ function centralCartoes(k){
   return `<div class="panel dc-panel"><h2>Cartões e limites
     <small>clique no cartão para virar · cores seguem a identidade do banco</small></h2>
     <div class="pbody">
+      <div class="dc-vaultbar"><span>🔐 Cofre: número completo criptografado fora do cache do app; CVV nunca é salvo.</span>
+        <span><button class="btn alt sm" onclick="cofreAtivarBiometriaUI()">Biometria / Windows Hello</button>
+        <button class="btn alt sm" onclick="bloquearCofre()">Bloquear</button></span></div>
       <div class="dc-summary">
         <span><small>Limite conhecido</small><b>${comLim?BRL(totLim):'—'}</b></span>
         <span><small>Disponível conhecido</small><b>${comLim?BRL(totDisp):'—'}</b></span>
@@ -431,6 +439,332 @@ function centralCartoes(k){
         Cartões sem limite cadastrado continuam aparecendo e podem ser completados depois.</p>
     </div></div>`;
 }
+
+
+/* =====================================================================
+   COFRE DE CARTÕES — v95
+   O número completo nunca entra em D/cache/localStorage. O Supabase recebe
+   apenas ciphertext AES-GCM. A chave do cofre é aleatória e fica embrulhada
+   pela senha-mestra (PBKDF2) e, opcionalmente, por WebAuthn PRF.
+   CVV/CVC NÃO é aceito nem armazenado.
+   ===================================================================== */
+const COFRE_ESTADO={key:null,raw:null,config:null,timer:null,ate:0};
+const COFRE_ITER=310000;
+const encCofre=new TextEncoder(), decCofre=new TextDecoder();
+
+function cofreB64(u8){
+  let s=''; const a=u8 instanceof Uint8Array?u8:new Uint8Array(u8);
+  for(let i=0;i<a.length;i++) s+=String.fromCharCode(a[i]);
+  return btoa(s);
+}
+function cofreU8(s){
+  const b=atob(String(s||'')), a=new Uint8Array(b.length);
+  for(let i=0;i<b.length;i++) a[i]=b.charCodeAt(i);
+  return a;
+}
+function cofreRand(n){const a=new Uint8Array(n);crypto.getRandomValues(a);return a;}
+async function cofreImportAES(raw){
+  return crypto.subtle.importKey('raw',raw,{name:'AES-GCM'},false,['encrypt','decrypt']);
+}
+async function cofreSenhaKey(senha,salt,it=COFRE_ITER){
+  const base=await crypto.subtle.importKey('raw',encCofre.encode(senha),'PBKDF2',false,['deriveKey']);
+  return crypto.subtle.deriveKey(
+    {name:'PBKDF2',salt,iterations:+it||COFRE_ITER,hash:'SHA-256'},
+    base,{name:'AES-GCM',length:256},false,['encrypt','decrypt']);
+}
+async function cofreEncryptBytes(key,bytes){
+  const iv=cofreRand(12);
+  const ct=await crypto.subtle.encrypt({name:'AES-GCM',iv},key,bytes);
+  return {ct:cofreB64(ct),iv:cofreB64(iv)};
+}
+async function cofreDecryptBytes(key,ct,iv){
+  const out=await crypto.subtle.decrypt({name:'AES-GCM',iv:cofreU8(iv)},key,cofreU8(ct));
+  return new Uint8Array(out);
+}
+async function cofreEncryptJSON(key,obj){
+  return cofreEncryptBytes(key,encCofre.encode(JSON.stringify(obj)));
+}
+async function cofreDecryptJSON(key,row){
+  const out=await cofreDecryptBytes(key,row.payload_ciphertext,row.payload_iv);
+  return JSON.parse(decCofre.decode(out));
+}
+function cofreMascararTudo(){
+  document.querySelectorAll('[data-cofre-pan]').forEach(el=>{
+    el.textContent=el.dataset.mask||'••••';
+  });
+}
+function cofreBloquear(){
+  if(COFRE_ESTADO.raw) try{COFRE_ESTADO.raw.fill(0);}catch(e){}
+  COFRE_ESTADO.key=null; COFRE_ESTADO.raw=null; COFRE_ESTADO.ate=0;
+  clearTimeout(COFRE_ESTADO.timer); COFRE_ESTADO.timer=null;
+  cofreMascararTudo();
+}
+async function cofreSetRaw(raw){
+  cofreBloquear();
+  COFRE_ESTADO.raw=new Uint8Array(raw);
+  COFRE_ESTADO.key=await cofreImportAES(COFRE_ESTADO.raw);
+  COFRE_ESTADO.ate=Date.now()+60000;
+  COFRE_ESTADO.timer=setTimeout(cofreBloquear,60000);
+}
+function cofreEstaAberto(){return !!COFRE_ESTADO.key && Date.now()<COFRE_ESTADO.ate;}
+
+function cofreOverlayBase(titulo,texto){
+  document.getElementById('cofre_overlay')?.remove();
+  const o=document.createElement('div'); o.id='cofre_overlay'; o.className='cofre-overlay';
+  const d=document.createElement('div'); d.className='cofre-dialog';
+  const h=document.createElement('h3'); h.textContent=titulo; d.appendChild(h);
+  if(texto){const p=document.createElement('p');p.textContent=texto;d.appendChild(p);}
+  const corpo=document.createElement('div'); corpo.className='cofre-corpo'; d.appendChild(corpo);
+  o.appendChild(d); document.body.appendChild(o);
+  return {o,d,corpo};
+}
+function cofreCampos(titulo,texto,campos,ok='Continuar'){
+  return new Promise(resolve=>{
+    const {o,d,corpo}=cofreOverlayBase(titulo,texto);
+    const els={};
+    campos.forEach(c=>{
+      const w=document.createElement('label'); w.className='cofre-fld';
+      const sp=document.createElement('span');sp.textContent=c.label;w.appendChild(sp);
+      const inp=document.createElement('input');
+      inp.type=c.type||'password'; inp.inputMode=c.inputMode||'text';
+      inp.autocomplete='off'; inp.placeholder=c.placeholder||'';
+      if(c.maxLength) inp.maxLength=c.maxLength;
+      w.appendChild(inp); corpo.appendChild(w); els[c.name]=inp;
+    });
+    const msg=document.createElement('div');msg.className='cofre-msg';corpo.appendChild(msg);
+    const a=document.createElement('div');a.className='cofre-actions';
+    const cancel=document.createElement('button');cancel.className='btn alt';cancel.textContent='Cancelar';
+    const confirm=document.createElement('button');confirm.className='btn';confirm.textContent=ok;
+    a.append(cancel,confirm);d.appendChild(a);
+    const fim=v=>{o.remove();resolve(v);};
+    cancel.onclick=()=>fim(null); o.onclick=e=>{if(e.target===o)fim(null);};
+    confirm.onclick=()=>{
+      const v={}; Object.keys(els).forEach(k=>v[k]=els[k].value);
+      if(campos.some(c=>c.required!==false && !String(v[c.name]||'').trim())){
+        msg.textContent='Preencha os campos para continuar.'; return;
+      }
+      fim(v);
+    };
+    Object.values(els)[0]?.focus();
+    d.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();confirm.click();}});
+  });
+}
+function cofreConfirmar(titulo,texto,ok='Ativar'){
+  return new Promise(resolve=>{
+    const {o,d}=cofreOverlayBase(titulo,texto);
+    const a=document.createElement('div');a.className='cofre-actions';
+    const no=document.createElement('button');no.className='btn alt';no.textContent='Agora não';
+    const yes=document.createElement('button');yes.className='btn';yes.textContent=ok;
+    a.append(no,yes);d.appendChild(a);
+    const fim=v=>{o.remove();resolve(v);};
+    no.onclick=()=>fim(false);yes.onclick=()=>fim(true);o.onclick=e=>{if(e.target===o)fim(false);};
+  });
+}
+async function cofreConfig(){
+  if(COFRE_ESTADO.config) return COFRE_ESTADO.config;
+  const {data,error}=await sb.from('cofre_config').select('*').eq('grupo_id',GRUPO).maybeSingle();
+  if(error) throw error;
+  COFRE_ESTADO.config=data||null;
+  return COFRE_ESTADO.config;
+}
+async function cofreCriar(){
+  if(!window.crypto?.subtle) throw new Error('Este navegador não oferece Web Crypto.');
+  const v=await cofreCampos('Criar senha-mestra do cofre',
+    'Ela nunca é enviada ao Supabase. Se você esquecer e não tiver biometria configurada, não há como recuperar os números.',
+    [{name:'senha',label:'Senha-mestra (mín. 12 caracteres)',type:'password'},
+     {name:'confirma',label:'Repita a senha',type:'password'}],
+    'Criar cofre');
+  if(!v) return null;
+  if(v.senha.length<12){toast('Use uma senha-mestra com pelo menos 12 caracteres',4500);return cofreCriar();}
+  if(v.senha!==v.confirma){toast('As senhas não são iguais',4000);return cofreCriar();}
+  const raw=cofreRand(32), salt=cofreRand(16);
+  const pw=await cofreSenhaKey(v.senha,salt,COFRE_ITER);
+  const wrap=await cofreEncryptBytes(pw,raw);
+  const {data,error}=await sb.from('cofre_config').insert({
+    grupo_id:GRUPO,user_id:USER.id,salt_password:cofreB64(salt),
+    wrapped_key_password:wrap.ct,wrap_iv_password:wrap.iv,kdf_iterations:COFRE_ITER
+  }).select().single();
+  v.senha='';v.confirma='';
+  if(error){raw.fill(0);throw error;}
+  COFRE_ESTADO.config=data;
+  await cofreSetRaw(raw); raw.fill(0);
+  toast('Cofre criado. A chave fica só na memória deste navegador por 60 segundos.',5200);
+  if(await cofreBiometriaPossivel()){
+    const sim=await cofreConfirmar('Ativar biometria / Windows Hello?',
+      'Quando o dispositivo suportar WebAuthn PRF, o Dueto poderá abrir o cofre com impressão digital, Face ID, Windows Hello ou PIN do aparelho.');
+    if(sim) await cofreAtivarBiometria(data);
+  }
+  return data;
+}
+async function cofreDesbloquearSenha(cfg){
+  const v=await cofreCampos('Desbloquear cofre','Digite sua senha-mestra. Ela é usada apenas neste navegador.',
+    [{name:'senha',label:'Senha-mestra',type:'password'}],'Desbloquear');
+  if(!v) return false;
+  try{
+    const pw=await cofreSenhaKey(v.senha,cofreU8(cfg.salt_password),cfg.kdf_iterations);
+    const raw=await cofreDecryptBytes(pw,cfg.wrapped_key_password,cfg.wrap_iv_password);
+    v.senha='';
+    await cofreSetRaw(raw); raw.fill(0);
+    return true;
+  }catch(e){
+    v.senha='';
+    toast('Senha-mestra incorreta ou cofre corrompido.',4500);
+    return false;
+  }
+}
+async function cofreBiometriaPossivel(){
+  try{
+    return !!(window.PublicKeyCredential && navigator.credentials &&
+      await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable());
+  }catch(e){return false;}
+}
+async function cofrePRFGet(cfg){
+  const challenge=cofreRand(32);
+  const credId=cofreU8(cfg.credential_id);
+  const salt=cofreU8(cfg.prf_salt);
+  const a=await navigator.credentials.get({publicKey:{
+    challenge,
+    allowCredentials:[{type:'public-key',id:credId}],
+    userVerification:'required',
+    timeout:60000,
+    extensions:{prf:{eval:{first:salt.buffer}}}
+  }});
+  const first=a?.getClientExtensionResults?.()?.prf?.results?.first;
+  if(!first) throw new Error('O autenticador não devolveu a chave PRF.');
+  return new Uint8Array(first);
+}
+async function cofreDesbloquearBiometria(cfg){
+  if(!cfg?.credential_id||!cfg?.wrapped_key_biometria||!cfg?.prf_salt) return false;
+  try{
+    const prf=await cofrePRFGet(cfg);
+    const k=await cofreImportAES(prf);
+    const raw=await cofreDecryptBytes(k,cfg.wrapped_key_biometria,cfg.wrap_iv_biometria);
+    prf.fill(0); await cofreSetRaw(raw); raw.fill(0);
+    return true;
+  }catch(e){
+    console.warn('Cofre biometria:',e);
+    return false;
+  }
+}
+async function cofreGarantirAberto(){
+  let cfg=await cofreConfig();
+  if(!cfg) cfg=await cofreCriar();
+  if(!cfg) return false;
+  if(cofreEstaAberto()) return true;
+  if(cfg.credential_id && await cofreBiometriaPossivel()){
+    const ok=await cofreDesbloquearBiometria(cfg);
+    if(ok) return true;
+  }
+  return cofreDesbloquearSenha(cfg);
+}
+async function cofreAtivarBiometria(cfg){
+  if(!cofreEstaAberto()){
+    const ok=await cofreDesbloquearSenha(cfg||await cofreConfig());
+    if(!ok) return false;
+  }
+  if(!await cofreBiometriaPossivel()){
+    toast('Este dispositivo não oferece biometria/Windows Hello para o navegador.',5000);return false;
+  }
+  try{
+    if(PublicKeyCredential.getClientCapabilities){
+      const caps=await PublicKeyCredential.getClientCapabilities().catch(()=>null);
+      if(caps && caps['extension:prf']===false)
+        throw new Error('Este navegador não oferece a extensão PRF necessária.');
+    }
+    const prfSalt=cofreRand(32);
+    const uid=encCofre.encode(String(USER.id)).slice(0,64);
+    const cred=await navigator.credentials.create({publicKey:{
+      challenge:cofreRand(32),
+      rp:{name:'Dueto'},
+      user:{id:uid,name:USER.email||String(USER.id),displayName:EU||'Dueto'},
+      pubKeyCredParams:[{type:'public-key',alg:-7},{type:'public-key',alg:-257}],
+      authenticatorSelection:{authenticatorAttachment:'platform',residentKey:'preferred',userVerification:'required'},
+      timeout:60000,attestation:'none',
+      extensions:{prf:{eval:{first:prfSalt.buffer}}}
+    }});
+    const ext=cred?.getClientExtensionResults?.()?.prf;
+    if(!ext?.enabled) throw new Error('O autenticador abriu, mas não suporta WebAuthn PRF.');
+
+    const tempCfg={credential_id:cofreB64(cred.rawId),prf_salt:cofreB64(prfSalt)};
+    const prf=await cofrePRFGet(tempCfg);
+    const pk=await cofreImportAES(prf);
+    const wrap=await cofreEncryptBytes(pk,COFRE_ESTADO.raw);
+    prf.fill(0);
+    const patch={
+      credential_id:tempCfg.credential_id,prf_salt:tempCfg.prf_salt,
+      wrapped_key_biometria:wrap.ct,wrap_iv_biometria:wrap.iv,
+      biometric_label:'WebAuthn PRF',atualizado_em:new Date().toISOString()
+    };
+    const {data,error}=await sb.from('cofre_config').update(patch)
+      .eq('id',(cfg||COFRE_ESTADO.config).id).select().single();
+    if(error) throw error;
+    COFRE_ESTADO.config=data;
+    toast('Biometria / Windows Hello ativado para o cofre.',4800);
+    return true;
+  }catch(e){
+    console.warn('Ativar biometria:',e);
+    toast('Não consegui ativar a biometria neste dispositivo: '+(e?.message||e),6500);
+    return false;
+  }
+}
+window.cofreAtivarBiometriaUI=async()=>{
+  try{
+    let cfg=await cofreConfig();
+    if(!cfg){toast('Abra o cofre de um cartão primeiro para criar sua senha-mestra.',4500);return;}
+    if(cfg.credential_id){toast('A biometria/Windows Hello já está configurada neste cofre.',4200);return;}
+    await cofreAtivarBiometria(cfg);
+  }catch(e){toast('Cofre: '+(e?.message||e),5500);}
+};
+function cofreLuhn(n){
+  let s=0,alt=false;
+  for(let i=n.length-1;i>=0;i--){
+    let d=+n[i]; if(alt){d*=2;if(d>9)d-=9;} s+=d; alt=!alt;
+  }
+  return s%10===0;
+}
+async function cofreSalvarPan(cartao){
+  const v=await cofreCampos('Guardar número de '+cartao.nome,
+    'Digite somente o número do cartão. O CVV/CVC não é aceito pelo Dueto.',
+    [{name:'pan',label:'Número completo',type:'password',inputMode:'numeric',maxLength:23}],
+    'Criptografar e salvar');
+  if(!v) return null;
+  const pan=String(v.pan||'').replace(/\D/g,''); v.pan='';
+  if(pan.length<13||pan.length>19||!cofreLuhn(pan)){toast('Número de cartão inválido.',4500);return null;}
+  if(cartao.final4 && !pan.endsWith(String(cartao.final4))){
+    toast('O número não termina em '+cartao.final4+'. Confira antes de salvar.',5200);return null;
+  }
+  const e=await cofreEncryptJSON(COFRE_ESTADO.key,{pan,versao:1,salvo_em:new Date().toISOString()});
+  const {data,error}=await sb.from('cartoes_cofre').upsert({
+    grupo_id:GRUPO,user_id:USER.id,cartao_id:cartao.id,
+    payload_ciphertext:e.ct,payload_iv:e.iv,versao:1,atualizado_em:new Date().toISOString()
+  },{onConflict:'user_id,cartao_id'}).select().single();
+  if(error) throw error;
+  return data;
+}
+function cofreFmtPan(pan){return String(pan).replace(/(.{4})/g,'$1 ').trim();}
+function cofreRevelar(cartao,payload){
+  const el=document.getElementById('cofre_pan_'+cartao.id); if(!el)return;
+  el.textContent=cofreFmtPan(payload.pan);
+  clearTimeout(el._cofreTimer);
+  el._cofreTimer=setTimeout(()=>{el.textContent=el.dataset.mask||'••••';},15000);
+}
+window.abrirCofreCartao=async(id)=>{
+  try{
+    const cartao=D.cartoes.find(c=>c.id===id); if(!cartao)return;
+    if(!isSecureContext) return toast('O cofre só funciona em HTTPS.',4500);
+    const ok=await cofreGarantirAberto(); if(!ok)return;
+    let {data:row,error}=await sb.from('cartoes_cofre').select('*').eq('cartao_id',id).maybeSingle();
+    if(error) throw error;
+    if(!row) row=await cofreSalvarPan(cartao);
+    if(!row)return;
+    const payload=await cofreDecryptJSON(COFRE_ESTADO.key,row);
+    cofreRevelar(cartao,payload);
+    toast('Número revelado por 15 segundos. O cofre bloqueia em 60 segundos.',4200);
+  }catch(e){
+    console.error(e);toast('Não consegui abrir o cofre: '+(e?.message||e),6200);
+  }
+};
+window.bloquearCofre=()=>{cofreBloquear();toast('Cofre bloqueado');};
 
 /* Ajustes pontuais da aba Fatura — cobrança que o cálculo não previu (ex.:
    "YouTube debitou de novo"), ou correção que não cabe em regra nenhuma.
