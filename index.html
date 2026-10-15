@@ -624,6 +624,21 @@ input:focus,select:focus{border-color:var(--steel);outline:none;box-shadow:0 0 0
 .cofre-msg{min-height:16px;color:var(--neg);font-size:11px}
 .cofre-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:15px}
 @media(max-width:700px){.dc-safe{align-items:flex-start;flex-direction:column}.dc-vaultbar{align-items:flex-start}}
+
+/* v100 — cartão totalmente oculto até autenticar + modo demo */
+.dc-eye-front{position:relative;z-index:6}
+.dc-lockedmsg{position:absolute;inset:52px 18px 48px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;text-align:center;z-index:3;pointer-events:none}
+.dc-lockedmsg>span{font-size:24px;line-height:1}.dc-lockedmsg>b{font-size:13px}.dc-lockedmsg>small{font-size:9px;opacity:.72}
+.dc-frontdata{position:relative;z-index:2}
+.dc-scene:not(.cofre-open) .dc-frontdata{opacity:.22;filter:blur(2px)}
+.dc-scene:not(.cofre-open) .dc-bottom{opacity:.28;filter:blur(1.2px)}
+.dc-scene:not(.cofre-open){cursor:default}
+.dc-scene.cofre-open{cursor:pointer}
+.demo-banner{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 16px;padding:10px 12px;border:1px solid #d7b54a;border-radius:14px;background:rgba(215,181,74,.12);color:var(--ink);font-size:12px}
+.demo-banner>b{background:#d7b54a;color:#2a2412;border-radius:999px;padding:3px 8px;font-size:10px;letter-spacing:.08em}
+.demo-banner button{margin-left:auto;color:var(--ink);font-weight:700;text-decoration:underline}
+.demo-pill{display:inline-flex;align-items:center;justify-content:center;padding:3px 7px;border-radius:999px;background:#d7b54a;color:#2a2412!important;font-size:9px!important;font-weight:800;letter-spacing:.08em}
+@media(max-width:700px){.demo-banner button{margin-left:0}.dc-lockedmsg{inset:48px 14px 46px}}
 </style>
 </head>
 <body>
@@ -651,6 +666,6 @@ window.duetoSplashPronta=()=>{
 <div id="root"><div class="gate"><div class="gatebox"><h1>Dueto</h1>
 <p class="sub">Preparando suas finanças…</p></div></div></div>
 <div class="toast" id="toast"></div>
-<script type="module" src="app.js?v=99"></script>
+<script type="module" src="app.js?v=100"></script>
 </body>
 </html>
