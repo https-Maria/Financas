@@ -11,16 +11,16 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v101';
+const APP_VER='v102';
 
 /* =====================================================================
    ESTADO
    ===================================================================== */
 const TABELAS = ['rendas','fixas','beneficios','cartoes','parcelamentos',
-                 'assinaturas','assinatura_excecoes','lancamentos','terceiros','metas','casa_itens','financiamentos','agenda','snapshots','ciclos','faturas_fechadas','auditoria','notas','notas_salvas'];
+                 'assinaturas','assinatura_excecoes','lancamentos','terceiros','metas','casa_itens','financiamentos','agenda','snapshots','ciclos','faturas_fechadas','auditoria','login_historico','notas','notas_salvas'];
 let USER=null, GRUPO=null, EU=null;
 let D = {rendas:[],fixas:[],beneficios:[],cartoes:[],parcelamentos:[],
-         assinaturas:[],assinatura_excecoes:[],lancamentos:[],terceiros:[],metas:[],casa_itens:[],financiamentos:[],agenda:[],snapshots:[],ciclos:[],faturas_fechadas:[],auditoria:[],notas:[],notas_salvas:[],config:null};
+         assinaturas:[],assinatura_excecoes:[],lancamentos:[],terceiros:[],metas:[],casa_itens:[],financiamentos:[],agenda:[],snapshots:[],ciclos:[],faturas_fechadas:[],auditoria:[],login_historico:[],notas:[],notas_salvas:[],config:null};
 let ONLINE = navigator.onLine, SYNC='off', FALTANDO=[];
 let DEMO_MODE=false, DEMO_REAL_D=null, DEMO_REAL_EU=null, DEMO_REAL_FALTANDO=null;
 
@@ -130,7 +130,7 @@ function criarDadosDemo(){
       {id:'demo-ff2',cartao:'BB Demo',competencia:k,sua_parte:1731.80,total_real:1811.80,composicao:{}},
       {id:'demo-ff3',cartao:'Neon Demo',competencia:k,sua_parte:381.30,total_real:381.30,composicao:{}}
     ],
-    auditoria:[],
+    auditoria:[],login_historico:[],
     notas:[{id:'demo-n1',descricao:'Comparar seguro do carro',conta:'',valor:null,ordem:1}],
     notas_salvas:[],
     config:{reserva_atual:10700,aporte_mensal:700,saldo_conferido:3248.60,saldo_conferido_em:ant+'-30'}
@@ -1502,7 +1502,7 @@ window.addEventListener('offline', ()=>{ONLINE=false;setSync('off');});
 /* =====================================================================
    AUTENTICAÇÃO
    ===================================================================== */
-let MODO='entrar';
+let MODO='entrar', LOGIN_PENDENTE=null;
 function telaLogin(erro){
   $('root').innerHTML = `<div class="gate"><div class="gatebox">
     <div class="loginbrand"><img src="dueto-icon.svg" alt="" aria-hidden="true"><div>
@@ -1547,11 +1547,24 @@ async function autenticar(){
       const {error}=await sb.auth.signInWithPassword({email,password:senha});
       if(error) throw error;
     }
+    LOGIN_PENDENTE = MODO==='criar' ? 'conta_criada' : 'senha';
     await iniciar();
   }catch(e){
     const m = /Invalid login/i.test(e.message) ? 'E-mail ou senha incorretos.' : e.message;
     telaLogin(m);
   }
+}
+
+async function registrarLogin(metodo){
+  if(!USER||!GRUPO||DEMO_MODE||FALTANDO.includes('login_historico')) return;
+  const linha={
+    grupo_id:GRUPO,user_id:USER.id,nome:EU||null,metodo:metodo||'senha',
+    user_agent:String(navigator.userAgent||'').slice(0,500),
+    plataforma:String(navigator.userAgentData?.platform||navigator.platform||'').slice(0,120),
+    idioma:String(navigator.language||'').slice(0,32)
+  };
+  const {data,error}=await sb.from('login_historico').insert(linha).select().single();
+  if(!error && data && Array.isArray(D.login_historico)) D.login_historico.unshift(data);
 }
 
 async function sair(){
@@ -5579,6 +5592,10 @@ async function iniciar(){
     }
     GRUPO=m.grupo_id; EU=m.nome;
     await carregarTudo();
+    if(LOGIN_PENDENTE){
+      await registrarLogin(LOGIN_PENDENTE);
+      LOGIN_PENDENTE=null;
+    }
     montarShell();
     ligarTempoReal();
     splashPronta();
