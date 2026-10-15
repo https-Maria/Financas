@@ -567,6 +567,42 @@ input:focus,select:focus{border-color:var(--steel);outline:none;box-shadow:0 0 0
   animation:dueto-load 1s ease-in-out infinite alternate}
 @keyframes dueto-load{from{transform:translateX(-5%)}to{transform:translateX(125%)}}
 @media(prefers-reduced-motion:reduce){.splash-pulse::after{animation:none;width:100%}}
+
+/* v94 — Central de cartões */
+.dc-panel{overflow:hidden}
+.dc-summary{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+.dc-summary>span{min-width:150px;padding:10px 12px;border:1px solid var(--rule-soft);border-radius:14px;background:var(--paper-2)}
+.dc-summary small{display:block;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px}
+.dc-summary b{font-size:16px}
+.dc-track{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(270px,340px);gap:14px;overflow-x:auto;padding:4px 2px 14px;scroll-snap-type:x mandatory}
+.dc-track::-webkit-scrollbar{height:7px}.dc-track::-webkit-scrollbar-thumb{background:var(--rule);border-radius:99px}
+.dc-scene{height:190px;perspective:1200px;scroll-snap-align:start;outline:none}
+.dc-card{position:relative;width:100%;height:100%;transform-style:preserve-3d;transition:transform .58s cubic-bezier(.2,.8,.2,1)}
+.dc-scene.flipped .dc-card{transform:rotateY(180deg)}
+.dc-face{position:absolute;inset:0;border-radius:22px;padding:18px;color:#fff;backface-visibility:hidden;overflow:hidden;box-shadow:0 14px 28px rgba(20,18,26,.16);border:1px solid rgba(255,255,255,.18);display:flex;flex-direction:column;justify-content:space-between}
+.dc-face:before{content:"";position:absolute;width:170px;height:170px;border-radius:50%;right:-72px;top:-86px;background:rgba(255,255,255,.11)}
+.dc-face:after{content:"";position:absolute;width:150px;height:150px;border-radius:50%;left:-82px;bottom:-100px;background:rgba(255,255,255,.07)}
+.dc-back{transform:rotateY(180deg)}
+.dc-top,.dc-bottom{display:flex;align-items:center;justify-content:space-between;gap:10px;position:relative;z-index:1}
+.dc-top{font-size:13px}.dc-top span{opacity:.8}.dc-bottom{align-items:flex-end}
+.dc-label{display:block;font-size:10px;opacity:.72;text-transform:uppercase;letter-spacing:.06em;position:relative;z-index:1}
+.dc-money{display:block;font-size:24px;letter-spacing:-.02em;margin-top:3px;position:relative;z-index:1}
+.dc-number{display:block;font-size:15px;font-weight:700;letter-spacing:.12em}.dc-bottom small{display:block;font-size:10px;opacity:.72;margin-top:4px}
+.dc-chip{width:38px;height:28px;border-radius:7px;background:linear-gradient(135deg,#f4df96,#bd9740);box-shadow:inset 0 0 0 1px rgba(0,0,0,.12)}
+.dc-backgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;position:relative;z-index:1}
+.dc-backgrid>div{padding:8px 9px;border-radius:11px;background:rgba(0,0,0,.14);border:1px solid rgba(255,255,255,.12)}
+.dc-backgrid span{display:block;font-size:9px;text-transform:uppercase;letter-spacing:.05em;opacity:.7}.dc-backgrid b{display:block;font-size:12px;margin-top:2px}
+.dc-safe{position:relative;z-index:1;font-size:9px;opacity:.68}
+.dc-nubank .dc-face{background:linear-gradient(135deg,#5b0aa7,#820ad1 58%,#a53bed)}
+.dc-neon .dc-face{background:linear-gradient(135deg,#00a9d9,#00c8f3 55%,#4de3ff);color:#072a36}
+.dc-pan .dc-face{background:linear-gradient(135deg,#001c5b,#003d91 60%,#0c63cc)}
+.dc-mercadopago .dc-face{background:linear-gradient(135deg,#08090b,#22272c 62%,#1f76ff)}
+.dc-bb1 .dc-face{background:linear-gradient(135deg,#f0c900,#ffd900 58%,#ffe768);color:#183b75}
+.dc-bb2 .dc-face{background:linear-gradient(135deg,#d6a900,#efc400 58%,#ffd94a);color:#183b75}
+.dc-bb3 .dc-face{background:linear-gradient(135deg,#f7d94b,#e4ba00 65%,#c99400);color:#173d77}
+.dc-bb4 .dc-face{background:linear-gradient(135deg,#ffdf61,#e8bd15 62%,#ad8500);color:#173d77}
+.dc-dueto .dc-face{background:linear-gradient(135deg,#2b2731,#6f5b92 60%,#a98ee0)}
+@media(max-width:700px){.dc-track{grid-auto-columns:86%}.dc-scene{height:184px}.dc-summary>span{min-width:calc(50% - 6px);flex:1}}
 </style>
 </head>
 <body>
@@ -594,6 +630,6 @@ window.duetoSplashPronta=()=>{
 <div id="root"><div class="gate"><div class="gatebox"><h1>Dueto</h1>
 <p class="sub">Preparando suas finanças…</p></div></div></div>
 <div class="toast" id="toast"></div>
-<script type="module" src="app.js?v=93"></script>
+<script type="module" src="app.js?v=94"></script>
 </body>
 </html>
