@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v100';
+const APP_VER='v101';
 
 /* =====================================================================
    ESTADO
@@ -5402,6 +5402,7 @@ function sairDemo(){
 window.toggleDemo=()=>DEMO_MODE?sairDemo():entrarDemo();
 
 function render(){
+  if(COFRE_ESTADO.visivel) cofreBloquear();
   const m=$('main'); if(!m) return montarShell();
   montarNav();
   montarBusca();                      /* a barra já marca a aba certa */
@@ -5542,7 +5543,7 @@ function montarNav(){
     box.innerHTML=`<div class="ddmenu dir fullmenu">
       <div class="menugrid">${grupos}</div>
       <div class="menuconta">
-        <button onclick="abrirMenu(null);toggleDemo()">${DEMO_MODE?'Sair do modo demo':'Modo demo'}</button>
+        <button onclick="abrirMenu(null);toggleDemo()">${DEMO_MODE?'← Sair do modo demo':'🧪 Modo demo'}</button>
         <button onclick="abrirMenu(null);exportar()">Exportar backup</button>
         <button onclick="abrirMenu(null);sair()" style="color:var(--neg)">Sair</button>
       </div>
