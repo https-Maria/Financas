@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v99';
+const APP_VER='v100';
 
 /* =====================================================================
    ESTADO
@@ -22,6 +22,7 @@ let USER=null, GRUPO=null, EU=null;
 let D = {rendas:[],fixas:[],beneficios:[],cartoes:[],parcelamentos:[],
          assinaturas:[],assinatura_excecoes:[],lancamentos:[],terceiros:[],metas:[],casa_itens:[],financiamentos:[],agenda:[],snapshots:[],ciclos:[],faturas_fechadas:[],auditoria:[],notas:[],notas_salvas:[],config:null};
 let ONLINE = navigator.onLine, SYNC='off', FALTANDO=[];
+let DEMO_MODE=false, DEMO_REAL_D=null, DEMO_REAL_EU=null;
 
 /* =====================================================================
    HELPERS
@@ -52,6 +53,90 @@ function diaAnterior(data){
   return diaChave(d);
 }
 function horizon(n,ini){const o=[];let k=ini||ym(hoje());for(let i=0;i<n;i++){o.push(k);k=addM(k,1);}return o;}
+/* =====================================================================
+   MODO DEMO — dados 100% fictícios, mantidos só em memória.
+   Nunca consulta, grava nem mistura com os dados reais do grupo.
+   ===================================================================== */
+function criarDadosDemo(){
+  const k=ym(hoje()), ant=addM(k,-1), prox=addM(k,1);
+  const dd=n=>k+'-'+String(n).padStart(2,'0');
+  const dprox=n=>prox+'-'+String(n).padStart(2,'0');
+  return {
+    rendas:[
+      {id:'demo-r1',descricao:'Salário Ana',valor:4650,dia:5,quem:'Ana',ativo:true,protegida:false},
+      {id:'demo-r2',descricao:'Salário Bia',valor:3820,dia:20,quem:'Bia',ativo:true,protegida:false}
+    ],
+    fixas:[
+      {id:'demo-f1',descricao:'Aluguel',valor:1480,dia:6,categoria:'Moradia',ativo:true},
+      {id:'demo-f2',descricao:'Internet',valor:119.90,dia:10,categoria:'Moradia',ativo:true},
+      {id:'demo-f3',descricao:'Energia',valor:238.40,dia:12,categoria:'Moradia',ativo:true},
+      {id:'demo-f4',descricao:'Academia',valor:159.90,dia:18,categoria:'Saúde',ativo:true}
+    ],
+    beneficios:[
+      {id:'demo-b1',descricao:'VA Ana',valor:720,dia:1,quem:'Ana',ativo:true},
+      {id:'demo-b2',descricao:'VA Bia',valor:640,dia:1,quem:'Bia',ativo:true}
+    ],
+    cartoes:[
+      {id:'demo-c1',nome:'Nubank Demo',titular:'Ana',nome_impresso:'ANA L DEMO',banco:'Nubank',bandeira:'Mastercard',
+       dia_venc:17,dia_fecha:10,ativo:true,limite:5200,limite_disponivel:3472.55,final4:'4444',
+       validade_mes:8,validade_ano:2032,tema:'nubank',demo_pan:'5555555555554444',
+       fatura_atual:1378.45,fatura_competencia:k,responsavel_fatura_atual:'Casal'},
+      {id:'demo-c2',nome:'BB Demo',titular:'Bia',nome_impresso:'BIA M DEMO',banco:'Banco do Brasil',bandeira:'Visa',
+       dia_venc:5,dia_fecha:27,ativo:true,limite:6800,limite_disponivel:4988.20,final4:'1111',
+       validade_mes:3,validade_ano:2031,tema:'bb',demo_pan:'4111111111111111',
+       fatura_atual:1811.80,fatura_competencia:k,responsavel_fatura_atual:'Casal'},
+      {id:'demo-c3',nome:'Neon Demo',titular:'Ana',nome_impresso:'ANA L DEMO',banco:'Neon',bandeira:'Visa',
+       dia_venc:15,dia_fecha:8,ativo:true,limite:1900,limite_disponivel:1518.70,final4:'0002',
+       validade_mes:11,validade_ano:2030,tema:'neon',demo_pan:'4000000000000002',
+       fatura_atual:381.30,fatura_competencia:k,responsavel_fatura_atual:'Casal'}
+    ],
+    parcelamentos:[
+      {id:'demo-p1',descricao:'Notebook',cartao:'BB Demo',valor_parcela:289.90,total_parcelas:10,restantes:6,primeira_fatura:ant+'-05'},
+      {id:'demo-p2',descricao:'Viagem',cartao:'Nubank Demo',valor_parcela:184.50,total_parcelas:6,restantes:4,primeira_fatura:ant+'-17'}
+    ],
+    assinaturas:[
+      {id:'demo-a1',descricao:'Streaming',valor:34.90,dia:8,cartao:'Nubank Demo',projetar:true,ativo_desde:ant+'-01',cancelado_em:null},
+      {id:'demo-a2',descricao:'Música',valor:21.90,dia:14,cartao:'BB Demo',projetar:true,ativo_desde:ant+'-01',cancelado_em:null}
+    ],
+    assinatura_excecoes:[],
+    lancamentos:[
+      {id:'demo-l1',data:dd(5),descricao:'Salário Ana',categoria:'Salário/Renda',tipo:'Entrada',quem:'Ana',valor:4650,status:'Confirmado',protegido:false,beneficio:false,cartao:null},
+      {id:'demo-l2',data:dd(6),descricao:'Aluguel',categoria:'Moradia',tipo:'Saída',quem:'Casal',valor:1480,status:'Confirmado',protegido:false,beneficio:false,cartao:null},
+      {id:'demo-l3',data:dd(9),descricao:'Mercado Central',categoria:'Alimentação',tipo:'Saída',quem:'Casal',valor:286.75,status:'Confirmado',protegido:false,beneficio:false,cartao:null},
+      {id:'demo-l4',data:dd(11),descricao:'Posto Avenida',categoria:'Combustível',tipo:'Saída',quem:'Casal',valor:180,status:'Confirmado',protegido:false,beneficio:false,cartao:null},
+      {id:'demo-l5',data:dd(12),descricao:'Jantar',categoria:'Lazer',tipo:'Saída',quem:'Casal',valor:96.40,status:'Confirmado',protegido:false,beneficio:false,cartao:'Nubank Demo'},
+      {id:'demo-l6',data:dprox(2),descricao:'Reserva viagem',categoria:'Reserva',tipo:'Saída',quem:'Casal',valor:350,status:'Projetado',protegido:true,beneficio:false,cartao:null}
+    ],
+    terceiros:[
+      {id:'demo-t1',pessoa:'Colega',descricao:'Ingresso',cartao:'BB Demo',competencia:mLabel(k),valor:80,recebido:false,origem:'Demo',previsao:dd(25)}
+    ],
+    metas:[
+      {id:'demo-m1',nome:'Viagem',meta:8000,guardado:3100,ativo:true},
+      {id:'demo-m2',nome:'Reserva de emergência',meta:18000,guardado:7600,ativo:true}
+    ],
+    casa_itens:[],financiamentos:[],
+    agenda:[{id:'demo-ag1',data:dd(22),titulo:'Renovar seguro',tipo:'lembrete',valor:null,concluido:false,quem:'Casal'}],
+    snapshots:[],
+    ciclos:[
+      {id:'demo-ci1',cartao:'Nubank Demo',competencia:k,fecha:dd(10),vence:dd(17),inferido:false},
+      {id:'demo-ci2',cartao:'BB Demo',competencia:k,fecha:dd(27),vence:dprox(5),inferido:false},
+      {id:'demo-ci3',cartao:'Neon Demo',competencia:k,fecha:dd(8),vence:dd(15),inferido:false},
+      {id:'demo-ci4',cartao:'Nubank Demo',competencia:prox,fecha:dprox(10),vence:dprox(17),inferido:false},
+      {id:'demo-ci5',cartao:'BB Demo',competencia:prox,fecha:dprox(27),vence:addM(prox,1)+'-05',inferido:false},
+      {id:'demo-ci6',cartao:'Neon Demo',competencia:prox,fecha:dprox(8),vence:dprox(15),inferido:false}
+    ],
+    faturas_fechadas:[
+      {id:'demo-ff1',cartao:'Nubank Demo',competencia:k,sua_parte:1378.45,total_real:1378.45,composicao:{}},
+      {id:'demo-ff2',cartao:'BB Demo',competencia:k,sua_parte:1731.80,total_real:1811.80,composicao:{}},
+      {id:'demo-ff3',cartao:'Neon Demo',competencia:k,sua_parte:381.30,total_real:381.30,composicao:{}}
+    ],
+    auditoria:[],
+    notas:[{id:'demo-n1',descricao:'Comparar seguro do carro',conta:'',valor:null,ordem:1}],
+    notas_salvas:[],
+    config:{reserva_atual:10700,aporte_mensal:700,saldo_conferido:3248.60,saldo_conferido_em:ant+'-30'}
+  };
+}
+
 /* Lista do seletor: 6 meses para trás, 12 para frente, mais qualquer mês
    que já tenha lançamento ou competência de terceiro registrada. */
 function mesesDisponiveis(){
@@ -65,7 +150,7 @@ function toast(m,ms=2600){const t=$('toast');t.textContent=m;t.classList.add('on
   clearTimeout(t._x);t._x=setTimeout(()=>t.classList.remove('on'),ms);}
 
 /* cache offline */
-const cacheSave = () => { try{localStorage.setItem('cache_'+GRUPO, JSON.stringify(D));}catch(e){} };
+const cacheSave = () => { if(DEMO_MODE) return; try{localStorage.setItem('cache_'+GRUPO, JSON.stringify(D));}catch(e){} };
 const cacheLoad = () => { try{const s=localStorage.getItem('cache_'+GRUPO); if(s){D=JSON.parse(s);return true;}}catch(e){} return false; };
 
 /* =====================================================================
@@ -888,6 +973,7 @@ function composicaoFatura(nome,k){
   return {parcelas,assinaturas,avulsos,reports,terceiros,ajustes};
 }
 async function congelarFatura(nome,k,valorForcado){
+  if(DEMO_MODE){toast('Modo demo: nenhuma alteração é salva.',3000);return null;}
   if(FALTANDO.includes('faturas_fechadas')) return null;
   const existente=faturaFechada(nome,k); if(existente) return existente;
   const ciclo=cicloDe(nome,k), jan=janelaFatura(nome,k), comp=composicaoFatura(nome,k);
@@ -1304,6 +1390,7 @@ function setSync(s){SYNC=s;const d=$('syncdot');if(d){d.className='dot '+s;
   $('synctxt').textContent={on:'Sincronizado',busy:'Sincronizando…',off:'Sem conexão'}[s];}}
 
 async function carregarTudo(){
+  if(DEMO_MODE) return true;
   setSync('busy');
   try{
     const res = await Promise.all([
@@ -1351,6 +1438,7 @@ async function carregarTudo(){
 }
 
 async function inserir(tabela, linha){
+  if(DEMO_MODE){ toast('Modo demo: nenhuma alteração é salva.',3000); return null; }
   const {data,error} = await sb.from(tabela)
     .insert({...linha, grupo_id:GRUPO}).select().single();
   if(error){ toast('Erro ao salvar: '+error.message, 4200); return null; }
@@ -1359,6 +1447,7 @@ async function inserir(tabela, linha){
   cacheSave(); return data;
 }
 async function atualizar(tabela, id, campos){
+  if(DEMO_MODE){ toast('Modo demo: nenhuma alteração é salva.',3000); return null; }
   const alvo = tabela==='config' ? sb.from('config').update(campos).eq('grupo_id',GRUPO)
                                  : sb.from(tabela).update(campos).eq('id',id);
   const {data,error} = await alvo.select().single();
@@ -1368,6 +1457,7 @@ async function atualizar(tabela, id, campos){
   cacheSave(); return data;
 }
 async function remover(tabela, id){
+  if(DEMO_MODE){ toast('Modo demo: nenhuma alteração é salva.',3000); return false; }
   const {error} = await sb.from(tabela).delete().eq('id',id);
   if(error){ toast('Erro ao excluir: '+error.message, 4200); return false; }
   D[tabela]=D[tabela].filter(x=>x.id!==id); cacheSave(); return true;
@@ -4687,6 +4777,7 @@ window.setFatCart=v=>{ FAT_CART=v; render(); };
    cartão/mês. Cada um vira um lançamento próprio, categoria "Ajuste Fatura" —
    soma em cima do calculado, nunca substitui. Excluir é o delRow padrão. */
 window.setAssinExcecao=async(id,k,val)=>{
+  if(DEMO_MODE) return toast('Modo demo: nenhuma alteração é salva.',3000);
   if(faturaFechada(D.assinaturas.find(a=>a.id===id)?.cartao||'',k)) return toast('Fatura fechada — histórico protegido');
   const ex=D.assinatura_excecoes.find(x=>x.assinatura_id===id && x.competencia===k);
   if(val===''){
@@ -5171,6 +5262,7 @@ window.notaApagar=async id=>{
   if(await remover('notas',id)) render();
 };
 window.notaLimpar=async()=>{
+  if(DEMO_MODE) return toast('Modo demo: nenhuma alteração é salva.',3000);
   if(!confirm('Apagar todas as linhas do bloco de notas? Isso vale para as duas.')) return;
   const {error}=await sb.from('notas').delete().eq('grupo_id',GRUPO);
   if(error) return toast('Erro ao limpar: '+error.message,4200);
