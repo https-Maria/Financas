@@ -5379,6 +5379,28 @@ function vExtrato(){
 const VIEWS={painel:vPainel,dash:vDash,fatura:vFatura,compra:vCompra,lanc:vLanc,parc:vParc,assin:vAssin,
              terc:vTerc,cal:vCal,proj:vProj,amort:vAmort,casa:vCasa,cad:vCad,metas:vMetas,backup:vBackup,log:vLog,notas:vNotas,extrato:vExtrato};
 
+function entrarDemo(){
+  if(DEMO_MODE) return;
+  cofreBloquear();
+  DEMO_REAL_D=D; DEMO_REAL_EU=EU;
+  DEMO_MODE=true;
+  D=criarDadosDemo();
+  EU='Dueto Demo';
+  CUR='painel'; MREF=ym(hoje());
+  montarShell();
+  toast('Modo demo ativo — nenhum dado real está sendo exibido.',4200);
+}
+function sairDemo(){
+  if(!DEMO_MODE) return;
+  cofreBloquear();
+  D=DEMO_REAL_D||D; EU=DEMO_REAL_EU||EU;
+  DEMO_REAL_D=null; DEMO_REAL_EU=null; DEMO_MODE=false;
+  CUR='painel'; MREF=ym(hoje());
+  montarShell();
+  toast('Você voltou aos dados reais.',3000);
+}
+window.toggleDemo=()=>DEMO_MODE?sairDemo():entrarDemo();
+
 function render(){
   const m=$('main'); if(!m) return montarShell();
   montarNav();
@@ -5389,7 +5411,7 @@ function render(){
   const ae=document.activeElement;
   const foco = CUR==='notas' && ae && ae.id && m.contains(ae)
     ? {id:ae.id, a:ae.selectionStart, b:ae.selectionEnd} : null;
-  m.innerHTML=(VIEWS[CUR]||vPainel)();
+  m.innerHTML=(DEMO_MODE?'<div class="demo-banner"><b>DEMO</b> Dados totalmente fictícios · nada aqui é salvo no Supabase <button onclick="toggleDemo()">Sair do modo demo</button></div>':'')+(VIEWS[CUR]||vPainel)();
   if(CUR==='notas'){
     if(foco && !NOTA_FOCO){ const el=$(foco.id);
       if(el){ el.focus({preventScroll:true}); try{ el.setSelectionRange(foco.a,foco.b); }catch(e){} } }
@@ -5402,7 +5424,7 @@ function montarShell(){
   $('root').innerHTML=`<div class="shell">
     <div class="rail"><div class="railin">
       <div class="brand"><b class="brandname"><img class="brandmark" src="dueto-icon.svg" alt="" aria-hidden="true">Dueto</b><span>${esc(EU||'')}</span>
-        <button class="eng" id="btntema" onclick="alternarTema()"
+        ${DEMO_MODE?'<span class="demo-pill">DEMO</span>':''}<button class="eng" id="btntema" onclick="alternarTema()"
           title="Trocar entre claro e escuro">${temaAtual()==='light'?'☀':'☾'}</button>
         <button class="eng menubtn" onclick="abrirMenu('menu')" aria-expanded="${MENU_ABERTO==='menu'}"
           title="Abrir menu completo">☰</button></div>
@@ -5520,6 +5542,7 @@ function montarNav(){
     box.innerHTML=`<div class="ddmenu dir fullmenu">
       <div class="menugrid">${grupos}</div>
       <div class="menuconta">
+        <button onclick="abrirMenu(null);toggleDemo()">${DEMO_MODE?'Sair do modo demo':'Modo demo'}</button>
         <button onclick="abrirMenu(null);exportar()">Exportar backup</button>
         <button onclick="abrirMenu(null);sair()" style="color:var(--neg)">Sair</button>
       </div>
@@ -5536,7 +5559,7 @@ window.exportar=()=>{
   a.href=URL.createObjectURL(blob);
   a.download='financeiro-'+hoje()+'.json';
   a.click(); URL.revokeObjectURL(a.href);
-  toast('Backup baixado — pode subir no Git');
+  toast(DEMO_MODE?'Backup fictício do modo demo baixado':'Backup baixado');
 };
 
 function splashPronta(){ try{ window.duetoSplashPronta?.(); }catch(e){} }
