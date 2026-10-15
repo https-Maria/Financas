@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v93';
+const APP_VER='v94';
 
 /* =====================================================================
    ESTADO
@@ -333,6 +333,100 @@ function faturaCartaoViva(nome,k){
 function faturaCartao(nome,k){
   const fechada=faturaFechada(nome,k);
   return fechada ? +fechada.sua_parte : faturaCartaoViva(nome,k);
+}
+
+/* ---- Central visual de cartões ----
+   Usa apenas metadados permitidos do cartão. Número completo e CVV não
+   ficam no HTML nem no banco comum do Dueto. */
+function temaCartao(c, bbIndex=0){
+  const t=String(c.tema||c.banco||c.nome||'').toLowerCase();
+  if(t.includes('nubank')) return 'nubank';
+  if(t.includes('neon')) return 'neon';
+  if(t.includes('pan')) return 'pan';
+  if(t.includes('mercado')) return 'mercadopago';
+  if(t.includes('bb') || t.includes('banco do brasil')) return 'bb'+((bbIndex%4)+1);
+  return 'dueto';
+}
+function terceirosCartaoMes(nome,k){
+  return D.terceiros.filter(t=>t.cartao===nome && !t.recebido &&
+    (!t.competencia || t.competencia===mLabel(k)))
+    .reduce((s,t)=>s+ +t.valor,0);
+}
+function totalVisualCartao(nome,k){
+  const fechada=faturaFechada(nome,k);
+  if(fechada && fechada.total_real!=null) return +fechada.total_real;
+  const terc=terceirosCartaoMes(nome,k);
+  const rep=reportsFatura(nome,k).reduce((s,l)=>s+ +l.valor,0);
+  return faturaCartao(nome,k)+terc+rep;
+}
+function dataCurta(d){
+  if(!d) return '—';
+  const p=String(d).split('-');
+  return p.length===3 ? p[2]+'/'+p[1] : d;
+}
+function centralCartoes(k){
+  const cards=D.cartoes.filter(c=>c.ativo);
+  if(!cards.length) return '';
+  let bb=0, totLim=0, totDisp=0, comLim=0;
+  const html=cards.map(c=>{
+    const ehBB=/\bbb\b|banco do brasil/i.test(String(c.banco||c.nome||''));
+    const tema=temaCartao(c,ehBB?bb++:0);
+    const total=totalVisualCartao(c.nome,k);
+    const lim=c.limite==null||c.limite===''?null:+c.limite;
+    const disp=c.limite_disponivel==null||c.limite_disponivel===''
+      ? (lim==null?null:Math.max(0,lim-total))
+      : +c.limite_disponivel;
+    if(lim!=null){totLim+=lim;comLim++;}
+    if(disp!=null) totDisp+=disp;
+    const ciclo=cicloDe(c.nome,k);
+    const fecha=ciclo?.fecha ? dataCurta(ciclo.fecha) : (c.dia_fecha?'dia '+c.dia_fecha:'—');
+    const vence=ciclo?.vence ? dataCurta(ciclo.vence) : (c.dia_venc?'dia '+c.dia_venc:'—');
+    const final=c.final4 ? '•••• '+esc(c.final4) : 'final não informado';
+    const validade=(c.validade_mes&&c.validade_ano)
+      ? String(c.validade_mes).padStart(2,'0')+'/'+String(c.validade_ano).slice(-2) : '—';
+    const titular=esc(c.nome_impresso||c.titular||'');
+    const rede=esc(c.bandeira||'');
+    const banco=esc(c.banco||c.nome);
+    return `<div class="dc-scene dc-${tema}" onclick="this.classList.toggle('flipped')" role="button" tabindex="0"
+      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.classList.toggle('flipped')}">
+      <div class="dc-card">
+        <div class="dc-face dc-front">
+          <div class="dc-top"><b>${banco}</b><span>${rede}</span></div>
+          <div>
+            <span class="dc-label">limite disponível agora</span>
+            <strong class="dc-money">${disp==null?'—':BRL(disp)}</strong>
+          </div>
+          <div class="dc-bottom"><div><span class="dc-number">${final}</span><small>${titular}</small></div>
+            <span class="dc-chip"></span></div>
+        </div>
+        <div class="dc-face dc-back">
+          <div class="dc-top"><b>${esc(c.nome)}</b><span>↻ voltar</span></div>
+          <div class="dc-backgrid">
+            <div><span>Fatura de ${mLabel(k)}</span><b>${BRL(total)}</b></div>
+            <div><span>Vence</span><b>${vence}</b></div>
+            <div><span>Fecha</span><b>${fecha}</b></div>
+            <div><span>Limite total</span><b>${lim==null?'—':BRL(lim)}</b></div>
+            <div><span>Final</span><b>${final}</b></div>
+            <div><span>Validade</span><b>${validade}</b></div>
+          </div>
+          <div class="dc-safe">🔒 número completo e CVV não ficam armazenados no Dueto</div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  return `<div class="panel dc-panel"><h2>Cartões e limites
+    <small>clique no cartão para virar · cores seguem a identidade do banco</small></h2>
+    <div class="pbody">
+      <div class="dc-summary">
+        <span><small>Limite conhecido</small><b>${comLim?BRL(totLim):'—'}</b></span>
+        <span><small>Disponível conhecido</small><b>${comLim?BRL(totDisp):'—'}</b></span>
+        <span><small>Cartões ativos</small><b>${cards.length}</b></span>
+      </div>
+      <div class="dc-track">${html}</div>
+      <p class="note" style="margin-top:10px">Os valores de limite são a última atualização salva no Dueto.
+        Cartões sem limite cadastrado continuam aparecendo e podem ser completados depois.</p>
+    </div></div>`;
 }
 
 /* Ajustes pontuais da aba Fatura — cobrança que o cálculo não previu (ex.:
@@ -1422,6 +1516,8 @@ function vPainel(){
       </div>
     </details>`).join('')}
   </div>
+
+  ${centralCartoes(MREF)}
 
   <div class="grid2">
     <div class="panel"><h2>Faturas de ${mLabel(MREF)}</h2><div class="pbody">
