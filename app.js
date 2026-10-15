@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v97';
+const APP_VER='v98';
 
 /* =====================================================================
    ESTADO
@@ -403,7 +403,13 @@ function centralCartoes(k){
             <span class="dc-chip"></span></div>
         </div>
         <div class="dc-face dc-back">
-          <div class="dc-top"><b>${esc(c.nome)}</b><span>↻ voltar</span></div>
+          <div class="dc-top"><b>${esc(c.nome)}</b>
+            <span class="dc-backactions"><span>↻ voltar</span>
+              <button id="cofre_eye_${c.id}" class="dc-eye" title="Mostrar dados protegidos"
+                aria-label="Mostrar dados protegidos"
+                onclick="event.stopPropagation();toggleCofreCartao('${c.id}')">👁</button>
+            </span>
+          </div>
           <div class="dc-backgrid">
             <div><span>Fatura de ${mLabel(k)}</span><b>${BRL(total)}</b>${c.responsavel_fatura_atual&&c.fatura_competencia===k?`<small>${esc(c.responsavel_fatura_atual)}</small>`:''}</div>
             <div><span>Vence</span><b>${vence}</b></div>
@@ -415,12 +421,7 @@ function centralCartoes(k){
             <div class="dc-fullpan"><span>Número completo</span>
               <b id="cofre_pan_${c.id}" data-cofre-pan data-mask="${final}">${final}</b></div>
           </div>
-          <div class="dc-safe">
-            <span>CVV nunca é armazenado.</span>
-            <button id="cofre_eye_${c.id}" class="dc-eye" title="Mostrar dados protegidos"
-              aria-label="Mostrar dados protegidos"
-              onclick="event.stopPropagation();toggleCofreCartao('${c.id}')">👁</button>
-          </div>
+          <div class="dc-safe"><span>CVV nunca é armazenado.</span></div>
         </div>
       </div>
     </div>`;
