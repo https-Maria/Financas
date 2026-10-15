@@ -609,7 +609,9 @@ input:focus,select:focus{border-color:var(--steel);outline:none;box-shadow:0 0 0
 .dc-vaultbar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px;padding:10px 12px;border:1px solid var(--rule-soft);border-radius:14px;background:var(--rule-soft);font-size:11px;color:var(--muted)}
 .dc-vaultbar>span:last-child{display:flex;gap:7px;flex-wrap:wrap}
 .dc-safe{display:flex;align-items:center;justify-content:space-between;gap:9px;position:relative;z-index:2;font-size:9px;opacity:.92}
-.dc-eye{width:34px;height:34px;display:grid;place-items:center;border:1px solid rgba(255,255,255,.28);background:rgba(0,0,0,.16);color:inherit;border-radius:50%;font-size:16px;line-height:1;transition:transform .15s ease,background .15s ease}
+.dc-backactions{display:inline-flex;align-items:center;gap:7px}
+.dc-backactions>span{opacity:.72;font-size:10px}
+.dc-eye{width:30px;height:30px;display:grid;place-items:center;border:1px solid rgba(255,255,255,.28);background:rgba(0,0,0,.16);color:inherit;border-radius:50%;font-size:15px;line-height:1;transition:transform .15s ease,background .15s ease;position:relative;z-index:4;flex:none}
 .dc-eye:hover{transform:scale(1.05);background:rgba(0,0,0,.24)}
 .dc-eye.open{background:rgba(255,255,255,.2)}
 .dc-neon .dc-eye{border-color:rgba(7,42,54,.28);background:rgba(255,255,255,.28)}
@@ -649,6 +651,6 @@ window.duetoSplashPronta=()=>{
 <div id="root"><div class="gate"><div class="gatebox"><h1>Dueto</h1>
 <p class="sub">Preparando suas finanças…</p></div></div></div>
 <div class="toast" id="toast"></div>
-<script type="module" src="app.js?v=97"></script>
+<script type="module" src="app.js?v=98"></script>
 </body>
 </html>
