@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v96';
+const APP_VER='v97';
 
 /* =====================================================================
    ESTADO
@@ -410,13 +410,16 @@ function centralCartoes(k){
             <div><span>Fecha</span><b>${fecha}</b></div>
             <div><span>Limite total</span><b>${lim==null?'—':BRL(lim)}</b></div>
             <div><span>Final</span><b>${final}</b></div>
-            <div><span>Validade</span><b>${validade}</b></div>
+            <div><span>Validade</span>
+              <b id="cofre_validade_${c.id}" data-cofre-validade data-mask="••/••">••/••</b></div>
             <div class="dc-fullpan"><span>Número completo</span>
               <b id="cofre_pan_${c.id}" data-cofre-pan data-mask="${final}">${final}</b></div>
           </div>
           <div class="dc-safe">
-            <button class="dc-vaultbtn" onclick="event.stopPropagation();abrirCofreCartao('${c.id}')">🔐 Abrir cofre</button>
             <span>CVV nunca é armazenado.</span>
+            <button id="cofre_eye_${c.id}" class="dc-eye" title="Mostrar dados protegidos"
+              aria-label="Mostrar dados protegidos"
+              onclick="event.stopPropagation();toggleCofreCartao('${c.id}')">👁</button>
           </div>
         </div>
       </div>
@@ -426,9 +429,7 @@ function centralCartoes(k){
   return `<div class="panel dc-panel"><h2>Cartões e limites
     <small>clique no cartão para virar · cores seguem a identidade do banco</small></h2>
     <div class="pbody">
-      <div class="dc-vaultbar"><span>🔐 Cofre: número completo criptografado fora do cache do app; CVV nunca é salvo.</span>
-        <span><button class="btn alt sm" onclick="cofreAtivarBiometriaUI()">Biometria / Windows Hello</button>
-        <button class="btn alt sm" onclick="bloquearCofre()">Bloquear</button></span></div>
+      <div class="dc-vaultbar"><span>👁 No verso do cartão, toque no olho para autenticar e mostrar os dados protegidos. Toque de novo para esconder.</span></div>
       <div class="dc-summary">
         <span><small>Limite conhecido</small><b>${comLim?BRL(totLim):'—'}</b></span>
         <span><small>Disponível conhecido</small><b>${comLim?BRL(totDisp):'—'}</b></span>
@@ -448,7 +449,7 @@ function centralCartoes(k){
    pela senha-mestra (PBKDF2) e, opcionalmente, por WebAuthn PRF.
    CVV/CVC NÃO é aceito nem armazenado.
    ===================================================================== */
-const COFRE_ESTADO={key:null,raw:null,config:null,timer:null,ate:0};
+const COFRE_ESTADO={key:null,raw:null,config:null,timer:null,ate:0,visivel:null};
 const COFRE_ITER=310000;
 const encCofre=new TextEncoder(), decCofre=new TextDecoder();
 
@@ -492,6 +493,16 @@ function cofreMascararTudo(){
   document.querySelectorAll('[data-cofre-pan]').forEach(el=>{
     el.textContent=el.dataset.mask||'••••';
   });
+  document.querySelectorAll('[data-cofre-validade]').forEach(el=>{
+    el.textContent=el.dataset.mask||'••/••';
+  });
+  document.querySelectorAll('.dc-eye').forEach(el=>{
+    el.textContent='👁';
+    el.title='Mostrar dados protegidos';
+    el.setAttribute('aria-label','Mostrar dados protegidos');
+    el.classList.remove('open');
+  });
+  COFRE_ESTADO.visivel=null;
 }
 function cofreBloquear(){
   if(COFRE_ESTADO.raw) try{COFRE_ESTADO.raw.fill(0);}catch(e){}
@@ -590,9 +601,9 @@ async function cofreCriar(){
   await cofreSetRaw(raw); raw.fill(0);
   toast('Cofre criado. A chave fica só na memória deste navegador por 60 segundos.',5200);
   if(await cofreBiometriaPossivel()){
-    const sim=await cofreConfirmar('Ativar biometria / Windows Hello?',
-      'Quando o dispositivo suportar WebAuthn PRF, o Dueto poderá abrir o cofre com impressão digital, Face ID, Windows Hello ou PIN do aparelho.');
-    if(sim) await cofreAtivarBiometria(data);
+    await cofreAtivarBiometria(data);
+  }else{
+    toast('Cofre criado. Este dispositivo não oferece biometria/Windows Hello compatível; use a senha-mestra.',6000);
   }
   return data;
 }
@@ -736,7 +747,13 @@ async function cofreSalvarPan(cartao){
   if(cartao.final4 && !pan.endsWith(String(cartao.final4))){
     toast('O número não termina em '+cartao.final4+'. Confira antes de salvar.',5200);return null;
   }
-  const e=await cofreEncryptJSON(COFRE_ESTADO.key,{pan,versao:1,salvo_em:new Date().toISOString()});
+  const e=await cofreEncryptJSON(COFRE_ESTADO.key,{
+    pan,
+    validade_mes:cartao.validade_mes||null,
+    validade_ano:cartao.validade_ano||null,
+    versao:1,
+    salvo_em:new Date().toISOString()
+  });
   const {data,error}=await sb.from('cartoes_cofre').upsert({
     grupo_id:GRUPO,user_id:USER.id,cartao_id:cartao.id,
     payload_ciphertext:e.ct,payload_iv:e.iv,versao:1,atualizado_em:new Date().toISOString()
@@ -746,27 +763,83 @@ async function cofreSalvarPan(cartao){
 }
 function cofreFmtPan(pan){return String(pan).replace(/(.{4})/g,'$1 ').trim();}
 function cofreRevelar(cartao,payload){
-  const el=document.getElementById('cofre_pan_'+cartao.id); if(!el)return;
-  el.textContent=cofreFmtPan(payload.pan);
-  clearTimeout(el._cofreTimer);
-  el._cofreTimer=setTimeout(()=>{el.textContent=el.dataset.mask||'••••';},15000);
+  cofreMascararTudo();
+  const pan=document.getElementById('cofre_pan_'+cartao.id);
+  const val=document.getElementById('cofre_validade_'+cartao.id);
+  const eye=document.getElementById('cofre_eye_'+cartao.id);
+  if(!pan)return;
+  pan.textContent=cofreFmtPan(payload.pan);
+  const vm=payload.validade_mes||cartao.validade_mes;
+  const va=payload.validade_ano||cartao.validade_ano;
+  if(val) val.textContent=(vm&&va)
+    ? String(vm).padStart(2,'0')+'/'+String(va).slice(-2)
+    : '—';
+  if(eye){
+    eye.textContent='🙈';
+    eye.title='Esconder e bloquear';
+    eye.setAttribute('aria-label','Esconder e bloquear');
+    eye.classList.add('open');
+  }
+  COFRE_ESTADO.visivel=cartao.id;
 }
-window.abrirCofreCartao=async(id)=>{
+async function cofreAutenticarOlho(){
+  let cfg=await cofreConfig();
+  if(!cfg){
+    cfg=await cofreCriar();
+    if(!cfg) return false;
+    // A criação já tenta registrar a biometria e deixa a chave aberta.
+    return cofreEstaAberto();
+  }
+
+  // Quando já existe biometria, TODO clique para mostrar pede autenticação.
+  if(cfg.credential_id && await cofreBiometriaPossivel()){
+    const ok=await cofreDesbloquearBiometria(cfg);
+    if(!ok) toast('Biometria cancelada ou não reconhecida.',3500);
+    return ok;
+  }
+
+  // Se o aparelho suporta biometria mas ela ainda não foi configurada,
+  // usa a senha uma vez para cadastrar o autenticador.
+  if(await cofreBiometriaPossivel()){
+    const ok=await cofreDesbloquearSenha(cfg);
+    if(!ok) return false;
+    const bio=await cofreAtivarBiometria(cfg);
+    return bio || cofreEstaAberto();
+  }
+
+  // Fallback somente para dispositivos sem WebAuthn/biometria compatível.
+  return cofreDesbloquearSenha(cfg);
+}
+
+window.toggleCofreCartao=async(id)=>{
   try{
+    if(COFRE_ESTADO.visivel===id){
+      cofreBloquear();
+      toast('Dados protegidos novamente.',2500);
+      return;
+    }
+
     const cartao=D.cartoes.find(c=>c.id===id); if(!cartao)return;
     if(!isSecureContext) return toast('O cofre só funciona em HTTPS.',4500);
-    const ok=await cofreGarantirAberto(); if(!ok)return;
+
+    const ok=await cofreAutenticarOlho();
+    if(!ok)return;
+
     let {data:row,error}=await sb.from('cartoes_cofre').select('*').eq('cartao_id',id).maybeSingle();
     if(error) throw error;
     if(!row) row=await cofreSalvarPan(cartao);
     if(!row)return;
+
     const payload=await cofreDecryptJSON(COFRE_ESTADO.key,row);
     cofreRevelar(cartao,payload);
-    toast('Número revelado por 15 segundos. O cofre bloqueia em 60 segundos.',4200);
+    toast('Dados exibidos. Toque no olho novamente para bloquear.',3500);
   }catch(e){
-    console.error(e);toast('Não consegui abrir o cofre: '+(e?.message||e),6200);
+    console.error(e);
+    cofreBloquear();
+    toast('Não consegui abrir o cofre: '+(e?.message||e),6200);
   }
 };
+window.abrirCofreCartao=id=>window.toggleCofreCartao(id);
 window.bloquearCofre=()=>{cofreBloquear();toast('Cofre bloqueado');};
 
 /* Ajustes pontuais da aba Fatura — cobrança que o cálculo não previu (ex.:
