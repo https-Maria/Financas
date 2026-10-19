@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v102';
+const APP_VER='v103';
 
 /* =====================================================================
    ESTADO
@@ -183,6 +183,7 @@ function mexeNoBanco(l){
   if(!l.cartao) return true;
   return l.categoria==='Cartão' && l.tipo==='Saída';
 }
+const valorBanco=l=>l.valor_bancario==null ? +l.valor : +l.valor_bancario;
 function saldoConta(){
   const c=cfg();
   const base = c.saldo_conferido==null ? null : +c.saldo_conferido;
@@ -196,10 +197,10 @@ function saldoConta(){
     l.status!=='Projetado' &&
     String(l.data) <= ate &&
     (!desde || String(l.data)>desde));
-  const ent = depois.filter(l=>l.tipo==='Entrada').reduce((s,l)=>s+ +l.valor,0);
-  const sai = depois.filter(l=>l.tipo==='Saída').reduce((s,l)=>s+ +l.valor,0);
+  const ent = depois.filter(l=>l.tipo==='Entrada').reduce((s,l)=>s+valorBanco(l),0);
+  const sai = depois.filter(l=>l.tipo==='Saída').reduce((s,l)=>s+valorBanco(l),0);
   const rep = depois.filter(l=>l.protegido)
-    .reduce((s,l)=>s+(l.tipo==='Entrada'? +l.valor : -(+l.valor)),0);
+    .reduce((s,l)=>s+(l.tipo==='Entrada'? valorBanco(l) : -valorBanco(l)),0);
   return {base, desde, ent, sai, mov:ent-sai,
           atual: base==null?null:base+ent-sai,
           protegido: rep, n: depois.length,
@@ -260,6 +261,8 @@ function temFaturaDeclarada(nome,k){
     l.tipo!=='Entrada' && (l.categoria==='Cartão' || /fatura/i.test(l.descricao||'')));
 }
 function lancamentoNoCiclo(l,nome,k){
+  if(l.competencia_fatura && /^\d{4}-\d{2}$/.test(l.competencia_fatura))
+    return l.competencia_fatura===k;
   /* Histórico já lançado não é realocado por uma regra nova. Em faturas
      abertas/futuras, a data da compra é encaixada na janela real do ciclo. */
   if(temFaturaDeclarada(nome,k)) return ym(l.data)===k;
@@ -1387,12 +1390,13 @@ function reservasMes(k){
 
 function realizado(k){
   const ls=D.lancamentos.filter(l=>mesDeCaixa(l)===k);
-  const ent=ls.filter(l=>l.tipo==='Entrada'&&!l.protegido&&!l.beneficio).reduce((s,l)=>s+ +l.valor,0);
-  const sai=ls.filter(l=>l.tipo==='Saída'&&!l.protegido).reduce((s,l)=>s+ +l.valor,0);
+  const orc=l=>!l.protegido&&!l.beneficio&&l.categoria!=='Transferência interna';
+  const ent=ls.filter(l=>l.tipo==='Entrada'&&orc(l)).reduce((s,l)=>s+ +l.valor,0);
+  const sai=ls.filter(l=>l.tipo==='Saída'&&orc(l)).reduce((s,l)=>s+ +l.valor,0);
   const va =ls.filter(l=>l.beneficio).reduce((s,l)=>s+ +l.valor,0);
   const porCat={};
-  ls.filter(l=>l.tipo==='Saída'&&!l.protegido).forEach(l=>porCat[l.categoria]=(porCat[l.categoria]||0)+ +l.valor);
-  return {ent,sai,va,sal:ent-sai,n:ls.length,porCat,temDados:ls.some(l=>!l.protegido&&!l.beneficio)};
+  ls.filter(l=>l.tipo==='Saída'&&orc(l)).forEach(l=>porCat[l.categoria]=(porCat[l.categoria]||0)+ +l.valor);
+  return {ent,sai,va,sal:ent-sai,n:ls.length,porCat,temDados:ls.some(orc)};
 }
 
 /* =====================================================================
@@ -2174,7 +2178,7 @@ function vPainel(){
 }
 
 const CATS=['Salário/Renda','Moradia','Transporte','Combustível','Investimento','Telefonia',
-  'Saúde','Compras','Cartão','Assinaturas','Alimentação','Lazer','Reserva','Reports','Outros'];
+  'Saúde','Compras','Cartão','Assinaturas','Alimentação','Lazer','Reserva','Reports','Transferência interna','Outros'];
 
 /* =====================================================================
    FILTRO UNIVERSAL — o mesmo padrão em toda tabela do app.
@@ -5393,13 +5397,16 @@ function vExtrato(){
   };
   const rot=d=>d===fim?'Até o fim do mês':'Até o dia '+String(d).padStart(2,'0');
   /* o que cada linha faz com o dinheiro da conta */
-  const efeito=l=>
-      l.beneficio          ? {tag:'benefício', cls:'t-g', conta:0}
-    : l.protegido          ? {tag:'Reports', cls:'t-g', conta:0}
-    : l.status==='Projetado'? {tag:'previsto', cls:'t-g', conta:0}
-    : !mexeNoBanco(l)      ? {tag:'fatura '+(l.cartao||''), cls:'t-i', conta:0}
-    : String(l.data)>hoje() ? {tag:'ainda vai sair', cls:'t-w', conta:0}
-    : {tag:'conta', cls:'t-ok', conta:(l.tipo==='Entrada'? +l.valor : -(+l.valor))};
+  const efeito=l=>{
+    if(l.beneficio) return {tag:'benefício',cls:'t-g',conta:0};
+    if(l.status==='Projetado') return {tag:'previsto',cls:'t-g',conta:0};
+    if(!mexeNoBanco(l)) return {tag:'fatura '+(l.cartao||''),cls:'t-i',conta:0};
+    if(String(l.data)>hoje()) return {tag:'ainda vai sair',cls:'t-w',conta:0};
+    const vb=valorBanco(l), sinal=l.tipo==='Entrada'?vb:-vb;
+    if(l.categoria==='Transferência interna') return {tag:'transferência interna',cls:'t-g',conta:sinal};
+    if(l.protegido) return {tag:l.categoria==='Reports'?'Reports / conta':'reserva / conta',cls:'t-g',conta:sinal};
+    return {tag:'conta',cls:'t-ok',conta:sinal};
+  };
   const grupos=cortes.map(d=>({d, itens:ls.filter(l=>periodo(l)===d)})).filter(g=>g.itens.length);
   const totalConta=ls.reduce((a,l)=>a+efeito(l).conta,0);
   let corrido=0;
@@ -5429,11 +5436,12 @@ function vExtrato(){
         const mostra = S.base!=null && e.conta!==0;
         return `<tr class="${e.conta?'':'dim'}">
         <td class="mono">${String(l.data).split('-').reverse().join('/')}</td>
-        <td>${esc(l.descricao)}${l.na_gaveta?' <span class="tag t-i">gaveta</span>':''}</td>
+        <td>${esc(l.descricao)}${l.conta?` <span class="tag t-g">${esc(l.conta)}</span>`:''}${l.na_gaveta?' <span class="tag t-i">gaveta</span>':''}</td>
         <td>${esc(l.categoria||'')}</td>
         <td><span class="tag ${e.cls}">${esc(e.tag)}</span></td>
         <td class="r" style="font-weight:600;color:${l.tipo==='Entrada'?'var(--pos)':'var(--neg)'}">
-          ${l.tipo==='Entrada'?'+':'−'} ${BRL(l.valor)}</td>
+          ${l.tipo==='Entrada'?'+':'−'} ${BRL(l.valor)}${l.valor_bancario!=null && +l.valor_bancario!==+l.valor
+            ? `<div class="note">banco: ${BRL(l.valor_bancario)}</div>`:''}</td>
         <td class="r mono">${mostra?BRL(S.base+corrido):'—'}</td></tr>`;}).join('')}
     </tbody></table></div></div>`;}).join('')
   :`<div class="panel"><div class="pbody"><p class="note">Nenhum lançamento em ${mLabel(k)}.</p></div></div>`}
