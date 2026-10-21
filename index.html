@@ -658,6 +658,58 @@ input:focus,select:focus{border-color:var(--steel);outline:none;box-shadow:0 0 0
 .okbox{padding:14px;border:1px solid var(--rule);border-radius:14px;background:var(--surface)}.okbox p{margin:5px 0 0;color:var(--muted);font-size:11px}
 .log-undo{display:block;margin-top:6px;white-space:nowrap}
 @media(max-width:700px){.rules-grid{grid-template-columns:1fr}.integrity-item{grid-template-columns:25px 1fr}.integrity-item .btn{grid-column:2;justify-self:start}.rule-tip>div{left:auto;right:-20px}}
+
+/* ---------- v106: ferramentas flutuantes ---------- */
+.ft-bubble{
+  position:fixed;right:20px;bottom:22px;z-index:90;width:52px;height:52px;border-radius:50%;
+  display:grid;place-items:center;background:var(--steel);color:#fff;border:1px solid rgba(255,255,255,.22);
+  box-shadow:0 10px 30px rgba(20,17,31,.28);font:700 23px/1 var(--mono);cursor:pointer;
+}
+.ft-bubble:hover{transform:translateY(-1px)}
+.ft-panel{
+  position:fixed;right:20px;bottom:86px;z-index:100;width:350px;height:500px;
+  min-width:292px;min-height:360px;max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);
+  display:none;flex-direction:column;background:var(--panel);color:var(--ink);
+  border:1px solid var(--rule);border-radius:18px;overflow:auto;resize:both;
+  box-shadow:0 22px 60px rgba(20,17,31,.32);
+}
+.ft-panel.open{display:flex}.ft-panel.dragging{user-select:none}
+.ft-head{
+  min-height:50px;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 9px 8px 13px;
+  border-bottom:1px solid var(--rule-soft);cursor:move;touch-action:none;flex:0 0 auto;
+}
+.ft-title{display:flex;align-items:center;gap:7px;min-width:0}.ft-title>b{font-size:13px}.ft-title>small{font-size:10px;color:var(--muted);white-space:nowrap}
+.ft-title>span{color:var(--steel);font:700 18px/1 var(--mono)}
+.ft-win-actions{display:flex;gap:4px}.ft-win-actions button{width:32px;height:32px;border:1px solid var(--rule);border-radius:9px;background:var(--surface);font-size:17px;line-height:1}
+.ft-win-actions button:hover{background:var(--rule-soft)}
+.ft-tabs{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:8px;border-bottom:1px solid var(--rule-soft);flex:0 0 auto}
+.ft-tab{padding:8px 9px;border-radius:10px;color:var(--muted);font-size:12px;font-weight:700}
+.ft-tab[aria-pressed="true"]{background:var(--steel-bg);color:var(--steel)}
+.ft-body{padding:12px;min-height:0;flex:1;overflow:auto}.ft-view{display:none}.ft-view.on{display:block}
+.ft-display{
+  width:100%;border:1px solid var(--rule);border-radius:12px;background:var(--surface);color:var(--ink);
+  padding:12px 14px;text-align:right;font:600 24px/1.2 var(--mono);margin-bottom:9px;
+}
+.ft-calc{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}
+.ft-calc button{min-height:48px;border:1px solid var(--rule);border-radius:11px;background:var(--surface);font:600 16px/1 var(--mono)}
+.ft-calc button:hover{background:var(--rule-soft)}.ft-calc button.op{background:var(--steel-bg);color:var(--steel);border-color:transparent}
+.ft-hint{font-size:10.5px;color:var(--muted);margin-top:8px;text-align:center}
+.ft-calnav{display:grid;grid-template-columns:38px 1fr 38px;align-items:center;gap:6px;margin-bottom:9px}
+.ft-calnav b{text-align:center;font-size:13px}.ft-calnav button{height:36px;border:1px solid var(--rule);border-radius:9px;background:var(--surface);font-size:20px}
+.ft-week,.ft-days{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.ft-week{margin-bottom:4px}.ft-week span{text-align:center;color:var(--muted);font-size:9px;font-weight:700;text-transform:uppercase}
+.ft-day{aspect-ratio:1;border:1px solid var(--rule-soft);border-radius:9px;background:var(--surface);font:600 11px/1 var(--mono);min-width:0}
+.ft-day.empty{border:none;background:transparent}.ft-day.today{border-color:var(--steel);color:var(--steel)}
+.ft-day.selected{background:var(--steel);border-color:var(--steel);color:#fff}
+.ft-calfoot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:10px;font-size:10.5px;color:var(--muted)}
+.ft-resize-note{flex:0 0 auto;padding:5px 10px 7px;text-align:right;color:var(--muted);font-size:9px;border-top:1px solid var(--rule-soft)}
+@media(max-width:520px){
+  .ft-bubble{right:14px;bottom:16px;width:48px;height:48px}
+  .ft-panel{right:8px;bottom:72px;width:min(350px,calc(100vw - 16px));height:480px;max-height:calc(100vh - 86px);resize:none}
+  .ft-title>small{display:none}.ft-resize-note{display:none}.ft-calc button{min-height:44px}
+}
+@media(prefers-reduced-motion:reduce){.ft-bubble:hover{transform:none}}
+
 </style>
 </head>
 <body>
@@ -685,6 +737,6 @@ window.duetoSplashPronta=()=>{
 <div id="root"><div class="gate"><div class="gatebox"><h1>Dueto</h1>
 <p class="sub">Preparando suas finanças…</p></div></div></div>
 <div class="toast" id="toast"></div>
-<script type="module" src="app.js?v=105"></script>
+<script type="module" src="app.js?v=106"></script>
 </body>
 </html>
