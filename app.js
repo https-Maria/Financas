@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v103';
+const APP_VER='v104';
 
 /* =====================================================================
    ESTADO
@@ -1286,7 +1286,11 @@ function blocosDoMes(k, comPlanejado){
   const dias = new Set();
   D.rendas.filter(r=>r.ativo&&!r.protegida).forEach(r=>dias.add(+r.dia||1));
   D.fixas.filter(f=>f.ativo).forEach(f=>dias.add(+f.dia||1));
-  cartoes.forEach(c=>{ if(c.ativo && +c.dia_venc>1) dias.add(+c.dia_venc); });
+  /* Só cria uma gaveta na data do cartão quando existe valor do casal
+     naquela fatura. Cartão 100% de terceiro não pode gerar uma gaveta vazia. */
+  cartoes.forEach(c=>{
+    if(c.ativo && +c.dia_venc>1 && faturaCartao(c.nome,k)>0) dias.add(+c.dia_venc);
+  });
   crediariosDoMes(k).forEach(p=>dias.add(diaDoCrediario(p,k)));
   /* Os blocos são as datas em que há compromisso: renda, conta fixa e
      vencimento de fatura. Gasto avulso NÃO cria bloco — senão uma gasolina
