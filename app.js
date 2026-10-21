@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v105';
+const APP_VER='v106';
 
 /* =====================================================================
    ESTADO
@@ -5600,6 +5600,162 @@ function sairDemo(){
 }
 window.toggleDemo=()=>DEMO_MODE?sairDemo():entrarDemo();
 
+
+/* =====================================================================
+   FERRAMENTAS FLUTUANTES — calculadora + calendário
+   Janela estilo Messenger: abre pela bolha, arrasta, redimensiona e lembra
+   posição/tamanho neste aparelho.
+   ===================================================================== */
+let FT_ABA='calc', FT_EXPR='', FT_CAL=new Date(), FT_SEL=null, FT_DRAG=null;
+const FT_KEY='dueto_float_tools_v1';
+
+function ftState(){
+  try{return JSON.parse(localStorage.getItem(FT_KEY)||'{}')||{};}catch(e){return {};}
+}
+function ftSave(){
+  const p=$('floatTools'); if(!p) return;
+  try{
+    localStorage.setItem(FT_KEY,JSON.stringify({
+      aberto:p.classList.contains('open'),
+      left:p.style.left||null, top:p.style.top||null,
+      width:p.style.width||null, height:p.style.height||null,
+      aba:FT_ABA
+    }));
+  }catch(e){}
+}
+function ftClamp(){
+  const p=$('floatTools'); if(!p || !p.classList.contains('open')) return;
+  const r=p.getBoundingClientRect(), gap=8;
+  const maxL=Math.max(gap,window.innerWidth-r.width-gap);
+  const maxT=Math.max(gap,window.innerHeight-r.height-gap);
+  const l=Math.min(Math.max(gap,r.left),maxL);
+  const t=Math.min(Math.max(gap,r.top),maxT);
+  p.style.left=l+'px'; p.style.top=t+'px'; p.style.right='auto'; p.style.bottom='auto';
+}
+window.toggleFloatTools=(force)=>{
+  const p=$('floatTools'); if(!p) return;
+  const abrir=typeof force==='boolean'?force:!p.classList.contains('open');
+  p.classList.toggle('open',abrir);
+  p.setAttribute('aria-hidden',String(!abrir));
+  const b=$('floatToolsBubble'); if(b) b.setAttribute('aria-expanded',String(abrir));
+  if(abrir){ requestAnimationFrame(()=>{ftClamp(); const d=$('ftCalcDisplay'); if(FT_ABA==='calc'&&d) d.focus();}); }
+  ftSave();
+};
+window.ftTab=(aba)=>{
+  FT_ABA=aba==='cal'?'cal':'calc';
+  document.querySelectorAll('.ft-tab').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.ft===FT_ABA)));
+  document.querySelectorAll('.ft-view').forEach(v=>v.classList.toggle('on',v.dataset.ftview===FT_ABA));
+  if(FT_ABA==='cal') ftRenderCal();
+  ftSave();
+};
+function ftCalcRender(){
+  const d=$('ftCalcDisplay'); if(!d) return;
+  d.value=FT_EXPR||'0';
+  d.scrollLeft=d.scrollWidth;
+}
+function ftCalcEval(){
+  if(!FT_EXPR) return;
+  const src=FT_EXPR.replace(/×/g,'*').replace(/÷/g,'/');
+  if(!/^[0-9+\-*/.()%\s]+$/.test(src)) return;
+  try{
+    const val=Function('"use strict";return ('+src.replace(/(\d+(?:\.\d+)?)%/g,'($1/100)')+')')();
+    if(Number.isFinite(val)) FT_EXPR=String(Math.round((val+Number.EPSILON)*1e10)/1e10);
+    else FT_EXPR='';
+  }catch(e){ FT_EXPR=''; }
+  ftCalcRender();
+}
+window.ftCalc=(v)=>{
+  if(v==='C') FT_EXPR='';
+  else if(v==='⌫') FT_EXPR=FT_EXPR.slice(0,-1);
+  else if(v==='=') return ftCalcEval();
+  else if(v==='±'){
+    if(FT_EXPR && /^-?\d*\.?\d+$/.test(FT_EXPR)) FT_EXPR=String(-Number(FT_EXPR));
+  }else{
+    if(/[+\-×÷]/.test(v) && (!FT_EXPR || /[+\-×÷]$/.test(FT_EXPR))){
+      if(v==='-'&&!FT_EXPR) FT_EXPR='-';
+      else if(FT_EXPR) FT_EXPR=FT_EXPR.slice(0,-1)+v;
+    }else FT_EXPR+=v;
+  }
+  ftCalcRender();
+};
+function ftDateKey(y,m,d){return y+'-'+String(m+1).padStart(2,'0')+'-'+String(d).padStart(2,'0');}
+function ftRenderCal(){
+  const box=$('ftCalGrid'), lab=$('ftCalLabel'); if(!box||!lab) return;
+  const y=FT_CAL.getFullYear(), m=FT_CAL.getMonth();
+  const nomes=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+  lab.textContent=nomes[m]+' '+y;
+  const first=new Date(y,m,1), last=new Date(y,m+1,0).getDate();
+  const start=(first.getDay()+6)%7; // segunda=0
+  const hojeK=hoje();
+  let h='<div class="ft-week"><span>Seg</span><span>Ter</span><span>Qua</span><span>Qui</span><span>Sex</span><span>Sáb</span><span>Dom</span></div><div class="ft-days">';
+  for(let i=0;i<start;i++) h+='<span class="ft-day empty"></span>';
+  for(let d=1;d<=last;d++){
+    const k=ftDateKey(y,m,d);
+    h+='<button type="button" class="ft-day'+(k===hojeK?' today':'')+(k===FT_SEL?' selected':'')+'" data-date="'+k+'">'+d+'</button>';
+  }
+  h+='</div>';
+  box.innerHTML=h;
+  box.querySelectorAll('button[data-date]').forEach(b=>b.addEventListener('click',()=>{
+    FT_SEL=b.dataset.date; ftRenderCal();
+    const out=$('ftCalSelected'); if(out){
+      const [yy,mm,dd]=FT_SEL.split('-');
+      out.textContent='Selecionado: '+dd+'/'+mm+'/'+yy;
+    }
+  }));
+}
+window.ftCalMove=(n)=>{ FT_CAL=new Date(FT_CAL.getFullYear(),FT_CAL.getMonth()+n,1); ftRenderCal(); };
+window.ftCalHoje=()=>{ FT_CAL=new Date(); FT_SEL=hoje(); ftRenderCal(); const o=$('ftCalSelected'); if(o)o.textContent='Hoje: '+hoje().split('-').reverse().join('/'); };
+window.ftResize=(dir)=>{
+  const p=$('floatTools'); if(!p) return;
+  const r=p.getBoundingClientRect(), step=dir>0?48:-48;
+  const w=Math.min(Math.max(292,r.width+step),Math.min(620,window.innerWidth-16));
+  const h=Math.min(Math.max(360,r.height+step),Math.min(720,window.innerHeight-16));
+  p.style.width=w+'px'; p.style.height=h+'px'; ftClamp(); ftSave();
+};
+function initFloatTools(){
+  const p=$('floatTools'), head=$('ftHead'); if(!p||!head) return;
+  const s=ftState();
+  FT_ABA=s.aba==='cal'?'cal':'calc';
+  if(s.width) p.style.width=s.width;
+  if(s.height) p.style.height=s.height;
+  if(s.left&&s.top){p.style.left=s.left;p.style.top=s.top;p.style.right='auto';p.style.bottom='auto';}
+  ftTab(FT_ABA);
+  ftCalcRender(); ftRenderCal();
+  if(s.aberto) window.toggleFloatTools(true);
+
+  head.addEventListener('pointerdown',e=>{
+    if(e.target.closest('button')) return;
+    const r=p.getBoundingClientRect();
+    FT_DRAG={x:e.clientX,y:e.clientY,l:r.left,t:r.top,id:e.pointerId};
+    head.setPointerCapture?.(e.pointerId);
+    p.classList.add('dragging');
+  });
+  head.addEventListener('pointermove',e=>{
+    if(!FT_DRAG||e.pointerId!==FT_DRAG.id) return;
+    p.style.left=(FT_DRAG.l+e.clientX-FT_DRAG.x)+'px';
+    p.style.top=(FT_DRAG.t+e.clientY-FT_DRAG.y)+'px';
+    p.style.right='auto';p.style.bottom='auto';ftClamp();
+  });
+  const fim=e=>{
+    if(!FT_DRAG||e.pointerId!==FT_DRAG.id) return;
+    FT_DRAG=null;p.classList.remove('dragging');ftSave();
+  };
+  head.addEventListener('pointerup',fim); head.addEventListener('pointercancel',fim);
+  p.addEventListener('mouseup',ftSave);
+  p.addEventListener('touchend',()=>setTimeout(ftSave,0),{passive:true});
+  window.addEventListener('resize',ftClamp,{passive:true});
+
+  p.addEventListener('keydown',e=>{
+    if(FT_ABA!=='calc') return;
+    if(e.target.tagName==='BUTTON') return;
+    if(/^[0-9.]$/.test(e.key)){e.preventDefault();window.ftCalc(e.key);}
+    else if(['+','-','*','/','%'].includes(e.key)){e.preventDefault();window.ftCalc(e.key==='*'?'×':e.key==='/'?'÷':e.key);}
+    else if(e.key==='Enter'||e.key==='='){e.preventDefault();window.ftCalc('=');}
+    else if(e.key==='Backspace'){e.preventDefault();window.ftCalc('⌫');}
+    else if(e.key==='Escape'){e.preventDefault();window.toggleFloatTools(false);}
+  });
+}
+
 function render(){
   if(COFRE_ESTADO.visivel) cofreBloquear();
   const m=$('main'); if(!m) return montarShell();
@@ -5637,8 +5793,48 @@ function montarShell(){
       <span class="sync"><span class="dot ${SYNC}" id="syncdot"></span><span id="synctxt">Sincronizado</span></span>
       <span class="rodape-v">${APP_VER}</span>
     </footer>
+
+    <button class="ft-bubble" id="floatToolsBubble" type="button" onclick="toggleFloatTools()"
+      aria-controls="floatTools" aria-expanded="false" title="Calculadora e calendário">⌗</button>
+    <section class="ft-panel" id="floatTools" aria-hidden="true">
+      <div class="ft-head" id="ftHead">
+        <div class="ft-title"><span>⌗</span><b>Ferramentas</b><small>arraste para mover</small></div>
+        <div class="ft-win-actions">
+          <button type="button" onclick="ftResize(-1)" title="Diminuir">−</button>
+          <button type="button" onclick="ftResize(1)" title="Aumentar">＋</button>
+          <button type="button" onclick="toggleFloatTools(false)" title="Fechar">×</button>
+        </div>
+      </div>
+      <div class="ft-tabs" role="tablist" aria-label="Ferramentas">
+        <button type="button" class="ft-tab" data-ft="calc" onclick="ftTab('calc')" aria-pressed="true">🧮 Calculadora</button>
+        <button type="button" class="ft-tab" data-ft="cal" onclick="ftTab('cal')" aria-pressed="false">📅 Calendário</button>
+      </div>
+      <div class="ft-body">
+        <div class="ft-view on" data-ftview="calc">
+          <input class="ft-display" id="ftCalcDisplay" value="0" readonly aria-label="Visor da calculadora">
+          <div class="ft-calc">
+            <button type="button" class="" onclick="ftCalc('C')">C</button><button type="button" class="" onclick="ftCalc('⌫')">⌫</button><button type="button" class="" onclick="ftCalc('%')">%</button><button type="button" class="op" onclick="ftCalc('÷')">÷</button><button type="button" class="" onclick="ftCalc('7')">7</button><button type="button" class="" onclick="ftCalc('8')">8</button><button type="button" class="" onclick="ftCalc('9')">9</button><button type="button" class="op" onclick="ftCalc('×')">×</button><button type="button" class="" onclick="ftCalc('4')">4</button><button type="button" class="" onclick="ftCalc('5')">5</button><button type="button" class="" onclick="ftCalc('6')">6</button><button type="button" class="op" onclick="ftCalc('-')">-</button><button type="button" class="" onclick="ftCalc('1')">1</button><button type="button" class="" onclick="ftCalc('2')">2</button><button type="button" class="" onclick="ftCalc('3')">3</button><button type="button" class="op" onclick="ftCalc('+')">+</button><button type="button" class="" onclick="ftCalc('±')">±</button><button type="button" class="" onclick="ftCalc('0')">0</button><button type="button" class="" onclick="ftCalc('.')">.</button><button type="button" class="op" onclick="ftCalc('=')">=</button>
+          </div>
+          <p class="ft-hint">Dá para usar o teclado também.</p>
+        </div>
+        <div class="ft-view" data-ftview="cal">
+          <div class="ft-calnav">
+            <button type="button" onclick="ftCalMove(-1)" aria-label="Mês anterior">‹</button>
+            <b id="ftCalLabel"></b>
+            <button type="button" onclick="ftCalMove(1)" aria-label="Próximo mês">›</button>
+          </div>
+          <div id="ftCalGrid"></div>
+          <div class="ft-calfoot">
+            <button type="button" class="btn alt sm" onclick="ftCalHoje()">Hoje</button>
+            <span id="ftCalSelected"></span>
+          </div>
+        </div>
+      </div>
+      <div class="ft-resize-note">↘ arraste o canto para redimensionar</div>
+    </section>
     </div>`;
   render();
+  initFloatTools();
 }
 /* Tema: claro ou escuro, salvo no aparelho. Sem escolha salva, começa escuro. */
 function temaAtual(){ return document.documentElement.getAttribute('data-theme')==='light'?'light':'dark'; }
