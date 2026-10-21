@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v104';
+const APP_VER='v105';
 
 /* =====================================================================
    ESTADO
@@ -168,7 +168,8 @@ const saldoParc= () => D.parcelamentos.reduce((s,p)=>s+ +p.valor_parcela*p.resta
 const aReceber = () => D.terceiros.filter(t=>!t.recebido).reduce((s,t)=>s+ +t.valor,0);
 const recebido = () => D.terceiros.filter(t=> t.recebido).reduce((s,t)=>s+ +t.valor,0);
 const cfg = () => D.config || {reserva_atual:0,aporte_mensal:0,
-                               saldo_conferido:null,saldo_conferido_em:null};
+                               saldo_conferido:null,saldo_conferido_em:null,
+                               saldo_conferido_em_ts:null};
 
 /* ---- Saldo em conta ----
    Parte de um ponto de conferência (saldo que você viu no extrato, e quando)
@@ -191,12 +192,22 @@ function saldoConta(){
   /* Saldo é extrato, não previsão: só entra o que já aconteceu e foi confirmado.
      Lançamento com data futura ou status Projetado fica de fora. */
   const ate = hoje();
+  const pontoTs = c.saldo_conferido_em_ts ? Date.parse(c.saldo_conferido_em_ts) : null;
+  const aposPonto = l => {
+    if(!desde) return true;
+    const d=String(l.data);
+    if(d>desde) return true;
+    if(d<desde) return false;
+    if(!pontoTs) return false;
+    const mt=l.confirmado_em||l.criado_em||null;
+    return !!mt && Date.parse(mt)>pontoTs;
+  };
   const depois = D.lancamentos.filter(l=>
     !l.beneficio &&
     mexeNoBanco(l) &&
     l.status!=='Projetado' &&
     String(l.data) <= ate &&
-    (!desde || String(l.data)>desde));
+    aposPonto(l));
   const ent = depois.filter(l=>l.tipo==='Entrada').reduce((s,l)=>s+valorBanco(l),0);
   const sai = depois.filter(l=>l.tipo==='Saída').reduce((s,l)=>s+valorBanco(l),0);
   const rep = depois.filter(l=>l.protegido)
@@ -1152,7 +1163,8 @@ function lancDoItem(it, k){
   return feitos.length ? {valor:feitos.reduce((s,l)=>s+(l.tipo==='Entrada'?-l.valor:+l.valor),0), itens:feitos} : null;
 }
 function montaLanc(it, k, dia){
-  return {data: dataDoItem(it,k,dia),
+  const dataMov = k===ym(hoje()) ? hoje() : dataDoItem(it,k,dia);
+  return {data: dataMov,
           descricao: it.desc,
           categoria: it.categoria||'Outros',
           tipo: it.tipo==='renda' ? 'Entrada' : 'Saída',
@@ -1459,8 +1471,11 @@ async function carregarTudo(){
 
 async function inserir(tabela, linha){
   if(DEMO_MODE){ toast('Modo demo: nenhuma alteração é salva.',3000); return null; }
+  const payload={...linha, grupo_id:GRUPO};
+  if(tabela==='lancamentos' && payload.status==='Confirmado' && !payload.confirmado_em)
+    payload.confirmado_em=new Date().toISOString();
   const {data,error} = await sb.from(tabela)
-    .insert({...linha, grupo_id:GRUPO}).select().single();
+    .insert(payload).select().single();
   if(error){ toast('Erro ao salvar: '+error.message, 4200); return null; }
   D[tabela].push(data);
   if(tabela==='lancamentos') D.lancamentos.sort((a,b)=>String(b.data).localeCompare(String(a.data)));
@@ -1468,8 +1483,11 @@ async function inserir(tabela, linha){
 }
 async function atualizar(tabela, id, campos){
   if(DEMO_MODE){ toast('Modo demo: nenhuma alteração é salva.',3000); return null; }
-  const alvo = tabela==='config' ? sb.from('config').update(campos).eq('grupo_id',GRUPO)
-                                 : sb.from(tabela).update(campos).eq('id',id);
+  const patch={...campos};
+  if(tabela==='lancamentos' && patch.status==='Confirmado' && !('confirmado_em' in patch))
+    patch.confirmado_em=new Date().toISOString();
+  const alvo = tabela==='config' ? sb.from('config').update(patch).eq('grupo_id',GRUPO)
+                                 : sb.from(tabela).update(patch).eq('id',id);
   const {data,error} = await alvo.select().single();
   if(error){ toast('Erro ao atualizar: '+error.message, 4200); return null; }
   if(tabela==='config') D.config=data;
@@ -3225,7 +3243,8 @@ window.conferirSaldo=async()=>{
   const v=$('sc_v').value, d=$('sc_d').value;
   if(v===''||v==null) return toast('Informe o saldo que aparece no banco');
   if(!d) return toast('Informe a data do extrato');
-  if(await atualizar('config',null,{saldo_conferido:+v, saldo_conferido_em:d})){
+  if(await atualizar('config',null,{saldo_conferido:+v, saldo_conferido_em:d,
+                                      saldo_conferido_em_ts:new Date().toISOString()})){
     render(); toast('Saldo fixado em '+BRL(+v)+' a partir de '+d.split('-').reverse().join('/'));
   }
 };
