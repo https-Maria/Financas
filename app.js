@@ -165,8 +165,17 @@ const totAssin = (k) => k
   : D.assinaturas.filter(a=>a.projetar).reduce((s,a)=>s + (+a.valor), 0);
 const totVA    = () => D.beneficios.filter(b=>b.ativo).reduce((s,b)=>s+ +b.valor,0);
 const saldoParc= () => D.parcelamentos.reduce((s,p)=>s+ +p.valor_parcela*p.restantes,0);
-const aReceber = () => D.terceiros.filter(t=>!t.recebido).reduce((s,t)=>s+ +t.valor,0);
-const recebido = () => D.terceiros.filter(t=> t.recebido).reduce((s,t)=>s+ +t.valor,0);
+const valorRecebidoTerc = t => Math.min(+t.valor||0, Math.max(0,
+  t.valor_recebido==null ? (t.recebido?(+t.valor||0):0) : (+t.valor_recebido||0)));
+const saldoTerc = t => Math.max(0,(+t.valor||0)-valorRecebidoTerc(t));
+const aReceber = () => D.terceiros.reduce((s,t)=>s+saldoTerc(t),0);
+const recebido = () => D.terceiros.reduce((s,t)=>s+valorRecebidoTerc(t),0);
+const compTercK = c => { const m=String(c||'').match(/^(\d{1,2})\/(\d{4})$/);
+  return m ? m[2]+'-'+m[1].padStart(2,'0') : ''; };
+const descBaseTerc = d => String(d||'')
+  .replace(/parcela\s*\d+\s*\/\s*\d+/ig,'')
+  .replace(/\b\d+\s*\/\s*\d+\b/g,'')
+  .replace(/^[\s—–-]+|[\s—–-]+$/g,'').trim();
 const cfg = () => D.config || {reserva_atual:0,aporte_mensal:0,
                                saldo_conferido:null,saldo_conferido_em:null,
                                saldo_conferido_em_ts:null};
@@ -447,7 +456,7 @@ function temaCartao(c, bbIndex=0){
   return 'dueto';
 }
 function terceirosCartaoMes(nome,k){
-  return D.terceiros.filter(t=>t.cartao===nome && !t.recebido &&
+  return D.terceiros.filter(t=>t.cartao===nome &&
     (!t.competencia || t.competencia===mLabel(k)))
     .reduce((s,t)=>s+ +t.valor,0);
 }
@@ -963,7 +972,8 @@ window.bloquearCofre=()=>{cofreBloquear();toast('Cofre bloqueado');};
    em cima de tudo o mais, sem depender de ciclo ou cálculo. */
 function ajustesFatura(nome, k){
   return D.lancamentos.filter(l=>
-    ym(l.data)===k && !l.protegido && (l.cartao||'')===nome && l.categoria==='Ajuste Fatura');
+    (l.competencia_fatura||ym(l.data))===k && !l.protegido &&
+    (l.cartao||'')===nome && l.categoria==='Ajuste Fatura');
 }
 /* Quais ajustes ainda somam: todos, a não ser que a fatura tenha sido marcada
    no Painel — aí os que já existiam estão dentro da foto. */
@@ -989,7 +999,7 @@ function composicaoFatura(nome,k){
   const reports=reportsFatura(nome,k).map(l=>({
     id:l.id,data:l.data,descricao:l.descricao,valor:+l.valor,tipo:l.tipo,categoria:l.categoria
   }));
-  const terceiros=D.terceiros.filter(t=>t.cartao===nome && !t.recebido &&
+  const terceiros=D.terceiros.filter(t=>t.cartao===nome &&
     (!t.competencia || t.competencia===mLabel(k))).map(t=>({
       id:t.id,pessoa:t.pessoa,descricao:t.descricao,valor:+t.valor,competencia:t.competencia
     }));
@@ -2814,9 +2824,42 @@ window.limparPlano=(finId)=>{
   PLANO_EVENTOS[finId]=[]; render();
 };
 window.abrirGrupo=(p,d)=>{ const ch=p+'|'+d; GRUPO_ABERTO = GRUPO_ABERTO===ch?null:ch; render(); };
+async function entradaRecebimentoTerc(t,valor){
+  if(!valor || valor<=0) return false;
+  if(!confirm('Registrar também '+BRL(valor)+' como entrada no saldo da conta?')) return false;
+  return !!(await inserir('lancamentos',{
+    data:hoje(),descricao:'Recebido de '+t.pessoa+' — '+(descBaseTerc(t.descricao)||t.descricao),
+    categoria:'Terceiros',tipo:'Entrada',quem:'Casal',valor:+valor.toFixed(2),
+    status:'Confirmado',observacao:'Reembolso de terceiro registrado pela aba Terceiros.'
+  }));
+}
 window.receberTerc=async(id,v)=>{
-  if(await atualizar('terceiros',id,{recebido:v, recebido_em: v?hoje():null})){
-    render(); toast(v?'Marcado como recebido':'Voltou para a lista');
+  const t=D.terceiros.find(x=>x.id===id); if(!t) return;
+  const faltava=saldoTerc(t);
+  const patch=v
+    ? {recebido:true,valor_recebido:+t.valor,recebido_em:hoje()}
+    : {recebido:false,valor_recebido:0,recebido_em:null};
+  if(await atualizar('terceiros',id,patch)){
+    if(v && faltava>0) await entradaRecebimentoTerc(t,faltava);
+    render(); toast(v?'Recebimento registrado':'Voltou para a lista a receber');
+  }
+};
+window.receberTercParcial=async id=>{
+  const t=D.terceiros.find(x=>x.id===id); if(!t) return;
+  const falta=saldoTerc(t);
+  if(falta<=0) return toast('Este valor já foi recebido');
+  const raw=prompt('Quanto recebeu agora? Falta '+BRL(falta));
+  if(raw==null) return;
+  const valor=Number(String(raw).replace(/\./g,'').replace(',','.'));
+  if(!Number.isFinite(valor)||valor<=0||valor>falta+0.009)
+    return toast('Informe um valor entre R$ 0,01 e '+BRL(falta));
+  const novo=Math.min(+t.valor,valorRecebidoTerc(t)+valor);
+  const quitou=novo>=+t.valor-0.009;
+  if(await atualizar('terceiros',id,{
+    valor_recebido:+novo.toFixed(2),recebido:quitou,recebido_em:quitou?hoje():null
+  })){
+    await entradaRecebimentoTerc(t,valor);
+    render(); toast(quitou?'Dívida quitada':'Pagamento parcial registrado · falta '+BRL(+t.valor-novo));
   }
 };
 
