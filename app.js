@@ -4904,7 +4904,7 @@ function vFatura(){
   const c = ativos.find(x=>x.nome===FAT_CART) || ativos[0];
   const n = c.nome;
   const k = MREF;
-  const comp = venceNoDia1(n) ? addM(k,1) : k;   /* mês em foco = quando o dinheiro sai (igual o Painel); a fatura em si pode ter rótulo diferente */
+  const comp = k;   /* v107: mês principal = mês em que a fatura vence/paga */
   const jan = janelaFatura(n,comp);
   const ciclo = cicloDe(n,comp);
   const real = faturaLancada(n,comp);
@@ -4919,7 +4919,7 @@ function vFatura(){
       ex:a.manual?{vezes:a.vz}:null
     })) : assinaturasDaFatura(n,comp);
   const terceiros = snap ? (snap.composicao?.terceiros||[]) :
-    D.terceiros.filter(t=>t.cartao===n && !t.recebido &&
+    D.terceiros.filter(t=>t.cartao===n &&
       (!t.competencia || t.competencia===mLabel(comp)));
   /* A lista tem que bater com a conta de "Sua parte": compras à vista (somam)
      e créditos no cartão (abatem). Ficam de fora o total declarado e os
@@ -4942,37 +4942,72 @@ function vFatura(){
   const proximas = snap ? [] : D.parcelamentos.filter(p=>(p.cartao||'')===n && +p.restantes>0
     && !parcelaCaiEm(p,comp) && mesesDaParcela(p).some(m=>m>comp));
 
-  return head('Fatura','O que compõe a fatura de cada cartão, item por item.')
-  +`<div class="filtros">
-    <div class="fld"><label>Cartão</label>
-      <select onchange="setFatCart(this.value)">
-        ${ativos.map(x=>`<option ${x.nome===n?'selected':''}>${esc(x.nome)}</option>`).join('')}
-      </select></div>
-    <div class="fld"><label>Mês em foco</label>
-      <select onchange="setMes(this.value)">
-        ${mesesDisponiveis().map(m=>`<option value="${m}" ${m===k?'selected':''}>${mLabel(m)}</option>`).join('')}
-      </select></div>
+  const totalBanco=valor+somaTerc+somaReports;
+  const statusFat=snap?'Fechada':real?'Paga':(ciclo&&ciclo.fecha<hoje()?'Fechada':'Aberta');
+  const proj6=Array.from({length:6},(_,i)=>addM(k,i)).map(m=>({
+    k:m,sua:faturaCartao(n,m),terc:terceirosCartaoMes(n,m),
+    reports:reportsFatura(n,m).filter(l=>l.tipo!=='Entrada').reduce((s,l)=>s+ +l.valor,0)
+  }));
+  const terminando=D.parcelamentos.filter(p=>(p.cartao||'')===n && +p.restantes>0)
+    .map(p=>({p,ms:mesesDaParcela(p)}))
+    .filter(x=>x.ms.length && x.ms[x.ms.length-1]>=k && x.ms[x.ms.length-1]<=addM(k,5))
+    .sort((a,b)=>a.ms[a.ms.length-1].localeCompare(b.ms[b.ms.length-1]));
+  const alertasFat=[];
+  if(naoIdentificado!=null && Math.abs(naoIdentificado)>0.01)
+    alertasFat.push({c:'warn',t:'Há '+BRL(Math.abs(naoIdentificado))+' fora dos cadastros conhecidos',
+      d:'Diferença entre o valor lançado e parcelas/assinaturas mapeadas.'});
+  const fimAgora=terminando.filter(x=>x.ms[x.ms.length-1]===comp);
+  if(fimAgora.length) alertasFat.push({c:'good',t:fimAgora.length+' parcelamento'+(fimAgora.length===1?' termina':'s terminam')+' nesta fatura',
+    d:'Libera '+BRL(fimAgora.reduce((s,x)=>s+ +x.p.valor_parcela,0))+'/mês a partir da próxima.'});
+  if(somaTerc>0) alertasFat.push({c:'info',t:BRL(somaTerc)+' desta fatura é de terceiros',
+    d:'Está no total do banco, mas não entra na parte do casal.'});
+
+  return head('Fatura','Sua parte primeiro; total do banco separado e projeção clara dos próximos meses.')
+  +`<div class="v107-fatnav">
+    <div class="v107-cardchips">
+      ${ativos.map(x=>`<button class="v107-chip ${x.nome===n?'on':''}" onclick="setFatCart('${esc(x.nome)}')">${esc(x.nome)}</button>`).join('')}
+    </div>
+    <div class="v107-monthnav">
+      <button onclick="fatMes(-1)" aria-label="Mês anterior">‹</button>
+      <b>${mLabel(k)}</b>
+      <button onclick="fatMes(1)" aria-label="Próximo mês">›</button>
+    </div>
   </div>
-  ${comp!==k?`<p class="note" style="margin:-8px 0 16px">Mostrando a fatura que ${esc(n)} chama de
-    <b>${mLabel(comp)}</b> — é a que sai da sua conta em ${mLabel(k)}, por vencer dia 1.</p>`:''}
+
+  <div class="v107-fat-hero">
+    <div><span class="v107-over">Sua parte · ${mLabel(k)}</span>
+      <strong>${BRL(valor)}</strong>
+      <small>${real?'valor lançado/confirmado':'estimado pelos cadastros'}</small></div>
+    <div class="v107-fat-side">
+      <span>Total do banco <b>${BRL(totalBanco)}</b></span>
+      <span>Terceiros <b>${BRL(somaTerc)}</b></span>
+      <span>Reports <b>${BRL(somaReports)}</b></span>
+    </div>
+    <div class="v107-fat-status"><span class="tag ${statusFat==='Paga'?'t-ok':statusFat==='Fechada'?'t-w':'t-i'}">${statusFat}</span>
+      ${ciclo?`<span>fecha ${dataCurta(ciclo.fecha)}</span><span>vence ${dataCurta(ciclo.vence)}</span>`:''}
+    </div>
+  </div>
 
   <div class="kpis">
-    ${kpi('Sua parte da fatura',BRL(valor),real?'valor lançado':'estimado pelos cadastros',
-      real?'pos':'amb')}
-    ${kpi('Total real do cartão',BRL(valor+somaTerc+somaReports),
-      (somaTerc>0||somaReports>0)
-        ?'inclui '+BRL(somaTerc+somaReports)+(somaTerc>0&&somaReports>0?' (terceiros + Reports)':somaTerc>0?' de terceiros':' de Reports')+' — é isso que bate com o banco'
-        :'igual à sua parte, sem terceiros nem Reports neste mês')}
-    ${kpi('O que o app conhece',BRL(conhecido),
-      parcelas.length+' parcela'+(parcelas.length===1?'':'s')+' · '+
-      assinaturas.length+' assinatura'+(assinaturas.length===1?'':'s'))}
-    ${naoIdentificado!=null?kpi('Compras do dia a dia',BRL(naoIdentificado),
-      'diferença entre o lançado e o conhecido',naoIdentificado<0?'pos':'')
-      :kpi('Ainda não lançada','—','o valor real vai substituir a estimativa')}
+    ${kpi('Sua parte da fatura',BRL(valor),real?'confirmado':'estimado',real?'pos':'amb')}
+    ${kpi('Total real do cartão',BRL(totalBanco),'banco = casal + terceiros + Reports')}
+    ${kpi('Terceiros',BRL(somaTerc),terceiros.length+' item'+(terceiros.length===1?'':'s'))}
+    ${kpi('Parcelado comprometido',BRL(parcelas.reduce((s,p)=>s+(+p.valor_parcela)*(mesesDaParcela(p).filter(m=>m>=comp).length||1),0)),'saldo das compras parceladas desta fatura')}
   </div>
-  ${somaTerc>0?`<p class="note" style="margin:-8px 0 16px">"Sua parte" fica de fora de terceiros de
-    propósito — é o que conta pro seu orçamento. Pra conferir com o extrato do banco, que não separa
-    isso, use o "Total real do cartão" acima.</p>`:''}
+
+  ${alertasFat.length?`<div class="v107-alerts">${alertasFat.map(a=>`<div class="v107-alert ${a.c}"><b>${a.t}</b><span>${a.d}</span></div>`).join('')}</div>`:''}
+
+  <div class="panel"><h2>Próximos 6 meses <small>sua parte em destaque · total do banco abaixo</small></h2>
+    <div class="v107-forecast">
+      ${proj6.map(x=>`<button class="v107-monthcard ${x.k===k?'on':''}" onclick="setMes('${x.k}')">
+        <span>${mLabel(x.k)}</span><b>${BRL(x.sua)}</b><small>banco ${BRL(x.sua+x.terc+x.reports)}</small>
+      </button>`).join('')}
+    </div>
+    ${terminando.length?`<div class="v107-ending"><b>Parcelas que terminam nos próximos 6 meses</b>
+      ${terminando.map(x=>{const fim=x.ms[x.ms.length-1],rest=x.ms.filter(m=>m>=k).length*(+x.p.valor_parcela);
+        return `<span><strong>${esc(x.p.descricao)}</strong> · termina ${mLabel(fim)} · libera ${BRL(x.p.valor_parcela)}/mês · ainda comprometido ${BRL(rest)}</span>`;}).join('')}
+    </div>`:''}
+  </div>
 
   <div class="panel"><h2>Ajustes desta fatura <small>o BB muda a composição com mais frequência — some ou remova cobranças pontuais aqui, sem mexer em parcelas e assinaturas</small></h2>
   <div class="pbody">
