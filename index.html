@@ -710,6 +710,31 @@ input:focus,select:focus{border-color:var(--steel);outline:none;box-shadow:0 0 0
 }
 @media(prefers-reduced-motion:reduce){.ft-bubble:hover{transform:none}}
 
+
+/* ---------- v107: faturas + terceiros com leitura inteligente ---------- */
+.v107-alerts{display:grid;gap:7px;margin:-5px 0 16px}
+.v107-alert{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:9px 11px;border:1px solid var(--rule);border-left-width:3px;border-radius:9px;background:var(--panel);font-size:11.5px}
+.v107-alert span{color:var(--muted);text-align:right}.v107-alert.bad{border-left-color:var(--neg)}.v107-alert.warn{border-left-color:var(--amber)}.v107-alert.good{border-left-color:var(--pos)}.v107-alert.info{border-left-color:var(--steel)}
+.v107-person-list{display:grid}.v107-person{border-bottom:1px solid var(--rule-soft)}.v107-person:last-child{border-bottom:none}
+.v107-person>summary{list-style:none;display:flex;justify-content:space-between;gap:14px;align-items:center;padding:12px 15px;cursor:pointer}
+.v107-person>summary::-webkit-details-marker{display:none}.v107-person>summary:hover{background:var(--surface)}
+.v107-person>summary>span:first-child b{display:block;font-size:13px}.v107-person>summary small{display:block;color:var(--muted);font-size:10.5px;margin-top:2px}
+.v107-person-money{text-align:right}.v107-person-money b{display:block;font-family:var(--mono);font-size:14px;color:var(--amber)}
+.v107-person-body{background:var(--surface);padding:0 10px 10px}.v107-person-foot{display:flex;justify-content:flex-end;gap:16px;flex-wrap:wrap;padding:9px 6px 2px;font-size:10.5px;color:var(--muted)}
+.v107-row-actions{display:flex;justify-content:flex-end;gap:4px;flex-wrap:wrap}
+.v107-fatnav{display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.v107-cardchips{display:flex;gap:5px;flex-wrap:wrap}.v107-chip{padding:7px 10px;border:1px solid var(--rule);border-radius:999px;background:var(--panel);color:var(--muted);font-size:11px;font-weight:700}.v107-chip.on{background:var(--steel-bg);border-color:var(--steel);color:var(--steel)}
+.v107-monthnav{display:flex;align-items:center;gap:5px}.v107-monthnav button{width:34px;height:34px;border:1px solid var(--rule);border-radius:9px;background:var(--panel);color:var(--ink);font-size:18px}.v107-monthnav b{min-width:75px;text-align:center;font-family:var(--mono);font-size:12px}
+.v107-fat-hero{display:grid;grid-template-columns:1.3fr 1fr;gap:12px;padding:16px;border:1px solid var(--rule);border-radius:12px;background:var(--steel-bg);margin-bottom:14px}
+.v107-fat-hero>div:first-child strong{display:block;font-family:var(--mono);font-size:28px;line-height:1.1;margin:3px 0;color:var(--ink)}.v107-over{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:800}.v107-fat-hero small{font-size:10.5px;color:var(--muted)}
+.v107-fat-side{display:grid;align-content:center;gap:5px}.v107-fat-side span{display:flex;justify-content:space-between;gap:10px;font-size:11px;color:var(--muted)}.v107-fat-side b{color:var(--ink);font-family:var(--mono)}
+.v107-fat-status{grid-column:1/-1;display:flex;gap:9px;align-items:center;flex-wrap:wrap;padding-top:9px;border-top:1px solid var(--rule);font-size:10px;color:var(--muted)}
+.v107-forecast{display:grid;grid-template-columns:repeat(6,minmax(110px,1fr));gap:6px;padding:12px;overflow-x:auto}
+.v107-monthcard{min-width:110px;text-align:left;padding:9px;border:1px solid var(--rule);border-radius:9px;background:var(--surface);color:var(--ink)}.v107-monthcard.on{border-color:var(--steel);background:var(--steel-bg)}
+.v107-monthcard span,.v107-monthcard small{display:block;font-size:9.5px;color:var(--muted)}.v107-monthcard b{display:block;font-family:var(--mono);font-size:13px;margin:3px 0}
+.v107-ending{border-top:1px solid var(--rule-soft);padding:11px 13px;display:grid;gap:5px}.v107-ending>b{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}.v107-ending span{font-size:10.5px}
+@media(max-width:700px){.v107-fat-hero{grid-template-columns:1fr}.v107-fat-status{grid-column:1}.v107-alert{align-items:flex-start;flex-direction:column}.v107-alert span{text-align:left}.v107-forecast{grid-template-columns:repeat(6,120px)}}
+
 </style>
 </head>
 <body>
@@ -737,6 +762,6 @@ window.duetoSplashPronta=()=>{
 <div id="root"><div class="gate"><div class="gatebox"><h1>Dueto</h1>
 <p class="sub">Preparando suas finanças…</p></div></div></div>
 <div class="toast" id="toast"></div>
-<script type="module" src="app.js?v=106"></script>
+<script type="module" src="app.js?v=107"></script>
 </body>
 </html>
