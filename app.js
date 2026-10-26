@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v107';
+const APP_VER='v108';
 
 /* =====================================================================
    ESTADO
@@ -2577,6 +2577,7 @@ function vTerc(){
   const vezes=Math.max(1,+(TERC_FORM.n||1));
   const comStatus=D.terceiros.map(t=>({...t,_status:emAberto(t)?'pendente':'recebido'}));
   const filtrados=aplicaFiltro('terc',comStatus,['pessoa','descricao'],'_status','pessoa');
+  const exibindoRecebidos=filtroDe('terc').tipo==='recebido';
 
   const porPessoa=new Map();
   filtrados.forEach(t=>{
@@ -2625,7 +2626,7 @@ function vTerc(){
       return `<details class="v107-person">
         <summary>
           <span><b>${esc(g.pessoa)}</b><small>${g.itens.length} registro${g.itens.length===1?'':'s'}${comps.length?' · até '+comps[comps.length-1]:''}</small></span>
-          <span class="v107-person-money"><b>${BRL(g.aberto)}</b><small>${g.aberto>0?'a receber':'quitado'}</small></span>
+          <span class="v107-person-money"><b>${BRL(exibindoRecebidos?g.recebido:g.aberto)}</b><small>${exibindoRecebidos?'recebido':(g.aberto>0?'a receber':'quitado')}</small></span>
         </summary>
         <div class="v107-person-body"><div class="tw"><table><thead><tr>
           <th>Compra / compromisso</th><th>Fatura / prazo</th><th class="r">Valor</th>
