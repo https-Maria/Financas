@@ -2808,7 +2808,7 @@ window.receberTercParcial=async id=>{
   if(falta<=0) return toast('Este valor já foi recebido');
   const raw=prompt('Quanto recebeu agora? Falta '+BRL(falta));
   if(raw==null) return;
-  const valor=Number(String(raw).replace(/\./g,'').replace(',','.'));
+  const valor=notaNumero(String(raw).trim());
   if(!Number.isFinite(valor)||valor<=0||valor>falta+0.009)
     return toast('Informe um valor entre R$ 0,01 e '+BRL(falta));
   const novo=Math.min(+t.valor,valorRecebidoTerc(t)+valor);
