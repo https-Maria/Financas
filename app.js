@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v106';
+const APP_VER='v107';
 
 /* =====================================================================
    ESTADO
@@ -1477,6 +1477,22 @@ async function carregarTudo(){
     if(cacheLoad()){ toast('Sem conexão — mostrando os últimos dados salvos'); return true; }
     throw e;
   }
+}
+
+let AUTO_FREEZE=false;
+async function autoCongelarFaturasFechadas(){
+  if(DEMO_MODE||AUTO_FREEZE||FALTANDO.includes('faturas_fechadas')) return;
+  AUTO_FREEZE=true;
+  try{
+    const corte='2026-10-26';
+    const ciclos=D.ciclos.filter(c=>c.fecha&&c.fecha>=corte&&c.fecha<hoje()&&!c.inferido)
+      .sort((a,b)=>a.fecha.localeCompare(b.fecha));
+    for(const c of ciclos){
+      if(!D.cartoes.some(x=>x.ativo&&x.nome===c.cartao)) continue;
+      if(faturaFechada(c.cartao,c.competencia)) continue;
+      await congelarFatura(c.cartao,c.competencia);
+    }
+  }finally{AUTO_FREEZE=false;}
 }
 
 async function inserir(tabela, linha){
@@ -4163,7 +4179,8 @@ function usoDosLimites(k){
     const fatura=venceNoDia1(c.nome)?faturaCartao(c.nome,addM(k,1)):faturaCartao(c.nome,k);
     const parcelasFuturas=D.parcelamentos.filter(p=>(p.cartao||'')===c.nome)
       .reduce((s,p)=>s+mesesDaParcela(p).filter(m=>m>k).length*(+p.valor_parcela),0);
-    const terceiros=D.terceiros.filter(t=>t.cartao===c.nome && !t.recebido)
+    const terceiros=D.terceiros.filter(t=>t.cartao===c.nome &&
+      (!t.competencia || compTercK(t.competencia)>=ym(hoje())))
       .reduce((s,t)=>s+ +t.valor,0);
     /* Limite é físico do cartão — não distingue de quem é a compra. Terceiros
        ocupam limite de verdade enquanto não voltam, diferente do fluxo de
@@ -4863,6 +4880,7 @@ window.voltarMes=async(pid,k)=>{
   }
 };
 window.setFatCart=v=>{ FAT_CART=v; render(); };
+window.fatMes=d=>{ MREF=addM(MREF,+d||0); render(); };
 
 /* Adiciona um ajuste pontual (cobrança extra ou estorno) na fatura de um
    cartão/mês. Cada um vira um lançamento próprio, categoria "Ajuste Fatura" —
@@ -4892,7 +4910,7 @@ window.addAjusteFatura=async(nome,k)=>{
   if(!v || v<=0) return toast('Informe o valor do ajuste');
   const n=desc || (tipo==='estorno'?'Estorno / desconto':'Cobrança extra');
   const ok=await inserir('lancamentos',{
-    data:k+'-'+String(ultimoDiaDoMes(k)).padStart(2,'0'), descricao:n,
+    data:hoje(), descricao:n, competencia_fatura:k,
     categoria:'Ajuste Fatura', cartao:nome, tipo:tipo==='estorno'?'Entrada':'Saída',
     quem:'Casal', valor:v, status:'Confirmado', criado_por:USER?.id||null});
   if(ok){ render(); toast(n+' — '+BRL(v)+' adicionado na fatura da '+nome); }
@@ -5047,26 +5065,24 @@ function vFatura(){
     Sem ciclo cadastrado para ${mLabel(comp)}. O app assume uma cobrança por assinatura.
     Cadastre em <b>Cadastros → Ciclos de fatura</b> para acertar.</div>`}
 
-  <div class="panel"><h2>Parcelamentos <small>${BRL(somaParc)}</small></h2>
+  <div class="panel"><h2>Parcelamentos <small>${BRL(somaParc)} nesta fatura</small></h2>
   ${parcelas.length?`<div class="tw"><table><thead><tr><th>Compra</th>
-    <th class="c">Parcela</th><th class="r">Valor</th><th>Meses em que cai</th><th></th>
+    <th class="c">Parcela</th><th>Termina</th><th class="r">Valor</th><th class="r">Ainda comprometido</th><th></th>
   </tr></thead><tbody>
   ${parcelas.map(p=>{
-    const ms=mesesDaParcela(p);
-    const qual=ms.indexOf(comp)+1;
-    const total=+p.total_parcelas||ms.length;
-    const jaPagas=total-(+p.restantes);
+    const ms=mesesDaParcela(p), qual=ms.indexOf(comp)+1, total=+p.total_parcelas||ms.length;
+    const jaPagas=Math.max(0,total-(+p.restantes||ms.length)), fim=ms[ms.length-1]||comp;
+    const restante=ms.filter(m=>m>=comp).length*(+p.valor_parcela);
     return `<tr><td><b>${esc(p.descricao)}</b>
-      ${Array.isArray(p.competencias)&&p.competencias.length?' <span class="tag t-w">meses definidos</span>':''}</td>
+      ${fim===comp?' <span class="tag t-ok">última</span>':''}</td>
       <td class="c">${jaPagas+qual} de ${total}</td>
+      <td><b>${mLabel(fim)}</b><span class="note" style="display:block">libera ${BRL(p.valor_parcela)}/mês depois</span></td>
       <td class="r">${BRL(p.valor_parcela)}</td>
-      <td class="note">${ms.map(m=>mLabel(m)).join(' · ')}</td>
-      <td class="r"><button class="btn alt sm" onclick="pularMes('${p.id}','${comp}')"
-        title="O cartão não cobrou esta parcela neste mês">não caiu aqui →</button></td></tr>`;}).join('')}
+      <td class="r"><b>${BRL(restante)}</b></td>
+      <td class="r">${snap?'':`<button class="btn alt sm" onclick="pularMes('${p.id}','${comp}')">não caiu aqui →</button>`}</td></tr>`;
+  }).join('')}
   </tbody></table></div>
-  <div class="pbody"><p class="note">Se o cartão pulou uma fatura, clique em
-  <b>não caiu aqui</b>: a parcela passa para o mês seguinte e as posteriores acompanham.
-  Foi o que aconteceu com o Folheados Omy, que teve parcela 1 em agosto e parcela 2 só em outubro.</p></div>`
+  <div class="pbody"><p class="note">O término usa as competências reais cadastradas — inclusive quando o BB pula um mês.</p></div>`
   :'<div class="pbody"><p class="note">Nenhuma parcela neste ciclo.</p></div>'}
   </div>
 
@@ -5994,6 +6010,7 @@ async function iniciar(){
     }
     GRUPO=m.grupo_id; EU=m.nome;
     await carregarTudo();
+    await autoCongelarFaturasFechadas();
     if(LOGIN_PENDENTE){
       await registrarLogin(LOGIN_PENDENTE);
       LOGIN_PENDENTE=null;
