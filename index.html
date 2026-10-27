@@ -735,6 +735,50 @@ input:focus,select:focus{border-color:var(--steel);outline:none;box-shadow:0 0 0
 .v107-ending{border-top:1px solid var(--rule-soft);padding:11px 13px;display:grid;gap:5px}.v107-ending>b{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}.v107-ending span{font-size:10.5px}
 @media(max-width:700px){.v107-fat-hero{grid-template-columns:1fr}.v107-fat-status{grid-column:1}.v107-alert{align-items:flex-start;flex-direction:column}.v107-alert span{text-align:left}.v107-forecast{grid-template-columns:repeat(6,120px)}}
 
+
+/* ---------- v110: Dueto essencial ---------- */
+.ess-topbar{margin-bottom:14px}
+.ess-hero{display:grid;grid-template-columns:minmax(240px,1.4fr) repeat(2,minmax(160px,1fr));gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:14px;overflow:hidden;margin-bottom:16px}
+.ess-mainmetric,.ess-metric{background:var(--panel);padding:18px}
+.ess-mainmetric{background:linear-gradient(135deg,var(--steel-bg),var(--panel))}
+.ess-mainmetric span,.ess-metric span{display:block;font-size:11.5px;color:var(--muted);margin-bottom:5px}
+.ess-mainmetric strong{font-family:var(--mono);font-size:30px;display:block;letter-spacing:-.025em}
+.ess-mainmetric small,.ess-metric small{display:block;color:var(--muted);margin-top:4px;font-size:11.5px}
+.ess-metric b{font-family:var(--mono);font-size:20px;display:block}
+.ess-mainmetric .neg,.ess-metric .neg{color:var(--neg)} .ess-metric .pos{color:var(--pos)}
+.ess-ask{border-radius:14px}
+.ess-asktop b{display:block;font-size:16px}.ess-asktop span{display:block;color:var(--muted);font-size:12px;margin-top:2px}
+.ess-askrow{display:grid;grid-template-columns:1fr auto;gap:8px;margin-top:12px}
+.ess-sug{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.ess-sug button{font-size:11.5px;border:1px solid var(--rule);border-radius:18px;padding:6px 10px;color:var(--muted);background:var(--surface)}
+.ess-sug button:hover{color:var(--ink);border-color:var(--steel)}
+.ess-answer{display:grid;grid-template-columns:1fr auto auto;gap:12px;align-items:center;margin-top:12px;padding:13px;border-radius:9px;border-left:4px solid var(--steel);background:var(--steel-bg)}
+.ess-answer>div span{display:block;font-size:10.5px;text-transform:uppercase;color:var(--muted)}
+.ess-answer>div b{display:block;margin-top:2px}.ess-answer p{font-size:12px;color:var(--muted);margin-top:4px}
+.ess-answer>strong{font-family:var(--mono);font-size:20px;white-space:nowrap}
+.ess-answer.bom{border-left-color:var(--pos);background:var(--pos-bg)}
+.ess-answer.aten{border-left-color:var(--amber);background:var(--amber-bg)}
+.ess-answer.ruim{border-left-color:var(--neg);background:var(--neg-bg)}
+.ess-sectionhead{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:20px 0 8px}
+.ess-sectionhead b{font-size:14px}.ess-sectionhead>div span{display:block;font-size:11.5px;color:var(--muted);margin-top:2px}
+.ess-gavetas{margin-bottom:16px}
+.ess-grid{display:grid;grid-template-columns:1.3fr .7fr;gap:16px}
+.ess-insight{padding:10px 0;border-bottom:1px solid var(--rule-soft)}.ess-insight:last-child{border-bottom:none}
+.ess-insight p{font-size:12px;color:var(--muted);margin-top:3px}
+.ess-insight.aten b{color:var(--amber)}.ess-insight.ruim b{color:var(--neg)}.ess-insight.bom b{color:var(--pos)}
+.ess-ok{display:flex;flex-direction:column;gap:3px}.ess-ok b{color:var(--pos)}.ess-ok span{font-size:12px;color:var(--muted)}
+.ess-shortcuts .pbody{padding:0}.ess-shortcuts button{width:100%;padding:11px 14px;display:flex;justify-content:space-between;gap:10px;border-bottom:1px solid var(--rule-soft);text-align:left}.ess-shortcuts button:last-child{border-bottom:none}.ess-shortcuts button:hover{background:var(--surface)}.ess-shortcuts button b{font-size:11.5px;color:var(--muted);font-weight:500}
+.ess-tools{margin-top:2px;display:grid;gap:8px}
+.ess-disclosure{border:1px solid var(--rule);border-radius:9px;background:var(--panel);overflow:hidden}
+.ess-disclosure>summary{cursor:pointer;padding:11px 14px;font-size:12.5px;font-weight:600;display:flex;justify-content:space-between;gap:10px;list-style:none}
+.ess-disclosure>summary::-webkit-details-marker{display:none}.ess-disclosure>summary:hover{background:var(--surface)}
+.ess-disclosure>summary span{font-weight:400;color:var(--muted)}
+.ess-detailbody{border-top:1px solid var(--rule-soft);padding:14px}
+.ess-detailbody>.panel{margin-bottom:0}
+.ess-special{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--rule-soft)}.ess-special:last-child{border-bottom:none}
+.ess-links{display:flex;gap:8px;flex-wrap:wrap}.ess-links button{border:1px solid var(--rule);border-radius:7px;padding:8px 10px;background:var(--surface)}
+@media(max-width:760px){.ess-hero{grid-template-columns:1fr 1fr}.ess-mainmetric{grid-column:1/-1}.ess-grid{grid-template-columns:1fr}.ess-answer{grid-template-columns:1fr auto}}
+@media(max-width:520px){.ess-hero{grid-template-columns:1fr}.ess-mainmetric{grid-column:auto}.ess-askrow{grid-template-columns:1fr}.ess-answer{grid-template-columns:1fr}.ess-topbar .btn{padding:7px 9px;font-size:12px}}
 </style>
 </head>
 <body>
@@ -762,6 +806,6 @@ window.duetoSplashPronta=()=>{
 <div id="root"><div class="gate"><div class="gatebox"><h1>Dueto</h1>
 <p class="sub">Preparando suas finanças…</p></div></div></div>
 <div class="toast" id="toast"></div>
-<script type="module" src="app.js?v=109"></script>
+<script type="module" src="app.js?v=110"></script>
 </body>
 </html>
