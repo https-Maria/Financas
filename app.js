@@ -2586,7 +2586,7 @@ function vTerc(){
       t.cartao && proxCompPorCartao.get(t.cartao)===compTercK(t.competencia))
     .reduce((s,t)=>s+(+t.valor||0),0);
   const proxResumo=proxPorCartao.length
-    ? proxPorCartao.length+' cartão'+(proxPorCartao.length===1?'':'ões')+' com ciclo mapeado'
+    ? proxPorCartao.length+' '+(proxPorCartao.length===1?'cartão':'cartões')+' com ciclo mapeado'
     : 'nenhum ciclo futuro mapeado';
   const presos=D.terceiros.filter(t=>t.cartao&&compTercK(t.competencia)>=kAtual)
     .reduce((s,t)=>s+(+t.valor||0),0);
