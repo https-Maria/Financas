@@ -1,4 +1,4 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.118.0';
 
 /* =====================================================================
    CONFIGURAÇÃO
@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v108';
+const APP_VER='v109';
 
 /* =====================================================================
    ESTADO
@@ -31,7 +31,13 @@ const $ = id => document.getElementById(id);
 const BRL = v => (v<0?'-':'')+'R$ '+Math.abs(+v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
 const PCT = v => (v*100).toFixed(1).replace('.',',')+'%';
 const esc = s => String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const hoje = () => new Date().toISOString().slice(0,10);
+/* Argumento seguro para handlers inline: JSON escapa o conteúdo de JS e esc() protege o atributo HTML. */
+const jsArg = s => esc(JSON.stringify(String(s==null?'':s)));
+/* Data civil LOCAL do aparelho; não usa UTC/toISOString(). */
+const hoje = () => {
+  const d=new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+};
 const ym = d => String(d).slice(0,7);
 /* Chave de dia civil (AAAA-MM-DD) a partir de um objeto Date — usada pra
    comparar "é o mesmo dia" sem depender da hora exata do timestamp. Uma data
@@ -150,8 +156,9 @@ function toast(m,ms=2600){const t=$('toast');t.textContent=m;t.classList.add('on
   clearTimeout(t._x);t._x=setTimeout(()=>t.classList.remove('on'),ms);}
 
 /* cache offline */
-const cacheSave = () => { if(DEMO_MODE) return; try{localStorage.setItem('cache_'+GRUPO, JSON.stringify(D));}catch(e){} };
-const cacheLoad = () => { try{const s=localStorage.getItem('cache_'+GRUPO); if(s){D=JSON.parse(s);return true;}}catch(e){} return false; };
+const cacheSave = () => { if(DEMO_MODE||!GRUPO) return; try{localStorage.setItem('cache_'+GRUPO, JSON.stringify(D));}catch(e){} };
+const cacheLoad = () => { try{const s=GRUPO&&localStorage.getItem('cache_'+GRUPO); if(s){D=JSON.parse(s);return true;}}catch(e){} return false; };
+const cacheClear = g => { try{ if(g) localStorage.removeItem('cache_'+g); }catch(e){} };
 
 /* =====================================================================
    CÁLCULOS  (mesmas regras do sistema: Reports e VA fora do orçamento)
@@ -610,6 +617,9 @@ async function cofreSetRaw(raw){
   COFRE_ESTADO.timer=setTimeout(cofreBloquear,60000);
 }
 function cofreEstaAberto(){return !!COFRE_ESTADO.key && Date.now()<COFRE_ESTADO.ate;}
+/* Ocultar/minimizar o app bloqueia imediatamente os dados sensíveis do cofre. */
+document.addEventListener('visibilitychange',()=>{ if(document.hidden) cofreBloquear(); });
+window.addEventListener('pagehide',()=>cofreBloquear());
 
 function cofreOverlayBase(titulo,texto){
   document.getElementById('cofre_overlay')?.remove();
@@ -1437,7 +1447,7 @@ async function carregarTudo(){
   try{
     const res = await Promise.all([
       ...TABELAS.map(t=>sb.from(t)
-        .select(t==='snapshots'?'id,rotulo,automatico,linhas,criado_em':'*')
+        .select(t==='snapshots'?'id,rotulo,automatico,linhas,criado_em,versao':'*')
         .eq('grupo_id',GRUPO)
         .order(t==='auditoria'?'quando':'id',{ascending:false})
         .limit(t==='auditoria'?400:10000)),
@@ -1621,8 +1631,13 @@ async function registrarLogin(metodo){
 
 async function sair(){
   if(canal) sb.removeChannel(canal);
-  await sb.auth.signOut();
-  USER=null;GRUPO=null;MODO='entrar';telaLogin();
+  cofreBloquear();
+  const g=GRUPO;
+  cacheClear(g);
+  const {error}=await sb.auth.signOut();
+  if(error){ toast('Não consegui encerrar a sessão: '+error.message,5000); return; }
+  USER=null;GRUPO=null;EU=null;MODO='entrar';
+  location.reload();
 }
 
 /* =====================================================================
@@ -2561,10 +2576,18 @@ function vTerc(){
   const fora=abertos.filter(t=>!noCartao(t));
   const vencidos=abertos.filter(atrasado);
   const parados=abertos.filter(t=>!t.previsao&&!t.cartao&&dias(t)!==null&&dias(t)>=30);
-  const proxCiclo=D.ciclos.filter(c=>c.vence&&c.vence>=hj).sort((a,b)=>a.vence.localeCompare(b.vence))[0];
-  const proxK=proxCiclo?.competencia||addM(kAtual,1);
-  const tercProx=D.terceiros.filter(t=>t.cartao&&t.competencia===mLabel(proxK))
+  /* A próxima fatura é calculada por cartão: cartões diferentes podem estar em competências diferentes. */
+  const proxPorCartao=D.cartoes.filter(c=>c.ativo).map(c=>
+    D.ciclos.filter(x=>x.cartao===c.nome&&x.vence&&x.vence>=hj)
+      .sort((a,b)=>a.vence.localeCompare(b.vence))[0]
+  ).filter(Boolean);
+  const proxCompPorCartao=new Map(proxPorCartao.map(c=>[c.cartao,c.competencia]));
+  const tercProx=D.terceiros.filter(t=>
+      t.cartao && proxCompPorCartao.get(t.cartao)===compTercK(t.competencia))
     .reduce((s,t)=>s+(+t.valor||0),0);
+  const proxResumo=proxPorCartao.length
+    ? proxPorCartao.length+' cartão'+(proxPorCartao.length===1?'':'ões')+' com ciclo mapeado'
+    : 'nenhum ciclo futuro mapeado';
   const presos=D.terceiros.filter(t=>t.cartao&&compTercK(t.competencia)>=kAtual)
     .reduce((s,t)=>s+(+t.valor||0),0);
   const em30=new Date(hj+'T12:00:00'); em30.setDate(em30.getDate()+30);
@@ -2597,13 +2620,13 @@ function vTerc(){
     d:BRL(vencidos.reduce((s,t)=>s+saldoTerc(t),0))+' fora do prazo combinado.'});
   if(parados.length) alertas.push({c:'warn',t:parados.length+' valor'+(parados.length===1?' sem prazo há 30+ dias':'es sem prazo há 30+ dias'),
     d:BRL(parados.reduce((s,t)=>s+saldoTerc(t),0))+' merecem revisão.'});
-  if(tercProx>0) alertas.push({c:'info',t:'Próxima fatura tem '+BRL(tercProx)+' de terceiros',
-    d:'Competência '+mLabel(proxK)+' — continua aparecendo na fatura mesmo que a pessoa já tenha reembolsado.'});
+  if(tercProx>0) alertas.push({c:'info',t:'Próximas faturas têm '+BRL(tercProx)+' de terceiros',
+    d:'Soma a próxima competência mapeada de cada cartão; continua na fatura mesmo se a pessoa já reembolsou.'});
 
   return head('Terceiros','Quem usou dinheiro ou cartão de vocês, quanto ainda falta voltar e em quais faturas isso aparece.')
   +`<div class="kpis">
     ${kpi('A receber',BRL(aReceber()),abertos.length+' registro'+(abertos.length===1?'':'s')+' com saldo','amb')}
-    ${kpi('Na próxima fatura',BRL(tercProx),mLabel(proxK)+' · todos os cartões')}
+    ${kpi('Nas próximas faturas',BRL(tercProx),proxResumo)}
     ${kpi('Limite comprometido',BRL(presos),'parcelas de terceiros atuais e futuras')}
     ${kpi('Atrasado',BRL(vencidos.reduce((s,t)=>s+saldoTerc(t),0)),vencidos.length?vencidos.length+' cobrança'+(vencidos.length===1?'':'s'):'nenhuma',vencidos.length?'amb':'')}
     ${kpi('Volta em até 30 dias',BRL(volta30),'fora do cartão')}
@@ -3805,8 +3828,9 @@ function vBackup(){
         <input id="bk_r" placeholder="Ex.: antes de acertar as faturas de outubro"></div>
       <div class="fld"><label>&nbsp;</label><button class="btn" onclick="tirarCopia()">Tirar cópia</button></div>
     </div>
-    <p class="note" style="margin-top:10px">Guarda tudo: renda, contas, cartões, parcelas, lançamentos,
-    terceiros, metas, agenda e configuração. Ficam salvas as 20 mais recentes.</p>
+    <p class="note" style="margin-top:10px">A cópia v2 inclui renda, contas, cartões, parcelas, assinaturas e exceções,
+    lançamentos, terceiros, metas, agenda, faturas fechadas, notas e configuração. Ficam salvas as 20 mais recentes.
+    Cópias antigas continuam visíveis, mas não são restauradas porque eram incompletas para o modelo atual.</p>
   </div></div>
 
   <div class="panel"><h2>Cópias guardadas <small>${snaps.length} de 20</small></h2>
@@ -3818,7 +3842,9 @@ function vBackup(){
     <td>${esc(x.rotulo)}${x.automatico?' <span class="tag t-g">automática</span>':''}${
       i===0?' <span class="tag t-ok">mais recente</span>':''}</td>
     <td class="r">${x.linhas}</td>
-    <td class="r"><button class="btn alt sm" onclick="restaurarCopia('${x.id}','${esc(x.rotulo)}')">Restaurar</button></td>
+    <td class="r">${(+x.versao||1)>=2
+      ? `<button class="btn alt sm" onclick="restaurarCopia('${x.id}',${jsArg(x.rotulo)})">Restaurar</button>`
+      : '<span class="tag t-w" title="Formato antigo: não contém todas as tabelas atuais">legada · somente referência</span>'}</td>
   </tr>`).join('')||'<tr><td colspan="4" class="note" style="padding:18px;text-align:center">Nenhuma cópia ainda.</td></tr>'}
   </tbody></table></div></div>
 
@@ -4984,7 +5010,7 @@ function vFatura(){
   return head('Fatura','Sua parte primeiro; total do banco separado e projeção clara dos próximos meses.')
   +`<div class="v107-fatnav">
     <div class="v107-cardchips">
-      ${ativos.map(x=>`<button class="v107-chip ${x.nome===n?'on':''}" onclick="setFatCart('${esc(x.nome)}')">${esc(x.nome)}</button>`).join('')}
+      ${ativos.map(x=>`<button class="v107-chip ${x.nome===n?'on':''}" onclick="setFatCart(${jsArg(x.nome)})">${esc(x.nome)}</button>`).join('')}
     </div>
     <div class="v107-monthnav">
       <button onclick="fatMes(-1)" aria-label="Mês anterior">‹</button>
@@ -5052,7 +5078,7 @@ function vFatura(){
         <option value="estorno">Estorno / desconto</option></select></div>
       <div class="fld"><label>Valor</label><input type="number" step="0.01" id="fat_valor" placeholder="0,00"></div>
       <div class="fld"><label>&nbsp;</label>
-        <button class="btn" onclick="addAjusteFatura('${esc(n)}','${comp}')">Adicionar</button></div>
+        <button class="btn" onclick="addAjusteFatura(${jsArg(n)},'${comp}')">Adicionar</button></div>
     </div>
   </div></div>
 
