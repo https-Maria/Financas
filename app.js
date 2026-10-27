@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v109';
+const APP_VER='v110';
 
 /* =====================================================================
    ESTADO
@@ -1847,17 +1847,17 @@ window.confirmarCompra=async()=>{
 /* =====================================================================
    TELAS
    ===================================================================== */
-const PAGES=[['painel','Painel'],['dash','Dashboard'],['compra','Nova compra'],['lanc','Lançamentos'],
+const PAGES=[['painel','Início'],['dash','Dashboard'],['compra','Nova compra'],['lanc','Lançamentos'],
   ['parc','Parcelamentos'],['assin','Assinaturas'],['terc','Terceiros'],
   ['cal','Calendário'],['proj','Projeção'],['amort','Amortização'],['casa','Projeções Casa'],
-  ['cad','Cadastros'],['metas','Metas'],['backup','Cópias'],['log','Atividade'],['integridade','Integridade dos dados'],['fatura','Fatura'],['notas','Bloco de notas'],
+  ['cad','Cadastros'],['metas','Metas'],['backup','Cópias'],['log','Atividade'],['integridade','Integridade dos dados'],['fatura','Faturas'],['notas','Bloco de notas'],
   ['extrato','Extrato']];
 
 /* Navegação v91: cinco destinos principais sempre visíveis.
    O restante fica num menu único, organizado por contexto. */
-const MENU_FIXO=['painel','extrato','lanc','cal','metas'];
+const MENU_FIXO=['painel','extrato','fatura','terc','metas'];
 const MENU_GRUPOS=[
-  ['Compromissos',['fatura','parc','assin','terc']],
+  ['Movimentar',['lanc','cal','parc','assin']],
   ['Analisar',['dash','proj','amort','casa']],
   ['Organizar',['notas']],
   ['Ferramentas',['compra','cad','integridade','backup','log']]];
@@ -1971,273 +1971,174 @@ function ultimoMesParcela(){
     }});
   return ult?mLabel(ult):'—';
 }
+/* =====================================================================
+   DUETO ESSENCIAL — v110
+   Resposta primeiro, detalhe sob demanda. O motor financeiro não muda.
+   ===================================================================== */
+let DUETO_PERGUNTA='', DUETO_RESPOSTA=null;
+
+function normalizaPergunta(v){
+  return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+}
+function mesPerguntado(q){
+  const n=normalizaPergunta(q), atual=ym(hoje());
+  if(/\b(mes que vem|proximo mes|mes seguinte)\b/.test(n)) return addM(atual,1);
+  if(/\b(este mes|esse mes|mes atual|agora)\b/.test(n)) return atual;
+  const nomes=['janeiro','fevereiro','marco','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+  const idx=nomes.findIndex(x=>n.includes(x));
+  if(idx<0) return MREF||atual;
+  const [anoAtual,mesAtual]=atual.split('-').map(Number);
+  let ano=anoAtual, citado=idx+1;
+  if(citado<mesAtual && !/\b(passado|anterior)\b/.test(n)) ano++;
+  return ano+'-'+String(citado).padStart(2,'0');
+}
+function valorPerguntado(q){
+  const n=String(q||'').replace(/\./g,'').replace(',','.');
+  const m=n.match(/(?:r\$\s*)?(\d+(?:\.\d{1,2})?)/i);
+  return m?+m[1]:null;
+}
+function terceiroJaSaiu(t){
+  if(!t.cartao) return !!t.data_saida && String(t.data_saida)<=hoje();
+  const k=compTercK(t.competencia);
+  if(!k) return false;
+  /* Terceiro no cartão só vira "já desembolsado" quando a fatura daquela
+     competência realmente foi paga/confirmada. Vencimento sozinho não prova saída. */
+  const fat=faturaLancada(t.cartao,k);
+  return !!fat && fat.debitos.some(confirmado);
+}
+function resumoTerceiros(pessoa){
+  const alvo=normalizaPergunta(pessoa||'');
+  const itens=D.terceiros.filter(t=>saldoTerc(t)>0 && (!alvo||normalizaPergunta(t.pessoa).includes(alvo)));
+  const agora=itens.filter(terceiroJaSaiu).reduce((s,t)=>s+saldoTerc(t),0);
+  const futuro=itens.filter(t=>!terceiroJaSaiu(t)).reduce((s,t)=>s+saldoTerc(t),0);
+  return {agora,futuro,total:agora+futuro};
+}
+function insightsEssenciais(k){
+  const ach=[...insights(k,8)];
+  D.cartoes.filter(c=>c.ativo).forEach(c=>{
+    const propria=faturaCartao(c.nome,k), terc=terceirosCartaoMes(c.nome,k), total=propria+terc;
+    if(terc>=100 && total>0 && terc/total>=.25) ach.push({
+      t:'info',rel:82,h:'A fatura '+c.nome+' parece maior do que o gasto de vocês',
+      p:BRL(terc)+' são de terceiros. A parte de vocês é '+BRL(propria)+' de '+BRL(total)+'.'
+    });
+  });
+  const mapa=new Map();
+  D.lancamentos.filter(l=>ym(l.data)===k).forEach(l=>{
+    const chave=[l.data,normalizaPergunta(l.descricao),(+l.valor).toFixed(2),l.tipo,l.cartao||'',l.status||''].join('|');
+    if(!mapa.has(chave)) mapa.set(chave,[]);
+    mapa.get(chave).push(l);
+  });
+  const dups=[...mapa.values()].filter(x=>x.length>1);
+  if(dups.length){
+    const d=dups[0][0];
+    ach.push({t:'aten',rel:92,h:'Há '+dups.length+' possível'+(dups.length===1?' duplicidade':'is duplicidades')+' para conferir',
+      p:'Exemplo: '+d.descricao+' · '+BRL(d.valor)+' em '+String(d.data).split('-').reverse().join('/')+'. Não vou tratar como erro sem conferir o extrato.'});
+  }
+  const unicos=[], vistos=new Set();
+  ach.sort((a,b)=>b.rel-a.rel).forEach(x=>{
+    const ch=normalizaPergunta(x.h);
+    if(x.rel>=50&&!vistos.has(ch)){vistos.add(ch);unicos.push(x);}
+  });
+  return unicos.slice(0,3);
+}
+function responderDueto(pergunta){
+  const q=normalizaPergunta(pergunta), k=mesPerguntado(pergunta);
+  if(/\b(sobra|sobrar|fecha|fechar|saldo do mes)\b/.test(q)){
+    const m=fluxo(1,null,k)[0];
+    return {tom:m.sal<0?'ruim':'bom',titulo:m.sal<0?mLabel(k)+' fecha negativo':mLabel(k)+' fecha positivo',
+      valor:BRL(m.sal),detalhe:'Renda '+BRL(m.renda)+' · compromissos estruturais '+BRL(m.out)+'. É a sobra do fluxo, antes de gastos avulsos não planejados.',
+      dest:'proj',acao:'Ver projeção'};
+  }
+  if(q.includes('mae')&&/\b(deve|devendo|receber|terceiro)\b/.test(q)){
+    const t=resumoTerceiros('mae');
+    return {tom:t.agora>0?'aten':'info',titulo:'Sua mãe tem '+BRL(t.total)+' em aberto',valor:BRL(t.agora),
+      rotulo:'já desembolsado por vocês',detalhe:t.futuro>0?BRL(t.futuro)+' ainda está em faturas/compromissos futuros.':'Não há valor futuro separado neste momento.',
+      dest:'terc',acao:'Abrir terceiros'};
+  }
+  if(/\b(terceiro|terceiros|a receber)\b/.test(q)){
+    const t=resumoTerceiros('');
+    return {tom:t.agora>0?'aten':'info',titulo:'Há '+BRL(t.total)+' de terceiros em aberto',valor:BRL(t.agora),rotulo:'já saiu do caixa',
+      detalhe:BRL(t.futuro)+' ainda pertence a próximas faturas/compromissos.',dest:'terc',acao:'Ver por pessoa'};
+  }
+  if(/\b(cartao|cartoes)\b/.test(q)&&/\b(leve|menor|mais baixo|menos)\b/.test(q)){
+    const cards=D.cartoes.filter(c=>c.ativo).map(c=>({nome:c.nome,propria:faturaCartao(c.nome,k),terc:terceirosCartaoMes(c.nome,k)}))
+      .filter(x=>x.propria>0||x.terc>0).sort((a,b)=>a.propria-b.propria);
+    if(!cards.length) return {tom:'info',titulo:'Não há faturas com valor em '+mLabel(k),detalhe:'Nenhum cartão ativo tem valor modelado para essa competência.',dest:'fatura',acao:'Abrir faturas'};
+    const c=cards[0];
+    return {tom:'bom',titulo:c.nome+' está mais leve em '+mLabel(k),valor:BRL(c.propria),rotulo:'parte de vocês',
+      detalhe:c.terc>0?'O banco pode mostrar '+BRL(c.propria+c.terc)+' porque '+BRL(c.terc)+' são de terceiros.':'Não há terceiros somados a essa fatura.',dest:'fatura',acao:'Ver fatura'};
+  }
+  if(/\b(estranh|anormal|atencao|problema|alerta)\b/.test(q)){
+    const obs=insightsEssenciais(k);
+    if(!obs.length) return {tom:'bom',titulo:'Nada exige ação agora',detalhe:'Não encontrei anomalia relevante nas verificações atuais.',dest:'integridade',acao:'Ver integridade'};
+    return {tom:obs[0].t==='ruim'?'ruim':obs[0].t==='aten'?'aten':'info',titulo:obs[0].h,detalhe:obs[0].p.replace(/<[^>]+>/g,''),dest:'integridade',acao:'Ver verificações'};
+  }
+  if(/\b(posso|pode|da para|consigo)\b/.test(q)&&/\b(gastar|comprar|compra)\b/.test(q)){
+    const v=valorPerguntado(pergunta);
+    if(!v) return {tom:'info',titulo:'Me diga o valor da compra',detalhe:'Ex.: “posso gastar 300 hoje?”',dest:'compra',acao:'Simular compra'};
+    if(/\b(cartao|parcel|vezes)\b/.test(q)) return {tom:'info',titulo:'Para compra parcelada, use o simulador',valor:BRL(v),
+      detalhe:'O cartão e a primeira fatura mudam a resposta. O simulador calcula mês a mês sem gravar nada.',dest:'compra',acao:'Simular '+BRL(v)};
+    const S=saldoConta(), m=fluxo(1,null,ym(hoje()))[0], candidatos=[Math.max(0,m.sal)];
+    if(S.disponivel!=null) candidatos.push(Math.max(0,S.disponivel));
+    const margem=Math.min(...candidatos), depois=margem-v;
+    return {tom:depois>=0?'bom':'aten',titulo:depois>=0?'Cabe na margem conservadora de hoje':'Eu não trataria esse valor como livre hoje',valor:BRL(v),
+      detalhe:'Margem conservadora: '+BRL(margem)+'. Depois do gasto: '+BRL(depois)+'. Compra parcelada deve ir para o simulador.',dest:'compra',acao:'Testar cenário completo'};
+  }
+  if(/\b(apertado|pior mes|mes mais dificil|mais apertado)\b/.test(q)){
+    const p=fluxo(12,null,ym(hoje())).sort((a,b)=>a.sal-b.sal)[0];
+    return {tom:p.sal<0?'ruim':'aten',titulo:mLabel(p.k)+' é o mês mais apertado dos próximos 12',valor:BRL(p.sal),rotulo:'sobra projetada',
+      detalhe:'É o menor saldo mensal da projeção atual.',dest:'proj',acao:'Ver meses'};
+  }
+  if(/\b(divida|parcelas|quita|quitar)\b/.test(q)) return {tom:'info',titulo:'As parcelas de cartão somam '+BRL(saldoParc()),valor:ultimoMesParcela(),
+    rotulo:'última competência atual',detalhe:'Novas compras mudam essa data.',dest:'parc',acao:'Ver parcelamentos'};
+  const obs=insightsEssenciais(k);
+  return {tom:'info',titulo:'Essa pergunta ainda não tem uma resposta segura automática',detalhe:(obs.length?'O ponto mais relevante agora é: '+obs[0].h+'. ':'')+
+    'Tente “quanto sobra em dezembro?”, “quanto minha mãe deve?”, “qual cartão está mais leve?” ou “tem algo estranho?”.'};
+}
+window.perguntarDueto=(sugestao)=>{
+  const q=String(sugestao||$('dueto_q')?.value||'').trim();
+  if(!q) return;
+  DUETO_PERGUNTA=q; DUETO_RESPOSTA=responderDueto(q); render();
+};
+function proximoCompromissoDoPainel(k,blocos){
+  const hk=ym(hoje()), dh=+hoje().slice(8,10);
+  return blocos.find(b=>b.tOut>0&&(k>hk||(k===hk&&b.dia>=dh)))||null;
+}
+function renderGavetasPainel(comAcum){
+  return `<div class="dayflow ess-gavetas">${comAcum.map(b=>`
+    <details class="day"><summary>
+      <span class="dlabel">${b.label}</span><span class="din">${b.tIn?'+'+BRL(b.tIn):'—'}</span>
+      <span class="dout">${b.tOut?'−'+BRL(b.tOut):'—'}</span><span class="dsal ${b.saldo<0?'neg':''}">${BRL(b.saldo)}</span>
+      <span class="dacum ${b.acum<0?'neg':''}">acum. ${BRL(b.acum)}${(()=>{const tot=b.entradas.length+b.saidas.length;const fei=[...b.entradas,...b.saidas].filter(x=>lancDoItem(x,MREF)).length;return tot?` · <span class="tag ${fei===tot?'t-ok':'t-g'}">${fei}/${tot}</span>`:'';})()}</span>
+    </summary><div class="ddet">
+      ${b.entradas.length?`<div class="dcol"><h5>Entra — marque quando receber</h5>${b.entradas.map((e,ix)=>{const L=lancDoItem(e,MREF),venceu=dataEfetiva(e,MREF,b.dia)<=hoje();return `<div class="dline chk ${L?'feito':''} ${!venceu&&!L?'futuro':''}"><span><input type="checkbox" ${L?'checked':''} onchange="marcarItem(${b.dia},'in',${ix})"> ${esc(e.desc)}${e.quem?` <span class="tag t-g">${esc(e.quem)}</span>`:''}${e.tipo==='avulso'?` <span class="tag t-i">${String(e.dataReal).slice(8,10)+'/'+String(e.dataReal).slice(5,7)}</span> <span class="tag ${e.jaPago?'t-ok':'t-w'}">${e.jaPago?'já entrou':'planejado'}</span>`:''}${L&&Math.abs(L.valor-e.valor)>0.01?` <span class="tag t-w">lançado ${BRL(L.valor)}</span>`:''}</span><b style="color:var(--pos)">${BRL(e.valor)}</b></div>`;}).join('')}</div>`:''}
+      ${b.saidas.length?`<div class="dcol"><h5>Sai — marque quando pagar</h5>${b.saidas.map((x,ix)=>{const L=lancDoItem(x,MREF),venceu=dataEfetiva(x,MREF,b.dia)<=hoje();return `<div class="dline chk ${L?'feito':''} ${!venceu&&!L?'futuro':''}"><span><input type="checkbox" ${L?'checked':''} onchange="marcarItem(${b.dia},'out',${ix})"> ${esc(x.desc)}${x.tipo==='reserva'?' <span class="tag t-w">reserva</span>':''}${x.tipo==='cartao'?' <span class="tag t-i">fatura</span>':''}${x.tipo==='avulso'?` <span class="tag t-g">${String(x.dataReal).slice(8,10)+'/'+String(x.dataReal).slice(5,7)}</span> <span class="tag ${x.jaPago?'t-ok':'t-w'}">${x.jaPago?'já pago':'planejado'}</span>`:''}${L&&Math.abs(L.valor-x.valor)>0.01?` <span class="tag t-w">lançado ${BRL(L.valor)}</span>`:''}</span><b style="color:var(--neg)">${BRL(x.valor)}</b></div>`;}).join('')}</div>`:''}
+    </div></details>`).join('')}</div>`;
+}
+
 function vPainel(){
-  const f=fluxo(12,null,MREF), mes=f[0], r=realizado(MREF);
-  const meses=mesesDisponiveis();
-  const plano = PAINEL_MODO==='plano';
-  const blocos=blocosDoMes(MREF, plano);
+  const mes=fluxo(1,null,MREF)[0], r=realizado(MREF), meses=mesesDisponiveis();
+  const plano=PAINEL_MODO==='plano', blocos=blocosDoMes(MREF,plano);
   let corrido=0;
-  const comAcum=blocos.map(b=>{ corrido+=b.saldo; return {...b,acum:corrido}; });
-  const apertados=comAcum.filter(b=>b.acum<0);
-  const cats=Object.entries(r.porCat).sort((a,b)=>b[1]-a[1]).slice(0,8);
-  const mxc=Math.max(...cats.map(c=>c[1]),1);
-
-  const passado = MREF < ym(hoje());
-  const semDados = r.n===0;
-  return head('Painel','Entradas e saídas nas datas de pagamento. Clique num bloco para ver o detalhe.')
-  +(passado&&semDados?`<div class="warn" style="margin-bottom:16px">
-    <b>Mês sem lançamentos.</b> ${mLabel(MREF)} já passou, mas nada foi registrado —
-    então os números abaixo são uma <b>projeção</b> feita a partir das contas fixas e
-    assinaturas, não o que aconteceu de verdade. Lance os movimentos do mês para ver o real.</div>`:'')
-  +(passado&&!semDados?`<div class="info" style="margin-bottom:16px">
-    ${mLabel(MREF)} já passou. Os valores abaixo vêm dos ${r.n} lançamentos registrados.</div>`:'')
-  +`<div class="rowbar">
-    <div class="fld" style="max-width:160px"><label>Mês em foco</label>
-      <select onchange="setMes(this.value)">
-        ${meses.map(k=>`<option value="${k}" ${k===MREF?'selected':''}>${mLabel(k)}</option>`).join('')}
-      </select></div>
-    <div style="flex:1"></div>
-    <button class="btn alt" onclick="toggleGastoRapido()">+ Gasto rápido</button>
-    <button class="btn" onclick="go('compra')">Simular compra</button>
-    <button class="btn alt" onclick="go('lanc')">Lançar movimento</button>
-  </div>
-
-  ${GASTO_RAPIDO_ABERTO?`<div class="panel" style="margin-bottom:16px"><div class="pbody">
-    <div class="form">
-      <div class="fld"><label>Quanto foi</label><input type="number" step="0.01" id="gr_v" placeholder="0,00"></div>
-      <div class="fld" style="grid-column:span 2"><label>Com o quê (opcional)</label>
-        <input id="gr_n" placeholder="Ex.: mercado, gasolina…"></div>
-      <div class="fld"><label>&nbsp;</label><button class="btn" onclick="addGastoRapido()">Salvar</button></div>
-    </div>
-    <p class="note" style="margin-top:8px">Registra como "Dia a dia", hoje, no valor da compra. Sem categoria
-    pra escolher, sem fricção — é pra você lançar na hora, não depois. Quanto mais isso acumular, mais o
-    Dashboard usa o gasto real em vez de estimativa.</p>
-  </div></div>`:''}
-
-  ${(()=>{
-    const S=saldoConta();
-    const semColuna = D.config && !('saldo_conferido' in D.config);
-    const naoConfig = S.base==null;
-    const formulario = `
-      <div class="form" style="margin-top:4px">
-        <div class="fld"><label>Saldo que aparece no banco</label>
-          <input type="number" step="0.01" id="sc_v" placeholder="${naoConfig?'0,00':(+S.atual).toFixed(2)}"></div>
-        <div class="fld"><label>Data do extrato</label>
-          <input type="date" id="sc_d" value="${hoje()}"></div>
-        <div class="fld"><label>&nbsp;</label>
-          <button class="btn" onclick="conferirSaldo()">${naoConfig?'Começar a acompanhar':'Fixar este saldo'}</button></div>
-      </div>`;
-
-    if(naoConfig) return `<div class="panel"><h2>Saldo em conta
-      <small>ainda não configurado</small></h2><div class="pbody">
-      ${semColuna?`<div class="warn" style="margin-bottom:12px">
-        Falta rodar <b>migracao-saldo.sql</b> no Supabase. Sem isso o app não tem onde guardar o saldo.</div>`:''}
-      <p class="note" style="margin-bottom:10px">Informe o saldo que está hoje na sua conta.
-      A partir daí o app soma e subtrai cada lançamento que você fizer.</p>
-      ${formulario}
-    </div></div>`;
-
-    return `<div class="panel"><h2>Saldo em conta
-      <small>conferido em ${S.desde.split('-').reverse().join('/')} · ${S.n} lançamento${S.n===1?'':'s'} confirmado${S.n===1?'':'s'} desde então</small></h2>
-      <div class="pbody">
-        <div class="kpis" style="margin-bottom:14px">
-          ${kpi('Saldo hoje',BRL(S.atual),'segundo os lançamentos',S.atual<0?'neg':'pos')}
-          ${kpi('Entrou desde então','+'+BRL(S.ent))}
-          ${kpi('Saiu desde então','−'+BRL(S.sai))}
-          ${S.protegido>0?kpi('Dinheiro separado',BRL(S.protegido),'reserva/valor protegido','amb')
-                        :kpi('Ponto de conferência',BRL(S.base),'em '+S.desde.split('-').reverse().join('/'))}
-        </div>
-        <div class="kgroup sub">Conferir com o extrato do banco</div>
-        <p class="note" style="margin-bottom:6px">O app calcula <b>${BRL(S.atual)}</b>,
-        contando só lançamentos já confirmados e com data até hoje —
-        previsão e o que está marcado como Projetado ficam de fora. Compra no cartão
-        só conta quando a fatura é paga.
-        Se o banco mostra outro número, corrija aqui e o app segue deste ponto.</p>
-        ${formulario}
-      </div></div>`;
-  })()}
-
-  <div class="kpis">
-    ${kpi('Renda',BRL(mes.renda),'em '+mLabel(MREF))}
-    ${kpi(passado&&semDados?'Saídas (projetadas)':'Saídas previstas',BRL(mes.out),
-      passado&&semDados?'sem lançamentos no mês':PCT(mes.pct)+' da renda',
-      passado&&semDados?'amb':'')}
-    ${kpi(passado&&semDados?'Saldo (projetado)':'Saldo previsto',BRL(mes.sal),'',
-      passado&&semDados?'amb':(mes.sal<0?'neg':'pos'))}
-    ${kpi('Dívida de cartões',BRL(saldoParc()),'quita em '+ultimoMesParcela(),'amb')}
-  </div>
-
-  ${apertados.length?`<div class="warn" style="margin-bottom:16px"><b>Atenção:</b> o dinheiro não fecha
-    ${apertados.length===1?'no bloco':'nos blocos'} ${apertados.map(b=>b.label.toLowerCase()).join(', ')}.
-    Vai faltar caixa antes da próxima entrada.</div>`:''}
-
-  <div class="kgroup" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-    <span>Fluxo por data em ${mLabel(MREF)}</span>
-    <span class="seg">
-      <button class="segb" aria-pressed="${!plano}" onclick="setPainelModo('saldo')">Saldo</button>
-      <button class="segb" aria-pressed="${plano}" onclick="setPainelModo('plano')">Planejamento</button>
-    </span>
-    <small>clique num bloco para detalhar</small></div>
-  <p class="note" style="margin:-4px 0 8px">${plano
-    ? `Mesmas datas da aba Saldo, <b>mais o que você marcou como planejado</b> — o que já pagou e o que
-       ainda vai pagar. Serve pra planejar e conferir o mês. <b>Não é o saldo</b>: a Projeção, a
-       Amortização e o Dashboard continuam usando a aba Saldo.`
-    : `Só o que é certo: renda contra conta fixa e fatura de cartão. É daqui que sai o saldo do mês.
-       Gasto avulso não entra aqui — veja na aba <b>Planejamento</b> ou em <b>Extrato</b>.`}</p>
-  <div class="dayflow">
-  ${comAcum.map(b=>`
-    <details class="day">
-      <summary>
-        <span class="dlabel">${b.label}</span>
-        <span class="din">${b.tIn?'+'+BRL(b.tIn):'—'}</span>
-        <span class="dout">${b.tOut?'−'+BRL(b.tOut):'—'}</span>
-        <span class="dsal ${b.saldo<0?'neg':''}">${BRL(b.saldo)}</span>
-        <span class="dacum ${b.acum<0?'neg':''}">acum. ${BRL(b.acum)}${(()=>{
-          const tot=b.entradas.length+b.saidas.length;
-          const fei=[...b.entradas,...b.saidas].filter(x=>lancDoItem(x,MREF)).length;
-          return tot?` · <span class="tag ${fei===tot?'t-ok':'t-g'}">${fei}/${tot}</span>`:'';
-        })()}</span>
-      </summary>
-      <div class="ddet">
-        ${b.entradas.length?`<div class="dcol"><h5>Entra — marque quando receber</h5>
-          ${b.entradas.map((e,ix)=>{const L=lancDoItem(e,MREF);
-            const venceu=dataEfetiva(e,MREF,b.dia)<=hoje();
-            return `
-            <div class="dline chk ${L?'feito':''} ${!venceu&&!L?'futuro':''}">
-              <span><input type="checkbox" ${L?'checked':''} onchange="marcarItem(${b.dia},'in',${ix})">
-                ${esc(e.desc)}${e.quem?` <span class="tag t-g">${esc(e.quem)}</span>`:''}
-                ${e.tipo==='avulso'?`<span class="tag t-i">${
-                  String(e.dataReal).slice(8,10)+'/'+String(e.dataReal).slice(5,7)}</span>
-                  <span class="tag ${e.jaPago?'t-ok':'t-w'}">${e.jaPago?'já entrou':'planejado'}</span>`:''}
-                ${L&&Math.abs(L.valor-e.valor)>0.01?`<span class="tag t-w">lançado ${BRL(L.valor)}</span>`:''}</span>
-              <b style="color:var(--pos)">${BRL(e.valor)}</b></div>`;}).join('')}</div>`:''}
-        ${b.saidas.length?`<div class="dcol"><h5>Sai — marque quando pagar</h5>
-          ${b.saidas.map((x,ix)=>{const L=lancDoItem(x,MREF);
-            const venceu=dataEfetiva(x,MREF,b.dia)<=hoje();
-            return `
-            <div class="dline chk ${L?'feito':''} ${!venceu&&!L?'futuro':''}">
-              <span><input type="checkbox" ${L?'checked':''} onchange="marcarItem(${b.dia},'out',${ix})">
-                ${esc(x.desc)}
-                ${x.tipo==='reserva'?'<span class="tag t-w">reserva</span>':''}
-                ${x.tipo==='cartao'?'<span class="tag t-i">fatura</span>':''}
-                ${x.tipo==='avulso'?`<span class="tag t-g">${
-                  String(x.dataReal).slice(8,10)+'/'+String(x.dataReal).slice(5,7)}</span>
-                  <span class="tag ${x.jaPago?'t-ok':'t-w'}">${x.jaPago?'já pago':'planejado'}</span>`:''}
-                ${L&&Math.abs(L.valor-x.valor)>0.01?`<span class="tag t-w">lançado ${BRL(L.valor)}</span>`:''}</span>
-              <b style="color:var(--neg)">${BRL(x.valor)}</b></div>`;}).join('')}</div>`:''}
-
-      </div>
-    </details>`).join('')}
-  </div>
-
-  ${centralCartoes(MREF)}
-
-  <div class="grid2">
-    <div class="panel"><h2>Faturas de ${mLabel(MREF)}</h2><div class="pbody">
-      ${(()=>{
-        const nomes=[...new Set([...D.cartoes.filter(c=>c.ativo).map(c=>c.nome),
-          ...D.lancamentos.filter(l=>ym(l.data)===MREF&&l.cartao).map(l=>l.cartao)])];
-        const linhas=nomes.map(n=>{
-          const real=faturaLancada(n,MREF), calc=faturaCalculada(n,MREF), v=faturaCartao(n,MREF);
-          if(!v) return '';
-          const c=D.cartoes.find(x=>x.nome===n);
-          const itens=[
-            ...D.parcelamentos.filter(p=>(p.cartao||'')===n && parcelaCaiEm(p,MREF))
-              .map(p=>({d:p.descricao,v:+p.valor_parcela})),
-            ...D.assinaturas.filter(a=>a.projetar&&(a.cartao||'')===n).map(a=>{
-              const vz=vezesAssinatura(a,MREF);
-              return {d:a.descricao+(vz!==1?' — '+vz+' cobranças neste ciclo':''), v:(+a.valor)*vz};
-            }).filter(x=>x.v>0)];
-          const jan=janelaFatura(n,MREF);
-          const rep=D.assinaturas.filter(a=>a.projetar&&(a.cartao||'')===n)
-            .map(a=>({a, vz:vezesAssinatura(a,MREF)})).filter(x=>x.vz!==1);
-          return `<details class="mini-det"><summary><span>${esc(n)}
-            <span class="tag ${real?'t-ok':'t-g'}">${real?'lançada':'estimada'}</span>
-            ${jan?`<span class="note">fecha ${jan.fim.split('-').reverse().slice(0,2).join('/')}</span>`
-                 :(c?`<span class="note">vence dia ${c.dia_venc||'—'}</span>`:'')}
-            ${rep.map(x=>`<span class="tag ${x.vz>1?'t-no':'t-w'}">${x.vz}x ${esc(x.a.descricao)}</span>`).join(' ')}</span>
-            <b>${BRL(v)}</b></summary>
-            <div style="padding:8px 0 10px">
-              ${jan?`<p class="note" style="margin-bottom:8px">Ciclo de
-                ${jan.ini.split('-').reverse().slice(0,2).join('/')} a
-                ${jan.fim.split('-').reverse().slice(0,2).join('/')}${jan.estimada?' (estimado)':''}.
-                Assinatura cujo dia de cobrança cai duas vezes nesse intervalo entra em dobro.</p>`:''}
-              ${/* o que o app conhece da composição — aparece sempre */''}
-              <div class="kgroup sub">O que o app conhece desta fatura</div>
-              ${itens.length
-                ? itens.map(i=>`<div class="dline"><span>${esc(i.d)}</span><span>${BRL(i.v)}</span></div>`).join('')
-                  +`<div class="dline" style="border-top:1px solid var(--rule-soft)">
-                     <span><b>Soma do que é conhecido</b></span><b>${BRL(calc)}</b></div>`
-                : '<p class="note">Nenhuma parcela nem assinatura cadastrada neste cartão.</p>'}
-
-              ${real ? `
-                <div class="kgroup sub" style="margin-top:14px">O valor que você lançou</div>
-                ${real.itens.map(l=>`<div class="dline"><span>${esc(l.descricao)}
-                   ${l.tipo==='Entrada'?'<span class="tag t-ok">crédito</span>':''}
-                   <span class="note">${String(l.data).split('-').reverse().join('/')}${
-                     l.status==='Projetado'?' · previsto':''}</span></span>
-                   <span><b style="color:${l.tipo==='Entrada'?'var(--pos)':'inherit'}">${
-                     l.tipo==='Entrada'?'− ':''}${BRL(l.valor)}</b></span></div>`).join('')}
-                ${real.creditos&&real.creditos.length?`<div class="dline">
-                   <span class="note">${real.creditos.length} crédito${real.creditos.length===1?'':'s'} abatendo a fatura</span>
-                   <span class="note" style="color:var(--pos)">−${BRL(real.creditos.reduce((s,l)=>s+ +l.valor,0))}</span>
-                 </div>`:''}
-                ${Math.abs(real.valor-calc)>0.01?`<div class="dline">
-                  <span class="note">Diferença para o conhecido — compras do dia a dia,
-                    encargos, coisas não cadastradas</span>
-                  <span class="note" style="color:${real.valor>calc?'var(--neg)':'var(--pos)'}">${
-                    (real.valor>calc?'+':'')+BRL(real.valor-calc)}</span></div>`:''}
-                <p class="note" style="margin-top:8px">Este é o valor que vale nas contas.
-                  Para corrigir, edite o lançamento em <b>Lançamentos</b>.</p>`
-              : `<p class="note" style="margin-top:8px">A fatura ainda não foi lançada, então o app usa
-                  esta soma como estimativa. Quando você lançar o valor real, ele assume o lugar.</p>`}
-            </div>
-          </details>`;}).filter(Boolean).join('');
-        return linhas||'<p class="note">Nenhuma fatura neste mês.</p>';
-      })()}
-    </div></div>
-  </div>
-
-  ${(()=>{
-    const rp=reportsMes(MREF);
-    if(!rp.temMovimento) return '';
-    return `<div class="panel"><h2>Reports <small>saldo legado do antigo trabalho — fora do orçamento do casal</small></h2>
-      <div class="pbody">
-        ${rp.ent?`<div class="dline"><span>Entrada recebida</span>
-          <b style="color:var(--pos)">${BRL(rp.ent)}</b></div>`:''}
-        ${rp.sai.map(l=>`<div class="dline"><span>${esc(l.descricao)}
-          <span class="note">${String(l.data).split('-').reverse().join('/')}</span></span>
-          <b>${BRL(l.valor)}</b></div>`).join('')}
-        ${rp.sai.length>1?`<div class="dline" style="border-top:1px solid var(--rule);margin-top:4px;padding-top:6px">
-          <span><b>Total pago com o Reports</b></span><b>${BRL(rp.tot)}</b></div>`:''}
-        <p class="note" style="margin-top:10px">Só aparece aqui o que foi pago com o saldo antigo do Reports.</p>
-      </div></div>`;
-  })()}
-
-  ${(()=>{
-    const rv=reservasMes(MREF);
-    if(!rv.temMovimento) return '';
-    return `<div class="panel"><h2>Reservas / caixinhas <small>dinheiro separado por você — não é Reports</small></h2>
-      <div class="pbody">
-        ${rv.ent?`<div class="dline"><span>Entrada na reserva</span>
-          <b style="color:var(--pos)">${BRL(rv.ent)}</b></div>`:''}
-        ${rv.sai.map(l=>`<div class="dline"><span>${esc(l.descricao)}
-          <span class="note">${String(l.data).split('-').reverse().join('/')}</span></span>
-          <b>${BRL(l.valor)}</b></div>`).join('')}
-        ${rv.sai.length>1?`<div class="dline" style="border-top:1px solid var(--rule);margin-top:4px;padding-top:6px">
-          <span><b>Total separado</b></span><b>${BRL(rv.tot)}</b></div>`:''}
-        <p class="note" style="margin-top:10px">É dinheiro movido para uma caixinha/objetivo: não é gasto de consumo e continua disponível para uso.</p>
-      </div></div>`;
-  })()}
-
-  ${cats.length?`<div class="panel"><h2>Gastos por categoria em ${mLabel(MREF)}
-    <small>do que você lançou</small></h2><div class="pbody"><div class="bars">
-    ${cats.map(([c,v])=>`<div class="bar"><span>${esc(c)}</span>
-      <span class="track"><span class="fill" style="width:${v/mxc*100}%"></span></span>
-      <span class="r" style="font-weight:600">${BRL(v)}</span></div>`).join('')}
-  </div></div></div>`:''}
-
-  <div class="panel"><h2>Saldo projetado</h2><div class="pbody">${chartFluxo(12,MREF)}</div></div>`;
+  const comAcum=blocos.map(b=>{corrido+=b.saldo;return {...b,acum:corrido};});
+  const apertados=comAcum.filter(b=>b.acum<0), S=saldoConta(), obs=insightsEssenciais(MREF);
+  const prox=proximoCompromissoDoPainel(MREF,comAcum), passado=MREF<ym(hoje()), semDados=r.n===0;
+  const status=apertados.length?'Atenção no caixa':mes.sal<0?'Fecha negativo':'No controle';
+  const resposta=DUETO_RESPOSTA?`<div class="ess-answer ${esc(DUETO_RESPOSTA.tom||'info')}"><div><span>${esc(DUETO_RESPOSTA.rotulo||'Resposta')}</span><b>${esc(DUETO_RESPOSTA.titulo)}</b>${DUETO_RESPOSTA.detalhe?`<p>${esc(DUETO_RESPOSTA.detalhe)}</p>`:''}</div>${DUETO_RESPOSTA.valor?`<strong>${esc(DUETO_RESPOSTA.valor)}</strong>`:''}${DUETO_RESPOSTA.dest?`<button class="btn alt sm" onclick="go('${DUETO_RESPOSTA.dest}')">${esc(DUETO_RESPOSTA.acao||'Ver detalhes')}</button>`:''}</div>`:'';
+  const rp=reportsMes(MREF), rv=reservasMes(MREF);
+  return head('Início','O essencial primeiro. As gavetas continuam sendo a régua do mês; o restante aparece quando realmente ajuda.')
+  +(passado&&semDados?`<div class="warn" style="margin-bottom:14px"><b>${mLabel(MREF)} sem lançamentos reais.</b> O que aparece é projeção.</div>`:'')
+  +(passado&&!semDados?`<div class="info" style="margin-bottom:14px">${mLabel(MREF)} já passou · ${r.n} lançamentos registrados.</div>`:'')
+  +`<div class="rowbar ess-topbar"><div class="fld" style="max-width:160px"><label>Mês em foco</label><select onchange="setMes(this.value)">${meses.map(k=>`<option value="${k}" ${k===MREF?'selected':''}>${mLabel(k)}</option>`).join('')}</select></div><div style="flex:1"></div><button class="btn alt" onclick="toggleGastoRapido()">+ Gasto rápido</button><button class="btn" onclick="go('compra')">Simular compra</button><button class="btn alt" onclick="go('lanc')">Lançar</button></div>
+  ${GASTO_RAPIDO_ABERTO?`<div class="panel"><div class="pbody"><div class="form"><div class="fld"><label>Quanto foi</label><input type="number" step="0.01" id="gr_v" placeholder="0,00"></div><div class="fld" style="grid-column:span 2"><label>Com o quê (opcional)</label><input id="gr_n" placeholder="Ex.: mercado, gasolina…"></div><div class="fld"><label>&nbsp;</label><button class="btn" onclick="addGastoRapido()">Salvar</button></div></div></div></div>`:''}
+  <div class="ess-hero"><div class="ess-mainmetric"><span>Saldo hoje</span><strong class="${S.atual!=null&&S.atual<0?'neg':''}">${S.atual==null?'—':BRL(S.atual)}</strong><small>${S.atual==null?'Ainda sem ponto de conferência.':'desde o último saldo conferido'}</small></div><div class="ess-metric"><span>Sobra de ${mLabel(MREF)}</span><b class="${mes.sal<0?'neg':'pos'}">${BRL(mes.sal)}</b><small>${status}</small></div><div class="ess-metric"><span>Próximo compromisso</span><b>${prox?BRL(prox.tOut):'—'}</b><small>${prox?prox.label:'nenhuma saída futura nesta visão'}</small></div></div>
+  <div class="ess-ask panel"><div class="pbody"><div class="ess-asktop"><div><b>O que você quer saber?</b><span>O Dueto só responde quando os seus dados sustentam a resposta.</span></div></div><div class="ess-askrow"><input id="dueto_q" value="${esc(DUETO_PERGUNTA)}" placeholder="Ex.: quanto sobra em dezembro?" onkeydown="if(event.key==='Enter')perguntarDueto()"><button class="btn" onclick="perguntarDueto()">Perguntar</button></div><div class="ess-sug">${['Quanto sobra em dezembro?','Quanto minha mãe deve?','Qual cartão está mais leve?','Tem algo estranho?'].map(x=>`<button onclick="perguntarDueto(${jsArg(x)})">${esc(x)}</button>`).join('')}</div>${resposta}</div></div>
+  <div class="ess-sectionhead"><div><b>Gavetas de ${mLabel(MREF)}</b><span>Mesma lógica de sempre. Nada foi tirado daqui.</span></div><span class="seg"><button class="segb" aria-pressed="${!plano}" onclick="setPainelModo('saldo')">Saldo</button><button class="segb" aria-pressed="${plano}" onclick="setPainelModo('plano')">Planejamento</button></span></div>
+  ${apertados.length?`<div class="warn" style="margin-bottom:10px"><b>Atenção:</b> o acumulado fica negativo em ${apertados.map(b=>b.label.toLowerCase()).join(', ')}.</div>`:''}${renderGavetasPainel(comAcum)}
+  <div class="ess-grid"><div class="panel ess-insights"><h2>O que merece sua atenção <small>só o que passou do limiar de relevância</small></h2><div class="pbody">${obs.length?obs.map(x=>`<div class="ess-insight ${x.t}"><b>${x.h}</b><p>${String(x.p).replace(/<[^>]+>/g,'')}</p></div>`).join(''):'<div class="ess-ok"><b>✓ Nada exige ação agora.</b><span>O Dueto não encontrou um alerta relevante para este mês.</span></div>'}</div></div><div class="panel ess-shortcuts"><h2>Ir direto ao ponto</h2><div class="pbody"><button onclick="go('fatura')"><span>Faturas</span><b>ver composição e banco →</b></button><button onclick="go('terc')"><span>Terceiros</span><b>${BRL(aReceber())} em aberto →</b></button><button onclick="go('extrato')"><span>Extrato</span><b>movimentos e conferência →</b></button><button onclick="go('metas')"><span>Metas</span><b>caixinhas e objetivos →</b></button></div></div></div>
+  <div class="ess-tools"><details class="ess-disclosure"><summary>Conferir saldo com o banco <span>${S.atual==null?'não configurado':BRL(S.atual)}</span></summary><div class="ess-detailbody"><p class="note">Só redefine o ponto de conferência; os lançamentos posteriores continuam sendo somados.</p><div class="form"><div class="fld"><label>Saldo no banco</label><input type="number" step="0.01" id="sc_v" placeholder="${S.atual==null?'0,00':(+S.atual).toFixed(2)}"></div><div class="fld"><label>Data do extrato</label><input type="date" id="sc_d" value="${hoje()}"></div><div class="fld"><label>&nbsp;</label><button class="btn" onclick="conferirSaldo()">Fixar este saldo</button></div></div></div></details>
+  ${(rp.temMovimento||rv.temMovimento)?`<details class="ess-disclosure"><summary>Movimentos especiais do mês <span>${[rp.temMovimento?'Reports':'',rv.temMovimento?'caixinhas':''].filter(Boolean).join(' · ')}</span></summary><div class="ess-detailbody">${rp.temMovimento?`<div class="ess-special"><b>Reports</b><span>${rp.ent?'Entrou '+BRL(rp.ent)+'. ':''}${rp.tot?'Usado '+BRL(rp.tot)+'.':''}</span></div>`:''}${rv.temMovimento?`<div class="ess-special"><b>Reservas / caixinhas</b><span>${rv.ent?'Entrou '+BRL(rv.ent)+'. ':''}${rv.tot?'Movimentado '+BRL(rv.tot)+'.':''}</span></div>`:''}</div></details>`:''}
+  <details class="ess-disclosure"><summary>Cofre e limites dos cartões <span>dados protegidos</span></summary><div class="ess-detailbody">${centralCartoes(MREF)}</div></details><details class="ess-disclosure"><summary>Análises detalhadas <span>sem poluir o Início</span></summary><div class="ess-detailbody ess-links"><button onclick="go('dash')">Dashboard completo</button><button onclick="go('proj')">Projeção</button><button onclick="go('amort')">Amortização</button><button onclick="go('casa')">Projeções Casa</button><button onclick="go('integridade')">Integridade dos dados</button></div></details></div>`;
 }
 
 const CATS=['Salário/Renda','Moradia','Transporte','Combustível','Investimento','Telefonia',
