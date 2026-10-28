@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v109';
+const APP_VER='v109.1';
 
 /* =====================================================================
    ESTADO
@@ -2546,7 +2546,15 @@ window.toggleAssinatura=async(id,ativa)=>{
   if(a.cancelado_em){
     const nova={descricao:a.descricao,valor:+a.valor,cartao:a.cartao||null,dia:a.dia||null,
       projetar:true,observacao:a.observacao||null,ativo_desde:hoje(),cancelado_em:null};
-    if(await inserir('assinaturas',nova)){render();toast(a.descricao+' reativada numa nova vigência');}
+    if(await inserir('assinaturas',nova)){
+      /* Ao reativar uma vigência encerrada, a nova linha é ativa. Se a tela
+         estiver filtrada em "Encerradas", ela sumia imediatamente e parecia
+         que o app só estava somando o valor sem existir assinatura. */
+      filtroDe('assin').tipo='ativa';
+      ASSIN_ABERTO=null;
+      render();
+      toast(a.descricao+' reativada · mostrando assinaturas ativas');
+    }
   }else if(await atualizar('assinaturas',id,{projetar:true})){render();toast(a.descricao+' voltou à projeção');}
 };
 window.mudarAssinatura=async(id,campo,val)=>{
