@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v109.2';
+const APP_VER='v109.3';
 
 /* =====================================================================
    ESTADO
@@ -1771,9 +1771,16 @@ window.setSim=(campo,val,doBotao)=>{
 window.simSet=(campo,val)=>{ SIM[campo]=val; };
 /* trocar o mês em foco */
 window.setMes=v=>{ MREF=v; VISAO=null; render(); };
+let GAVETAS_ABERTAS=new Set();
+window.gavetaToggle=(dia,aberta)=>{
+  const chave=MREF+':'+dia;
+  if(aberta) GAVETAS_ABERTAS.add(chave);
+  else GAVETAS_ABERTAS.delete(chave);
+};
 /* Marcar no painel cria o lançamento; desmarcar apaga. */
 window.marcarItem=async(dia,lado,ix)=>{
-  const b=blocosDoMes(MREF).find(x=>x.dia===dia);
+  GAVETAS_ABERTAS.add(MREF+':'+dia);
+  const b=blocosDoMes(MREF, PAINEL_MODO==='plano').find(x=>x.dia===dia);
   if(!b) return;
   const it=(lado==='in'?b.entradas:b.saidas)[ix];
   if(!it) return;
@@ -1793,7 +1800,11 @@ window.marcarItem=async(dia,lado,ix)=>{
     return;
   }
   if(rel){
-    for(const l of rel.itens) await atualizar('lancamentos', l.id, {status:'Confirmado'});
+    for(const l of rel.itens){
+      const mud={status:'Confirmado'};
+      if(it.tipo==='avulso' && !veioDoPainel(l)) mud.observacao=MARCA_PAINEL;
+      await atualizar('lancamentos', l.id, mud);
+    }
     render(); toast(it.desc+' confirmado · '+BRL(rel.valor));
     return;
   }
@@ -2086,7 +2097,7 @@ function vPainel(){
        Gasto avulso não entra aqui — veja na aba <b>Planejamento</b> ou em <b>Extrato</b>.`}</p>
   <div class="dayflow">
   ${comAcum.map(b=>`
-    <details class="day">
+    <details class="day" ${GAVETAS_ABERTAS.has(MREF+':'+b.dia)?'open':''} ontoggle="gavetaToggle(${b.dia},this.open)">
       <summary>
         <span class="dlabel">${b.label}</span>
         <span class="din">${b.tIn?'+'+BRL(b.tIn):'—'}</span>
@@ -2400,8 +2411,9 @@ window.addLanc=async()=>{
   const n=nInf, v=parseFloat($('l_v').value), cat=$('l_c').value, cart=$('l_cart')?.value||null, tipo=$('l_t').value;
   if(!n||!v) return toast('Preencha descrição e valor');
   if(cat==='Cartão' && !cart) return toast('Escolha o cartão — senão isso não abate a fatura de ninguém', 4400);
+  const statusLanc=d>hoje()?'Projetado':'Confirmado';
   const ok=await inserir('lancamentos',{data:d,descricao:n,categoria:cat,cartao:cart,
-    tipo,quem:$('l_q').value,valor:v,status:'Confirmado',criado_por:USER.id,
+    tipo,quem:$('l_q').value,valor:v,status:statusLanc,criado_por:USER.id,
     na_gaveta: !cart && !!$('l_gav')?.checked});
   if(ok){
     MREF=ym(d);render();
