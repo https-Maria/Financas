@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v109.1';
+const APP_VER='v109.2';
 
 /* =====================================================================
    ESTADO
@@ -2366,7 +2366,11 @@ function vLanc(){
     ${l.cartao||l.beneficio||l.protegido?'':`<button class="chip ${l.na_gaveta?'on':''}"
       title="Contar no Planejamento do Painel"
       onclick="setRow('lancamentos','${l.id}','na_gaveta',${!l.na_gaveta})">planej.</button>`}</td>
-    <td>${esc(l.categoria)}</td><td>${esc(l.quem)}</td>
+    <td><select aria-label="Categoria de ${esc(l.descricao)}"
+      style="min-width:135px;padding:4px 7px;font-size:12px"
+      onchange="setCategoriaLanc('${l.id}',this.value)">
+      ${[...new Set([l.categoria,...CATS])].map(c=>`<option value="${esc(c)}" ${c===l.categoria?'selected':''}>${esc(c)}</option>`).join('')}
+    </select></td><td>${esc(l.quem)}</td>
     <td class="r" style="font-weight:600;color:${l.tipo==='Entrada'?'var(--pos)':'var(--neg)'}">
       ${l.tipo==='Entrada'?'+':'−'} ${BRL(l.valor)}</td>
     <td class="r"><button class="btn dgr" onclick="delRow('lancamentos','${l.id}')">excluir</button></td></tr>`).join('')
@@ -2409,6 +2413,14 @@ window.addLanc=async()=>{
       ? n+' lançado para '+d.split('-').reverse().join('/')+' · '+(tipo==='Entrada'?'entra no':'sai do')+' saldo nesse dia'
       : n+' lançado · '+(tipo==='Entrada'?'entrou no':'saiu do')+' saldo da conta';
     toast(msg);
+  }
+};
+window.setCategoriaLanc=async(id,categoria)=>{
+  const l=D.lancamentos.find(x=>x.id===id);
+  if(!l || l.categoria===categoria) return;
+  if(await atualizar('lancamentos',id,{categoria})){
+    render();
+    toast('Categoria alterada para '+categoria);
   }
 };
 window.delRow=async(t,id)=>{if(await remover(t,id)){render();toast('Excluído');}};
