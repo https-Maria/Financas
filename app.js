@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v109.3';
+const APP_VER='v109.4';
 
 /* =====================================================================
    ESTADO
@@ -1425,8 +1425,10 @@ function reservasMes(k){
 }
 
 function realizado(k){
-  const ls=D.lancamentos.filter(l=>mesDeCaixa(l)===k);
-  const orc=l=>!l.protegido&&!l.beneficio&&l.categoria!=='Transferência interna';
+  /* Realizado é só o que de fato aconteceu. Projetado não pode contaminar mês fechado.
+     Reembolso/principal de terceiros mexe no banco, mas não é renda nem gasto do casal. */
+  const ls=D.lancamentos.filter(l=>mesDeCaixa(l)===k && l.status!=='Projetado');
+  const orc=l=>!l.protegido&&!l.beneficio&&l.categoria!=='Transferência interna'&&l.categoria!=='Terceiros';
   const ent=ls.filter(l=>l.tipo==='Entrada'&&orc(l)).reduce((s,l)=>s+ +l.valor,0);
   const sai=ls.filter(l=>l.tipo==='Saída'&&orc(l)).reduce((s,l)=>s+ +l.valor,0);
   const va =ls.filter(l=>l.beneficio).reduce((s,l)=>s+ +l.valor,0);
