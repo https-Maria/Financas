@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v109.8';
+const APP_VER='v109.9';
 
 /* =====================================================================
    ESTADO
@@ -2307,7 +2307,7 @@ function aplicaFiltro(tela, lista, campoBusca, campoTipo, campoCat){
 }
 
 let LANC_NAT='normal';
-let LANC_TERC_FORM={p:'Mãe',d:'',v:'',cartao:'',comp:''};
+let LANC_TERC_FORM={p:'Mãe',d:'',v:'',cartao:'',comp:'',n:'1'};
 window.setLancNat=v=>{ LANC_NAT=v; render(); };
 window.lancTercSet=(campo,val,redesenha)=>{
   LANC_TERC_FORM[campo]=val;
@@ -2339,6 +2339,7 @@ function vLanc(){
     const ehCartao=!!cartao;
     const comps=mesesDisponiveis();
     const compAtual=LANC_TERC_FORM.comp || mLabel(MREF);
+    const vezes=Math.max(1,+(LANC_TERC_FORM.n||1));
     return `
       <div class="fld"><label>Data</label><input type="date" id="lt_d" value="${MREF}-01"></div>
       <div class="fld" style="grid-column:span 2"><label>Descrição</label>
@@ -2347,7 +2348,7 @@ function vLanc(){
       <div class="fld"><label>Pessoa</label>
         <input id="lt_p" value="${esc(LANC_TERC_FORM.p||'Mãe')}" placeholder="Ex.: Mãe"
           oninput="lancTercSet('p',this.value)"></div>
-      <div class="fld"><label>Valor</label>
+      <div class="fld"><label>${ehCartao&&vezes>1?'Valor de cada parcela':'Valor'}</label>
         <input type="number" step="0.01" id="lt_v" value="${esc(LANC_TERC_FORM.v||'')}" placeholder="0,00"
           oninput="lancTercSet('v',this.value)"></div>
       <div class="fld"><label>Pago com</label><select id="lt_cart"
@@ -2355,10 +2356,15 @@ function vLanc(){
         <option value="" ${!cartao?'selected':''}>À vista (débito, Pix, dinheiro)</option>
         ${cartoesAtivos.map(c=>`<option value="${esc(c.nome)}" ${cartao===c.nome?'selected':''}>${esc(c.nome)}</option>`).join('')}
       </select></div>
-      ${ehCartao?`<div class="fld"><label>Em qual fatura</label><select id="lt_comp"
+      ${ehCartao?`
+        <div class="fld"><label>Em quantas vezes</label><select id="lt_parc"
+          onchange="lancTercSet('n',this.value,true)">
+          ${Array.from({length:24},(_,i)=>i+1).map(n=>`<option value="${n}" ${n===vezes?'selected':''}>${n===1?'à vista':n+'x'}</option>`).join('')}
+        </select></div>
+        <div class="fld"><label>${vezes>1?'Fatura da 1ª parcela':'Em qual fatura'}</label><select id="lt_comp"
           onchange="lancTercSet('comp',this.value)">
         ${comps.map(k=>{const ml=mLabel(k);return `<option value="${ml}" ${ml===compAtual?'selected':''}>${ml}</option>`;}).join('')}
-      </select></div>`:''}
+        </select></div>`:''}
       <div class="fld"><label>&nbsp;</label><button class="btn" onclick="addLancTerc()">Adicionar</button></div>
     `;
   })();
@@ -2451,16 +2457,32 @@ window.addLancTerc=async()=>{
   const cartao=$('lt_cart')?.value||null;
   if(!data||!pessoa||!descricao||!valor) return toast('Preencha data, pessoa, descrição e valor');
 
-  const competencia=cartao ? ($('lt_comp')?.value || mLabel(MREF)) : null;
-  const terc=await inserir('terceiros',{
-    pessoa,descricao,valor,recebido:false,
-    origem:cartao||'À vista',
-    cartao,
-    competencia,
-    data_saida:cartao?null:data,
-    previsao:null
-  });
-  if(!terc) return;
+  const vezes=cartao ? Math.max(1,+(LANC_TERC_FORM.n||1)) : 1;
+  const comp1=cartao ? ($('lt_comp')?.value || mLabel(MREF)) : null;
+  const avanca=(comp,i)=>{
+    const [mm,aa]=comp.split('/').map(Number);
+    const t=mm-1+i;
+    return String(t%12+1).padStart(2,'0')+'/'+(aa+Math.floor(t/12));
+  };
+
+  const gravados=[];
+  for(let i=0;i<vezes;i++){
+    const terc=await inserir('terceiros',{
+      pessoa,
+      descricao:vezes>1 ? `Parcela ${i+1}/${vezes} — ${descricao}` : descricao,
+      valor,recebido:false,
+      origem:cartao||'À vista',
+      cartao,
+      competencia:cartao?avanca(comp1,i):null,
+      data_saida:cartao?null:data,
+      previsao:null
+    });
+    if(!terc){
+      for(const x of gravados) await remover('terceiros',x.id);
+      return toast('Não consegui registrar todas as parcelas; o lançamento foi desfeito',4200);
+    }
+    gravados.push(terc);
+  }
 
   if(!cartao){
     const mov=await inserir('lancamentos',{
@@ -2471,16 +2493,18 @@ window.addLancTerc=async()=>{
       observacao:'Gasto de terceiro lançado pela tela Lançamentos; fica a receber de '+pessoa+'.'
     });
     if(!mov){
-      await remover('terceiros',terc.id);
+      for(const x of gravados) await remover('terceiros',x.id);
       return toast('Não consegui registrar o movimento; o valor a receber foi desfeito',4200);
     }
   }
 
-  LANC_TERC_FORM={p:pessoa,d:'',v:'',cartao:'',comp:''};
+  LANC_TERC_FORM={p:pessoa,d:'',v:'',cartao:'',comp:'',n:'1'};
   MREF=ym(data);
   render();
   toast(cartao
-    ? pessoa+' deve '+BRL(valor)+' · entra no total da fatura do '+cartao+', mas não na parte do casal'
+    ? (vezes>1
+      ? pessoa+' deve '+vezes+'x de '+BRL(valor)+' · total '+BRL(valor*vezes)+' no '+cartao
+      : pessoa+' deve '+BRL(valor)+' · entra no total da fatura do '+cartao+', mas não na parte do casal')
     : pessoa+' deve '+BRL(valor)+' · saiu da conta e ficou a receber');
 };
 
@@ -6198,7 +6222,7 @@ if('serviceWorker' in navigator)
         recarregou=true;
         window.location.reload();
       });
-      const reg=await navigator.serviceWorker.register('./sw.js?v=109.8',{updateViaCache:'none'});
+      const reg=await navigator.serviceWorker.register('./sw.js?v=109.9',{updateViaCache:'none'});
       await reg.update();
     }catch(e){}
   });
