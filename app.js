@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v112.0';
+const APP_VER='v112.1';
 
 /* =====================================================================
    ESTADO
@@ -5742,9 +5742,22 @@ window.notaSalvarBloco=async()=>{
     criado_por:USER?.id||null
   });
   if(!n) return;
-  NOTA_OBS=''; NOTA_TITULO='';
+
+  /* Salvar fecha o rascunho atual: a nota salva vira o registro definitivo
+     e o bloco volta vazio para evitar salvar a mesma coisa duas vezes. */
+  if(!DEMO_MODE){
+    const {error}=await sb.from('notas').delete().eq('grupo_id',GRUPO);
+    if(error){
+      return toast('A nota foi salva, mas não consegui limpar o rascunho: '+error.message,5200);
+    }
+  }
+
+  Object.values(NOTA_TIMER).forEach(clearTimeout);
+  NOTA_PEND={}; NOTA_TIMER={}; D.notas=[];
+  NOTA_OBS=''; NOTA_TITULO=''; NOTA_CALC='';
+  cacheSave();
   render();
-  toast('Nota salva · '+BRL(n.total));
+  toast('Nota salva · '+BRL(n.total)+' · bloco limpo');
 };
 
 function notaSalvaLinhas(n){
