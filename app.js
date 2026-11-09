@@ -5817,7 +5817,7 @@ window.notaSalvarBloco=async()=>{
   const ids=Object.keys(NOTA_PEND);
   for(const id of ids) await notaSalvar(id);
   const ls=notaLinhas();
-  if(!ls.length) return toast('Adicione pelo menos uma linha antes de salvar');
+  if(!ls.length && !NOTA_OBS.trim() && !NOTA_TITULO.trim()) return toast('Escreva uma nota, título ou adicione uma linha');
   const agora=new Date();
   const titulo=NOTA_TITULO.trim() || ('Nota de '+agora.toLocaleDateString('pt-BR'));
   const linhas=ls.map(n=>({
@@ -5830,6 +5830,10 @@ window.notaSalvarBloco=async()=>{
   const n=await inserir('notas_salvas',{
     titulo,
     observacao:NOTA_OBS.trim()||null,
+    pasta:NOTA_PASTA.trim().slice(0,80)||'Geral',
+    etiquetas:notaTagsParse(NOTA_ETIQUETAS),
+    fonte:['padrao','manuscrita','mono'].includes(NOTA_FONTE)?NOTA_FONTE:'padrao',
+    fixada:false,
     linhas,
     total:notaTotal(),
     criado_por:USER?.id||null
@@ -5848,6 +5852,7 @@ window.notaSalvarBloco=async()=>{
   Object.values(NOTA_TIMER).forEach(clearTimeout);
   NOTA_PEND={}; NOTA_TIMER={}; D.notas=[];
   NOTA_OBS=''; NOTA_TITULO=''; NOTA_CALC='';
+  NOTA_PASTA='Geral'; NOTA_ETIQUETAS=''; NOTA_FONTE='padrao';
   cacheSave();
   render();
   toast('Nota salva · '+BRL(n.total)+' · bloco limpo');
@@ -5873,7 +5878,12 @@ async function notaSalvaAtualizar(id,linhas,extra={}){
 }
 window.notaSalvaCampo=async(id,campo,val)=>{
   const n=D.notas_salvas.find(x=>x.id===id); if(!n)return;
-  const patch={[campo]:val.trim?val.trim():val,atualizado_em:new Date().toISOString()};
+  if(!['titulo','observacao','pasta','etiquetas','fonte'].includes(campo)) return;
+  const seguro = campo==='etiquetas' ? notaTagsParse(val)
+    : campo==='fonte' ? (['padrao','manuscrita','mono'].includes(val)?val:'padrao')
+    : campo==='pasta' ? String(val||'').trim().slice(0,80)||'Geral'
+    : String(val||'').trim();
+  const patch={[campo]:seguro,atualizado_em:new Date().toISOString()};
   if(await atualizar('notas_salvas',id,patch)) render();
 };
 window.notaSalvaLinhaCampo=async(id,i,campo,val)=>{
@@ -5904,8 +5914,17 @@ window.notaSalvaExcluirLinha=async(id,i)=>{
 };
 
 window.notaExcluirSalva=async id=>{
-  if(!confirm('Excluir esta nota salva? A lista atual não será alterada.')) return;
-  if(await remover('notas_salvas',id)){ render(); toast('Nota salva excluída'); }
+  if(!confirm('Excluir esta nota e seus anexos? Esta ação vale para as duas pessoas.')) return;
+  if(DEMO_MODE) return toast('Modo demo: nenhuma alteração é salva.');
+  const anexos=(D.notas_anexos||[]).filter(a=>a.nota_id===id);
+  if(anexos.length){
+    const {error}=await sb.storage.from('dueto-notas').remove(anexos.map(x=>x.caminho));
+    if(error) return toast('Não excluí a nota porque não consegui retirar os anexos: '+error.message,5000);
+  }
+  if(await remover('notas_salvas',id)){
+    D.notas_anexos=D.notas_anexos.filter(x=>x.nota_id!==id);
+    render();toast('Nota e anexos excluídos');
+  }
 };
 
 window.notaDigitar=(id,campo,val)=>{
