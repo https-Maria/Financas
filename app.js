@@ -6758,7 +6758,7 @@ if('serviceWorker' in navigator)
         recarregou=true;
         window.location.reload();
       });
-      const reg=await navigator.serviceWorker.register('./sw.js?v=113.0',{updateViaCache:'none'});
+      const reg=await navigator.serviceWorker.register('./sw.js?v=114.0',{updateViaCache:'none'});
       await reg.update();
     }catch(e){}
   });
