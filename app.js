@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v109.5';
+const APP_VER='v109.6';
 
 /* =====================================================================
    ESTADO
@@ -2255,7 +2255,6 @@ function vPainel(){
 
 const CATS=['Salário/Renda','Moradia','Transporte','Combustível','Investimento','Telefonia',
   'Saúde','Compras','Cartão','Assinaturas','Alimentação','Lazer','Reserva','Reports','Transferência interna','Outros'];
-const FORMAS_PAGAMENTO=['Pix','Débito','Cartão de crédito','Dinheiro','Boleto','Transferência','Débito automático','Desconto em folha','Outro'];
 
 /* =====================================================================
    FILTRO UNIVERSAL — o mesmo padrão em toda tabela do app.
@@ -2323,11 +2322,8 @@ function vLanc(){
     <div class="fld"><label>Tipo</label><select id="l_t" onchange="lancCampos()"><option>Saída</option><option>Entrada</option></select></div>
     <div class="fld"><label>Quem</label><select id="l_q">${['Casal','Maria','Jéssica'].map(q=>`<option>${q}</option>`).join('')}</select></div>
     <div class="fld"><label>Valor</label><input type="number" step="0.01" id="l_v" placeholder="0,00"></div>
-    <div class="fld"><label>Forma de pagamento</label><select id="l_f">
-      <option value="">Não informado</option>
-      ${FORMAS_PAGAMENTO.map(f=>`<option>${esc(f)}</option>`).join('')}</select></div>
     <div class="fld"><label id="l_cart_lbl">Pago com${$('l_c')&&$('l_c').value==='Cartão'?' *':''}</label><select id="l_cart">
-      <option value="">Sem cartão</option>
+      <option value="">À vista (débito, Pix, dinheiro)</option>
       ${cartoesAtivos.map(c=>`<option>${esc(c.nome)}</option>`).join('')}</select></div>
     <div class="fld" style="grid-column:span 2"><label>&nbsp;</label>
       <label class="chkfld"><input type="checkbox" id="l_gav" checked>
@@ -2373,10 +2369,9 @@ function vLanc(){
       tipos:[['Entrada','Entradas'],['Saída','Saídas']], categorias:cats})}
   </div>
   <div class="tw"><table><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th>
-    <th>Pagamento</th><th>Quem</th><th class="r">Valor</th>
+    <th>Pago com</th><th>Quem</th><th class="r">Valor</th>
     <th></th></tr></thead><tbody>
-  ${ls.map(l=>{ const formaAtual=l.forma || (l.cartao&&l.categoria!=='Cartão'?'Cartão de crédito':'');
-    return `<tr class="${l.protegido||l.beneficio?'dim':''}">
+  ${ls.map(l=>`<tr class="${l.protegido||l.beneficio?'dim':''}">
     <td class="mono">${String(l.data).split('-').reverse().join('/')}</td>
     <td>${esc(l.descricao)}${l.protegido?' <span class="tag t-g">protegido</span>':''}${l.beneficio?' <span class="tag t-g">benefício</span>':''}${
       mesDeCaixa(l)!==ym(l.data)?` <span class="tag t-w">sai do caixa em ${mLabel(mesDeCaixa(l))}</span>`:''}
@@ -2389,15 +2384,15 @@ function vLanc(){
       onchange="setCategoriaLanc('${l.id}',this.value)">
       ${[...new Set([l.categoria,...CATS])].map(c=>`<option value="${esc(c)}" ${c===l.categoria?'selected':''}>${esc(c)}</option>`).join('')}
     </select></td>
-    <td><select aria-label="Forma de pagamento de ${esc(l.descricao)}"
-      style="min-width:135px;padding:4px 7px;font-size:12px"
-      onchange="setFormaLanc('${l.id}',this.value)">
-      <option value="" ${!formaAtual?'selected':''}>Não informado</option>
-      ${[...new Set([formaAtual,...FORMAS_PAGAMENTO].filter(Boolean))].map(f=>`<option value="${esc(f)}" ${f===formaAtual?'selected':''}>${esc(f)}</option>`).join('')}
+    <td><select aria-label="Pago com de ${esc(l.descricao)}"
+      style="min-width:175px;padding:4px 7px;font-size:12px"
+      onchange="setPagoComLanc('${l.id}',this.value)">
+      <option value="" ${!l.cartao?'selected':''}>À vista (débito, Pix, dinheiro)</option>
+      ${[...new Set([l.cartao,...cartoesAtivos.map(c=>c.nome)].filter(Boolean))].map(c=>`<option value="${esc(c)}" ${c===l.cartao?'selected':''}>${esc(c)}</option>`).join('')}
     </select></td><td>${esc(l.quem)}</td>
     <td class="r" style="font-weight:600;color:${l.tipo==='Entrada'?'var(--pos)':'var(--neg)'}">
       ${l.tipo==='Entrada'?'+':'−'} ${BRL(l.valor)}</td>
-    <td class="r"><button class="btn dgr" onclick="delRow('lancamentos','${l.id}')">excluir</button></td></tr>`;}).join('')
+    <td class="r"><button class="btn dgr" onclick="delRow('lancamentos','${l.id}')">excluir</button></td></tr>`).join('')
     ||`<tr><td colspan="7" class="note" style="padding:20px;text-align:center">${
       doMes.length?'Nenhum lançamento bate com o filtro.':'Nenhum lançamento neste mês.'}</td></tr>`}
   </tbody></table></div></div>`;
@@ -2422,11 +2417,11 @@ window.addLanc=async()=>{
   }
 
   const n=nInf, v=parseFloat($('l_v').value), cat=$('l_c').value, cart=$('l_cart')?.value||null,
-    tipo=$('l_t').value, forma=$('l_f')?.value||null;
+    tipo=$('l_t').value;
   if(!n||!v) return toast('Preencha descrição e valor');
   if(cat==='Cartão' && !cart) return toast('Escolha o cartão — senão isso não abate a fatura de ninguém', 4400);
   const statusLanc=d>hoje()?'Projetado':'Confirmado';
-  const ok=await inserir('lancamentos',{data:d,descricao:n,categoria:cat,cartao:cart,forma,
+  const ok=await inserir('lancamentos',{data:d,descricao:n,categoria:cat,cartao:cart,
     tipo,quem:$('l_q').value,valor:v,status:statusLanc,criado_por:USER.id,
     na_gaveta: !cart && !!$('l_gav')?.checked});
   if(ok){
@@ -2449,13 +2444,21 @@ window.setCategoriaLanc=async(id,categoria)=>{
     toast('Categoria alterada para '+categoria);
   }
 };
-window.setFormaLanc=async(id,forma)=>{
+window.setPagoComLanc=async(id,cartao)=>{
   const l=D.lancamentos.find(x=>x.id===id);
-  const nova=forma||null;
-  if(!l || (l.forma||null)===nova) return;
-  if(await atualizar('lancamentos',id,{forma:nova})){
+  const novo=cartao||null;
+  if(!l || (l.cartao||null)===novo) return;
+  if(l.categoria==='Cartão' && !novo){
     render();
-    toast('Forma de pagamento '+(nova?'alterada para '+nova:'removida'));
+    return toast('Lançamento de fatura precisa continuar ligado a um cartão');
+  }
+  const patch={cartao:novo};
+  /* Ao trocar o cartão manualmente, a competência explícita antiga pode pertencer
+     ao ciclo do cartão anterior. Deixa o Dueto recalcular pelo cartão/data escolhidos. */
+  if((l.cartao||null)!==novo) patch.competencia_fatura=null;
+  if(await atualizar('lancamentos',id,patch)){
+    render();
+    toast(novo?'Pago com alterado para '+novo:'Alterado para pagamento à vista');
   }
 };
 window.delRow=async(t,id)=>{if(await remover(t,id)){render();toast('Excluído');}};
