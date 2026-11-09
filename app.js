@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v109.6';
+const APP_VER='v109.7';
 
 /* =====================================================================
    ESTADO
@@ -6110,7 +6110,18 @@ async function iniciar(){
 }
 
 if('serviceWorker' in navigator)
-  window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
+  window.addEventListener('load',async()=>{
+    try{
+      let recarregou=false;
+      navigator.serviceWorker.addEventListener('controllerchange',()=>{
+        if(recarregou) return;
+        recarregou=true;
+        window.location.reload();
+      });
+      const reg=await navigator.serviceWorker.register('./sw.js?v=109.7',{updateViaCache:'none'});
+      await reg.update();
+    }catch(e){}
+  });
 
 sb.auth.onAuthStateChange((ev)=>{ if(ev==='SIGNED_OUT'){USER=null;GRUPO=null;telaLogin();} });
 iniciar();
