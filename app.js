@@ -6005,7 +6005,7 @@ function integridadeItens(){
 
   D.cartoes.filter(c=>c.ativo).forEach(c=>{
     const falt=[];
-    if(!c.dia_fecha)falt.push('fechamento');
+    if(!c.dia_fecha && !D.ciclos.some(x=>x.cartao===c.nome))falt.push('fechamento');
     if(!c.dia_venc)falt.push('vencimento');
     if(c.limite==null)falt.push('limite');
     if(!c.final4)falt.push('final 4');
@@ -6047,7 +6047,34 @@ function integridadeItens(){
   D.parcelamentos.forEach(p=>{
     if(+p.restantes<0 || (+p.total_parcelas>0 && +p.restantes>+p.total_parcelas))
       add('crit','Parcelamento com quantidade inválida',p.descricao+' está com '+p.restantes+' restantes de '+p.total_parcelas+'.','parc');
+    if(Array.isArray(p.competencias) && p.competencias.length){
+      const lista=p.competencias;
+      if(lista.length!==+p.restantes)
+        add('warn','Competências não conferem com parcelas restantes',
+          p.descricao+': '+lista.length+' competência(s) para '+p.restantes+' parcela(s).','parc');
+      if(new Set(lista).size!==lista.length || lista.some(m=>!/^\\d{4}-(0[1-9]|1[0-2])$/.test(m)))
+        add('crit','Lista de competências inválida',p.descricao+' tem mês duplicado ou inválido.','parc');
+    }
   });
+
+  const semFoto=D.ciclos.filter(c=>!c.inferido && c.fecha && c.fecha<h &&
+    D.cartoes.some(x=>x.nome===c.cartao) && !faturaFechada(c.cartao,c.competencia));
+  if(semFoto.length) add('warn',semFoto.length+' fatura(s) fechada(s) sem fotografia histórica',
+    'Ciclos passados sem snapshot. O Dueto não vai inventar valores ou congelar automaticamente.','fatura');
+
+  const categoriasRendaSaida=D.lancamentos.filter(l=>l.tipo==='Saída' && l.categoria==='Salário/Renda');
+  if(categoriasRendaSaida.length) add('warn',categoriasRendaSaida.length+' saída(s) classificadas como salário/renda',
+    'Revise a categoria dos lançamentos. Nenhuma reclassificação foi automática.','lanc');
+
+  const confereBanco=D.cartoes.filter(c=>c.responsavel_fatura_atual==='Banco conferido');
+  if(confereBanco.length) add('info','Campo de responsável contém status antigo',
+    'O status bancário não será mais gravado no campo de responsável. Revise os cadastros legados.','cad');
+
+  const transf=D.lancamentos.filter(l=>l.categoria==='Transferência interna' && l.status==='Confirmado');
+  const saldoTransf=transf.reduce((s,l)=>s+(l.tipo==='Entrada'?+l.valor:-l.valor),0);
+  if(transf.length && Math.abs(saldoTransf)>0.01)
+    add('info','Transferências internas sem pareamento verificável',
+      'Saldo líquido dos lançamentos: '+BRL(saldoTransf)+'. Sem contas de origem/destino vinculadas, não é seguro compensar automaticamente.','lanc');
 
   const encerradas=D.rendas.filter(r=>r.ativo && r.encerra_em && ym(r.encerra_em)<=atual);
   if(encerradas.length) add('info',encerradas.length+' renda(s) encerrada(s) ainda marcada(s) ativa(s)',
