@@ -6522,10 +6522,15 @@ function render(){
      (até a própria gravação volta como aviso). Sem isto o cursor sairia do
      campo a cada salvamento. Só nesta aba: as outras seguem como sempre. */
   const ae=document.activeElement;
+  const notasAbertas=CUR==='notas'?[...m.querySelectorAll('details.nt-salva[open]')]
+    .map(el=>el.getAttribute('data-nota-id')).filter(Boolean):[];
   const foco = CUR==='notas' && ae && ae.id && m.contains(ae)
     ? {id:ae.id, a:ae.selectionStart, b:ae.selectionEnd} : null;
   m.innerHTML=(DEMO_MODE?'<div class="demo-banner"><b>DEMO</b> Dados totalmente fictícios · nada aqui é salvo no Supabase <button onclick="toggleDemo()">Sair do modo demo</button></div>':'')+(VIEWS[CUR]||vPainel)();
   if(CUR==='notas'){
+    [...m.querySelectorAll('details.nt-salva')].forEach(el=>{
+      if(notasAbertas.includes(el.getAttribute('data-nota-id')))el.open=true;
+    });
     if(foco && !NOTA_FOCO){ const el=$(foco.id);
       if(el){ el.focus({preventScroll:true}); try{ el.setSelectionRange(foco.a,foco.b); }catch(e){} } }
     notaDepois();
