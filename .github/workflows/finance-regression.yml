@@ -1,0 +1,20 @@
+name: Dueto - regressões financeiras
+on:
+  push:
+    branches: [main, 'refactor/**']
+  pull_request:
+    branches: [main]
+jobs:
+  financeiro:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Sintaxe do aplicativo
+        run: node --check app.js
+      - name: Sintaxe do motor financeiro
+        run: node --check finance-core.mjs
+      - name: Testes de regressão
+        run: node --test tests/finance-core.test.mjs
