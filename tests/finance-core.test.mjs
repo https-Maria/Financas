@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   mesesDaParcela, parcelaCaiEm, parcelasMes, lancamentoPertenceAoCiclo,
-  mesDeCaixa, categoriaNeutra, movimentoOrcamentario, repartirFatura
+  mesDeCaixa, categoriaNeutra, movimentoOrcamentario, repartirFatura, totalComposicaoFatura
 } from '../finance-core.mjs';
 
 test('parcelamento respeita competências reais, inclusive mês pulado', () => {
@@ -68,4 +68,12 @@ test('inconsistência entre total e divisão bloqueia fotografia incorreta', () 
 });
 test('valor forçado pelo painel não pode divergir do banco', () => {
   assert.match(repartirFatura({banco:100,terceiros:20,forcado:90}).erro,/incompatível/);
+});
+
+test('fotografia reconcilia parcelas, assinaturas, estornos e terceiros', () => {
+  const comp={parcelas:[{valor_parcela:492.14}],assinaturas:[{valor:72.9,vz:2}],
+    avulsos:[],reports:[],terceiros:[{valor:180.80}],
+    ajustes:[{valor:126.61,tipo:'Entrada'}]};
+  assert.equal(totalComposicaoFatura(comp),692.13);
+  assert.equal(Math.round((722.02-totalComposicaoFatura(comp))*100)/100,29.89);
 });
