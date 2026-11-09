@@ -5812,6 +5812,89 @@ function notaDepois(){
 window.notaObs=v=>{ NOTA_OBS=v; };
 window.notaTitulo=v=>{ NOTA_TITULO=v; };
 
+window.notaMetaRascunho=(campo,val)=>{
+  if(campo==='pasta') NOTA_PASTA=val;
+  if(campo==='etiquetas') NOTA_ETIQUETAS=val;
+  if(campo==='fonte') NOTA_FONTE=val;
+};
+window.notasSetBusca=v=>{NOTA_BUSCA=v;render();};
+window.notasFiltrarPasta=v=>{NOTA_PASTA_FILTRO=v;render();};
+
+window.notaAtualizarPrevia=id=>{
+  const caixa=$(id),prev=$('nt_prev_'+id); if(!caixa||!prev) return;
+  const saved=id.startsWith('nt_sobs_')?D.notas_salvas.find(n=>n.id===id.slice(8)):null;
+  const fonte=saved?.fonte||NOTA_FONTE;
+  prev.innerHTML='<small>Prévia formatada</small>'+notaRenderRich(caixa.value,fonte);
+};
+window.notaFormatar=(id,acao)=>{
+  const el=$(id);if(!el) return;
+  const r=notaFormatarTexto(el.value,el.selectionStart,el.selectionEnd,acao);
+  el.value=r.texto;el.focus();el.setSelectionRange(r.inicio,r.fim);
+  el.dispatchEvent(new Event('input',{bubbles:true}));
+  if(id.startsWith('nt_sobs_')) window.notaSalvaCampo(id.slice(8),'observacao',el.value);
+};
+window.notaFixar=async id=>{
+  const n=D.notas_salvas.find(x=>x.id===id);if(!n)return;
+  if(await atualizar('notas_salvas',id,{fixada:!n.fixada,
+    atualizado_em:new Date().toISOString()}))render();
+};
+window.notaAnexar=async(id,fileList)=>{
+  if(DEMO_MODE)return toast('Modo demo: não é possível enviar arquivos fictícios.');
+  if(FALTANDO.includes('notas_anexos'))return toast('É necessário atualizar o banco para anexar arquivos.');
+  if(!D.notas_salvas.some(n=>n.id===id)||!GRUPO)return;
+  const arquivos=Array.from(fileList||[]).slice(0,10);
+  const status=$('nt_upload_'+id);
+  let enviados=0;
+  for(const file of arquivos){
+    if(!notaArquivoAceito(file)){
+      toast('Use JPG, PNG, WebP ou PDF com até 10 MB: '+file.name,4500);
+      continue;
+    }
+    if(status)status.textContent='Enviando '+file.name+'…';
+    const ext=notaExtensao(file.type);
+    const path=GRUPO+'/'+id+'/'+crypto.randomUUID()+'.'+ext;
+    try{
+      const {error}=await sb.storage.from('dueto-notas').upload(path,file,{
+        cacheControl:'3600',upsert:false,contentType:file.type
+      });
+      if(error){toast('Falha no envio: '+error.message,5000);continue;}
+      const anotado=await inserir('notas_anexos',{
+        nota_id:id,caminho:path,nome:String(file.name).slice(0,250),
+        mime:file.type,tamanho:file.size,criado_por:USER?.id||null
+      });
+      if(!anotado){
+        await sb.storage.from('dueto-notas').remove([path]);
+        continue;
+      }
+      enviados++;
+    }catch(e){toast('Falha no anexo: '+(e.message||e),5000);}
+  }
+  if(enviados){render();toast(enviados+' arquivo(s) anexado(s) com segurança');}
+  else if(status)status.textContent='Nenhum arquivo enviado.';
+};
+window.notaAbrirAnexo=async id=>{
+  const anexo=(D.notas_anexos||[]).find(x=>x.id===id);
+  if(!anexo)return;
+  if(DEMO_MODE)return toast('Modo demo: arquivo fictício.');
+  const {data,error}=await sb.storage.from('dueto-notas').download(anexo.caminho);
+  if(error||!data)return toast('Não consegui baixar: '+(error?.message||'arquivo indisponível'),5000);
+  const url=URL.createObjectURL(data);
+  const a=document.createElement('a');a.href=url;
+  a.download=anexo.nome;a.style.display='none';
+  document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),15000);
+};
+window.notaRemoverAnexo=async id=>{
+  const anexo=(D.notas_anexos||[]).find(x=>x.id===id);
+  if(!anexo)return;
+  if(DEMO_MODE)return toast('Modo demo: nada é excluído.');
+  if(!confirm('Excluir o anexo "'+anexo.nome+'"?'))return;
+  const {error}=await sb.storage.from('dueto-notas').remove([anexo.caminho]);
+  if(error)return toast('Falha ao excluir arquivo: '+error.message,5000);
+  if(await remover('notas_anexos',anexo.id)){render();toast('Anexo excluído');}
+};
+
+
 window.notaSalvarBloco=async()=>{
   if(FALTANDO.includes('notas_salvas')) return toast('Falta a tabela de notas salvas');
   const ids=Object.keys(NOTA_PEND);
