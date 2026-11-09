@@ -11,10 +11,14 @@ import { readFileSync } from 'node:fs';
 const app = readFileSync(new URL('../app.js', import.meta.url), 'utf8')
   .replace(/^import \{ createClient \} from [^\n]+\n/, '')
   .replace(/^import \{[\s\S]+?\} from '\.\/finance-core\.mjs\?v=113\.0';\n/, '')
+  .replace(/^import \{[\s\S]+?\} from '\.\/notas-editor\.mjs\?v=114\.0';\n/, '')
   .replace(/\niniciar\(\);\s*$/, '\n');
 
 let core = readFileSync(new URL('../finance-core.mjs', import.meta.url), 'utf8')
   .replaceAll('export function', 'function');
+
+const notas = readFileSync(new URL('../notas-editor.mjs', import.meta.url), 'utf8')
+  .replaceAll('export function','function').replaceAll('export const','const');
 
 const names = [
   'mesesDaParcela', 'parcelaCaiEm', 'parcelasMes',
@@ -64,7 +68,7 @@ test('todas as 19 views renderizam em quatro competências com dados fictícios'
   assert.doesNotMatch(app, /^import /m, 'Imports do browser precisam ser isolados no teste');
   const runner = new Function(
     'window','navigator','localStorage','document','createClient','titles',
-    core + '\n' + aliases + '\n' + app + '\n' + script
+    core + '\n' + aliases + '\n' + notas + '\n' + app + '\n' + script
   );
   const result = runner(
     { addEventListener() {}, scrollTo() {}, crypto: {} },

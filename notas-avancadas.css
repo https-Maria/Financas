@@ -1,0 +1,49 @@
+/* Dueto v114 — editor de notas, pastas, busca e anexos. */
+.nt-rich-tools{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin:6px 0 8px}
+.nt-rich-tools button{min-width:31px;height:30px;padding:3px 9px;border:1px solid var(--rule);background:var(--surface);color:var(--ink);border-radius:7px;font-size:12px;font-weight:650}
+.nt-rich-tools button:hover,.nt-rich-tools button:focus-visible{background:var(--steel-bg);border-color:var(--steel)}
+.nt-rich-tools .nt-rich-hand{font-family:'Caveat',cursive;font-size:20px}
+.nt-rich-tools .nt-rich-mono{font-family:'JetBrains Mono',monospace}
+.nt-rich-tools .nt-rich-rosa{color:#f69ec7}.nt-rich-tools .nt-rich-verde{color:var(--pos)}.nt-rich-tools .nt-rich-lavanda{color:var(--steel)}
+.nt-rich-preview{border:1px solid var(--rule);border-radius:9px;background:var(--surface);padding:10px 12px;min-height:58px;margin:7px 0 12px;overflow-wrap:anywhere}
+.nt-rich-preview>small{display:block;color:var(--muted);font-size:10px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;margin-bottom:6px}
+.nota-rich{font-size:13.5px;line-height:1.6}
+.nota-rich p{margin:0 0 4px;white-space:pre-wrap}
+.nota-rich h3{font-size:18px;margin:8px 0 5px}
+.nota-rich h4{font-size:15px;margin:7px 0 4px}
+.nota-rich h5{font-size:13px;margin:5px 0 3px}
+.nota-rich .nota-blank{height:11px}
+.nota-rich .nota-bullet{padding-left:12px}
+.nota-rich s{opacity:.65;text-decoration:line-through}
+.nota-rich .nota-hand,.nota-fonte-manuscrita{font-family:'Caveat',cursive;font-size:1.35em}
+.nota-rich .nota-mono,.nota-fonte-mono{font-family:'JetBrains Mono',monospace;font-size:.94em}
+.nota-rich .nota-rosa{color:#db65a3}
+.nota-rich .nota-lavanda{color:var(--steel)}
+.nota-rich .nota-verde{color:var(--pos)}
+.nt-organizar{display:grid;grid-template-columns:minmax(120px,1fr) minmax(150px,1.4fr) minmax(130px,1fr);gap:9px;margin:10px 0}
+.nt-organizar label,.nt-busca label{font-size:11px;color:var(--muted);display:block;margin-bottom:4px;font-weight:600}
+.nt-organizar input,.nt-organizar select,.nt-busca input,.nt-busca select{width:100%;min-width:0;border:1px solid var(--rule);background:var(--surface);border-radius:7px;padding:8px;color:var(--ink);font-size:13px}
+.nt-busca{display:grid;grid-template-columns:minmax(180px,2fr) minmax(120px,1fr);gap:10px;margin-bottom:12px}
+.nt-note-headrow{display:flex;align-items:center;gap:8px}
+.nt-note-headrow>span{flex:1;min-width:0}
+.nt-pin{border:1px solid var(--rule);border-radius:8px;padding:5px 8px;font-size:13px;color:var(--muted)}
+.nt-pin.on{background:var(--steel-bg);color:var(--steel);border-color:var(--steel)}
+.nt-notemeta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:5px 0}
+.nt-notemeta span{font-size:10.5px;background:var(--steel-bg);color:var(--steel);border-radius:15px;padding:3px 8px}
+.nt-anexos{margin:14px 0;padding-top:11px;border-top:1px solid var(--rule-soft)}
+.nt-anexos-top{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.nt-arquivos{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+.nt-arquivo{display:flex;align-items:center;gap:8px;border:1px solid var(--rule);border-radius:10px;padding:8px 10px;background:var(--surface);max-width:100%}
+.nt-arquivo .nt-arqname{border:none;background:none;color:var(--steel);text-align:left;text-decoration:underline;cursor:pointer;overflow-wrap:anywhere;max-width:220px;font-size:12px}
+.nt-arquivo .nt-arqremove{color:var(--neg);font-size:15px}
+.nt-arquivo small{color:var(--muted);font-size:10px}
+.nt-upload-info{color:var(--muted);font-size:11px;display:block;margin-top:6px}
+.nt-upload-status{color:var(--steel);font-size:11px;min-height:15px}
+.nt-savebox textarea,.nt-salva-editor textarea{min-height:95px;resize:vertical}
+@media(max-width:650px){
+ .nt-organizar{grid-template-columns:1fr 1fr}
+ .nt-organizar>div:nth-child(2){grid-column:1/-1;grid-row:2}
+ .nt-busca{grid-template-columns:1fr}
+ .nt-rich-tools{gap:3px}
+ .nt-rich-tools button{padding:3px 7px}
+}

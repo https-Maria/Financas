@@ -5,6 +5,8 @@ import {
   mesDeCaixa as mesDeCaixaCore, categoriaNeutra, movimentoOrcamentario, repartirFatura,
   totalComposicaoFatura
 } from './finance-core.mjs?v=113.0';
+import { notaRenderRich, notaFormatarTexto, notaTagsParse, notaFiltrar,
+  notaArquivoAceito, notaExtensao, NOTA_MAX_ARQUIVO } from './notas-editor.mjs?v=114.0';
 
 /* =====================================================================
    CONFIGURAÇÃO
@@ -17,16 +19,16 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v113.0';
+const APP_VER='v114.0';
 
 /* =====================================================================
    ESTADO
    ===================================================================== */
 const TABELAS = ['rendas','fixas','beneficios','cartoes','parcelamentos',
-                 'assinaturas','assinatura_excecoes','lancamentos','terceiros','metas','casa_itens','financiamentos','agenda','snapshots','ciclos','faturas_fechadas','auditoria','login_historico','notas','notas_salvas'];
+                 'assinaturas','assinatura_excecoes','lancamentos','terceiros','metas','casa_itens','financiamentos','agenda','snapshots','ciclos','faturas_fechadas','auditoria','login_historico','notas','notas_salvas','notas_anexos'];
 let USER=null, GRUPO=null, EU=null;
 let D = {rendas:[],fixas:[],beneficios:[],cartoes:[],parcelamentos:[],
-         assinaturas:[],assinatura_excecoes:[],lancamentos:[],terceiros:[],metas:[],casa_itens:[],financiamentos:[],agenda:[],snapshots:[],ciclos:[],faturas_fechadas:[],auditoria:[],login_historico:[],notas:[],notas_salvas:[],config:null};
+         assinaturas:[],assinatura_excecoes:[],lancamentos:[],terceiros:[],metas:[],casa_itens:[],financiamentos:[],agenda:[],snapshots:[],ciclos:[],faturas_fechadas:[],auditoria:[],login_historico:[],notas:[],notas_salvas:[],notas_anexos:[],config:null};
 let ONLINE = navigator.onLine, SYNC='off', FALTANDO=[];
 let DEMO_MODE=false, DEMO_REAL_D=null, DEMO_REAL_EU=null, DEMO_REAL_FALTANDO=null;
 
@@ -144,7 +146,14 @@ function criarDadosDemo(){
     ],
     auditoria:[],login_historico:[],
     notas:[{id:'demo-n1',descricao:'Comparar seguro do carro',conta:'',valor:null,ordem:1}],
-    notas_salvas:[],
+    notas_salvas:[{
+      id:'demo-nota-salva',titulo:'Ideias para a próxima viagem',
+      observacao:'## O que organizar\n**Passagens** e ~~hotel antigo~~\n[[hand]]Pesquisar lugares novos[[/hand]]',
+      linhas:[{tipo:'check',descricao:'Ver os passeios',conta:'',concluido:false},
+              {tipo:'valor',descricao:'Passeios',conta:'2x85,00',valor:170,concluido:false}],
+      total:170,pasta:'Viagens',etiquetas:['planejamento','lazer'],fixada:true,
+      fonte:'padrao',criado_em:'2026-11-09T12:00:00Z',atualizado_em:'2026-11-09T12:00:00Z'
+    }],notas_anexos:[],
     config:{reserva_atual:10700,aporte_mensal:700,saldo_conferido:3248.60,saldo_conferido_em:ant+'-30'}
   };
 }
@@ -1922,6 +1931,7 @@ const MIGRACAO_DE = {
   agenda:'migracao-agenda.sql', snapshots:'migracao-backup.sql',
   ciclos:'migracao-ciclos.sql', auditoria:'migracao-auditoria.sql', login_historico:'migracao-auditoria.sql',
   notas:'migracao-notas.sql', notas_salvas:'migracao-notas-salvas.sql',
+  notas_anexos:'migracao-v114-notas-avancadas.sql',
 };
 function head(t,p){
   /* Tabelas que têm migração própria (casa, financiamento, agenda, cópias,
@@ -5566,6 +5576,8 @@ let NOTA_CALC='';      // o que está na calculadora
 let NOTA_FOCO=null;    // campo pra focar depois do próximo desenho
 let NOTA_OBS='';       // observação do rascunho antes de virar uma nota salva
 let NOTA_TITULO='';    // título opcional da próxima nota salva
+let NOTA_PASTA='Geral', NOTA_ETIQUETAS='', NOTA_FONTE='padrao';
+let NOTA_BUSCA='', NOTA_PASTA_FILTRO='Todas';
 
 function notaLinhas(){
   return D.notas.map(n=>({...n, ...(NOTA_PEND[n.id]||{})}))
@@ -5593,13 +5605,63 @@ function notaDataSalva(x){
   catch(e){return String(x||'');}
 }
 function notaSalvas(){
-  return [...(D.notas_salvas||[])].sort((a,b)=>String(b.criado_em).localeCompare(String(a.criado_em)));
+  return notaFiltrar(D.notas_salvas||[],NOTA_BUSCA,NOTA_PASTA_FILTRO);
 }
+
+function notaBarra(id){
+  const itens=[
+    ['negrito','B','Negrito'],['italico','I','Itálico'],
+    ['riscado','S̶','Texto riscado'],['sublinhado','U̲','Sublinhar'],
+    ['titulo','H1','Título'],['subtitulo','H2','Subtítulo'],
+    ['manuscrita','Aa','Letra manuscrita'],['mono','01','Monoespaçada'],
+    ['rosa','●','Rosa'],['lavanda','●','Lavanda'],['verde','●','Verde']
+  ];
+  return `<div class="nt-rich-tools" role="toolbar" aria-label="Formatar texto">
+    ${itens.map(([acao,rotulo,titulo])=>`<button type="button"
+      class="nt-rich-${acao}" title="${titulo}" aria-label="${titulo}"
+      onclick="notaFormatar(${jsArg(id)},'${acao}')">${rotulo}</button>`).join('')}
+    </div>`;
+}
+function notaPrevia(id,conteudo,fonte){
+  return `<div class="nt-rich-preview" id="nt_prev_${esc(id)}">
+    <small>Prévia formatada</small>${notaRenderRich(conteudo,fonte)}
+  </div>`;
+}
+function notaFonteSelect(valor,altera){
+  return `<select aria-label="Fonte do texto" onchange="${altera}">
+    <option value="padrao" ${valor==='padrao'?'selected':''}>Fonte padrão</option>
+    <option value="manuscrita" ${valor==='manuscrita'?'selected':''}>Manuscrita</option>
+    <option value="mono" ${valor==='mono'?'selected':''}>Monoespaçada</option>
+  </select>`;
+}
+function notaAnexosHTML(n){
+  const anexos=(D.notas_anexos||[]).filter(a=>a.nota_id===n.id);
+  return `<section class="nt-anexos" aria-label="Anexos da nota">
+    <div class="nt-anexos-top"><b>Anexos (${anexos.length})</b>
+      <label class="btn alt sm" for="nt_file_${n.id}">📎 Anexar fotos ou PDF</label>
+      <input type="file" id="nt_file_${n.id}" hidden multiple
+        accept="image/jpeg,image/png,image/webp,application/pdf"
+        onchange="notaAnexar(${jsArg(n.id)},this.files)">
+    </div>
+    <span class="nt-upload-info">Arquivos JPG, PNG, WebP ou PDF até 10 MB cada. Visíveis apenas ao seu grupo.</span>
+    <div class="nt-upload-status" id="nt_upload_${n.id}" aria-live="polite"></div>
+    <div class="nt-arquivos">${anexos.map(a=>`<div class="nt-arquivo">
+      <span>${a.mime==='application/pdf'?'📄':'🖼️'}</span>
+      <button type="button" class="nt-arqname" onclick="notaAbrirAnexo(${jsArg(a.id)})">${esc(a.nome)}</button>
+      <small>${(Number(a.tamanho)/1048576).toFixed(1)} MB</small>
+      <button class="nt-arqremove" type="button" aria-label="Excluir anexo"
+        onclick="notaRemoverAnexo(${jsArg(a.id)})">×</button>
+    </div>`).join('')}</div>
+  </section>`;
+}
+
 function vNotas(){
   const cab=head('Bloco de notas','Valores, anotações e checklists no mesmo lugar. Tudo editável e fora do orçamento.');
   if(FALTANDO.includes('notas'))
     return cab+`<div class="warn">Esta aba precisa da tabela de notas. Rode <b>migracao-notas.sql</b> no Supabase e recarregue.</div>`;
   const ls=notaLinhas(), tot=notaTotal(), salvas=notaSalvas();
+  const todas=D.notas_salvas||[];
+  const pastas=['Todas',...[...new Set(todas.map(n=>n.pasta||'Geral'))].sort()];
   const teclas=[['C','fn'],['⌫','fn'],['÷','op'],['×','op'],['7'],['8'],['9'],['−','op'],
     ['4'],['5'],['6'],['+','op'],['1'],['2'],['3'],['=','eq'],['0'],[','],['( )','fn'],['Usar na lista','anota']];
   return cab+`<div class="nt-grid">
@@ -5637,12 +5699,25 @@ function vNotas(){
         <label for="nt_titulo">Título da nota</label>
         <input id="nt_titulo" value="${esc(NOTA_TITULO)}" placeholder="Ex.: Contas antes das férias"
           oninput="notaTitulo(this.value)" style="width:100%;margin-bottom:10px">
-        <label for="nt_obs">Observação da nota</label>
-        <textarea id="nt_obs" rows="3" placeholder="Ex.: separar este valor para o fim do mês"
-          oninput="notaObs(this.value)">${esc(NOTA_OBS)}</textarea>
+        <div class="nt-organizar">
+          <div><label for="nt_pasta">Pasta</label>
+            <input id="nt_pasta" value="${esc(NOTA_PASTA)}" placeholder="Geral"
+              oninput="notaMetaRascunho('pasta',this.value)" list="nt_pastas_sug"></div>
+          <div><label for="nt_tags">Etiquetas (separe por vírgula)</label>
+            <input id="nt_tags" value="${esc(NOTA_ETIQUETAS)}" placeholder="casa, viagem, urgente"
+              oninput="notaMetaRascunho('etiquetas',this.value)"></div>
+          <div><label>Fonte</label>
+            ${notaFonteSelect(NOTA_FONTE,"notaMetaRascunho('fonte',this.value);notaAtualizarPrevia('nt_obs')")}</div>
+        </div>
+        <datalist id="nt_pastas_sug">${pastas.filter(p=>p!=='Todas').map(p=>`<option value="${esc(p)}">`).join('')}</datalist>
+        <label for="nt_obs">Texto e observações</label>
+        ${notaBarra('nt_obs')}
+        <textarea id="nt_obs" rows="5" placeholder="Escreva sua nota. Selecione um trecho e use a barra para formatar."
+          oninput="notaObs(this.value);notaAtualizarPrevia('nt_obs')">${esc(NOTA_OBS)}</textarea>
+        ${notaPrevia('nt_obs',NOTA_OBS,NOTA_FONTE)}
         <div class="nt-saveactions">
-          <span class="note">A lista já salva cada linha automaticamente. Este botão guarda uma <b>cópia fechada</b> dela com a observação.</span>
-          <button class="btn" onclick="notaSalvarBloco()" ${ls.length?'':'disabled'}>Salvar esta nota</button>
+          <span class="note">A lista salva automaticamente. Este botão guarda uma <b>nota independente</b> com texto e listas; você poderá anexar arquivos depois.</span>
+          <button class="btn" onclick="notaSalvarBloco()">Salvar esta nota</button>
         </div>
       </div>
 
@@ -5656,25 +5731,54 @@ function vNotas(){
   </div>
   ${FALTANDO.includes('notas_salvas')
     ? `<div class="warn">Para guardar cópias fechadas das notas, rode <b>migracao-notas-salvas.sql</b>.</div>`
-    : `<div class="panel nt-salvas"><h2>Notas salvas <small>${salvas.length}</small></h2>
+    : `<div class="panel nt-salvas"><h2>Notas salvas <small>${salvas.length} de ${todas.length}</small></h2>
        <div class="pbody">
+       <div class="nt-busca">
+         <div><label for="nt_busca">Buscar notas, textos e etiquetas</label>
+           <input id="nt_busca" placeholder="Buscar..." value="${esc(NOTA_BUSCA)}"
+             oninput="notasSetBusca(this.value)"></div>
+         <div><label for="nt_filtrar_pasta">Filtrar pasta</label>
+           <select id="nt_filtrar_pasta" onchange="notasFiltrarPasta(this.value)">
+             ${pastas.map(p=>`<option ${p===NOTA_PASTA_FILTRO?'selected':''}>${esc(p)}</option>`).join('')}
+           </select></div>
+       </div>
        ${salvas.length ? salvas.map(n=>{
           const linhas=notaSalvaLinhas(n);
           const feitas=linhas.filter(l=>l.tipo==='check'&&l.concluido).length;
           const checks=linhas.filter(l=>l.tipo==='check').length;
-          return `<details class="nt-salva">
+          return `<details class="nt-salva" data-nota-id="${n.id}">
             <summary>
               <span><b>${esc(n.titulo||'Nota salva')}</b><small>${notaDataSalva(n.criado_em)} · ${linhas.length} item${linhas.length===1?'':'s'}${checks?' · '+feitas+'/'+checks+' marcados':''}</small></span>
               <strong>${BRL(notaSalvaTotal(linhas))}</strong>
             </summary>
             <div class="nt-salva-corpo">
+              <div class="nt-note-headrow">
+                <button type="button" class="nt-pin ${n.fixada?'on':''}"
+                  onclick="notaFixar('${n.id}')" title="Fixar ou desafixar esta nota">
+                  ${n.fixada?'📌 Fixada':'📍 Fixar nota'}</button>
+              </div>
+              <div class="nt-notemeta">
+                <span>📁 ${esc(n.pasta||'Geral')}</span>
+                ${(n.etiquetas||[]).map(t=>`<span>#${esc(t)}</span>`).join('')}
+              </div>
               <div class="nt-salva-editor">
                 <label>Título</label>
                 <input value="${esc(n.titulo||'')}" placeholder="Título"
                   onchange="notaSalvaCampo('${n.id}','titulo',this.value)">
-                <label>Observação</label>
-                <textarea rows="3" placeholder="Observação"
+                <div class="nt-organizar">
+                  <div><label>Pasta</label><input value="${esc(n.pasta||'Geral')}"
+                    onchange="notaSalvaCampo('${n.id}','pasta',this.value)"></div>
+                  <div><label>Etiquetas</label><input value="${esc((n.etiquetas||[]).join(', '))}"
+                    onchange="notaSalvaCampo('${n.id}','etiquetas',this.value)"></div>
+                  <div><label>Fonte</label>
+                    ${notaFonteSelect(n.fonte||'padrao',`notaSalvaCampo('${n.id}','fonte',this.value)`)}</div>
+                </div>
+                <label>Texto e observações</label>
+                ${notaBarra('nt_sobs_'+n.id)}
+                <textarea id="nt_sobs_${n.id}" rows="5" placeholder="Texto livre da nota"
+                  oninput="notaAtualizarPrevia('nt_sobs_${n.id}')"
                   onchange="notaSalvaCampo('${n.id}','observacao',this.value)">${esc(n.observacao||'')}</textarea>
+                ${notaPrevia('nt_sobs_'+n.id,n.observacao||'',n.fonte||'padrao')}
               </div>
               <div class="nt-salva-linhas nt-salva-editaveis">
                 ${linhas.map((l,i)=>l.tipo==='check'
@@ -5694,6 +5798,7 @@ function vNotas(){
                       <button class="btn dgr sm" onclick="notaSalvaExcluirLinha('${n.id}',${i})">×</button>
                     </div>`).join('')}
               </div>
+              ${notaAnexosHTML(n)}
               <div class="rowbar" style="margin:10px 0 0">
                 <button class="btn alt sm" onclick="notaSalvaAdicionar('${n.id}','valor')">＋ Valor</button>
                 <button class="btn alt sm" onclick="notaSalvaAdicionar('${n.id}','check')">☑ Checklist</button>
@@ -5701,7 +5806,7 @@ function vNotas(){
               </div>
             </div>
           </details>`;
-       }).join('') : `<p class="note">Nenhuma nota fechada ainda. Monte a lista, escreva uma observação e toque em <b>Salvar esta nota</b>.</p>`}
+       }).join('') : `<p class="note">${todas.length?'Nenhuma nota corresponde aos filtros.':'Nenhuma nota salva. Escreva uma nota, com ou sem lista, e toque em Salvar esta nota.'}</p>`}
        </div></div>`}
   `;
 }
@@ -5714,12 +5819,95 @@ function notaDepois(){
 window.notaObs=v=>{ NOTA_OBS=v; };
 window.notaTitulo=v=>{ NOTA_TITULO=v; };
 
+window.notaMetaRascunho=(campo,val)=>{
+  if(campo==='pasta') NOTA_PASTA=val;
+  if(campo==='etiquetas') NOTA_ETIQUETAS=val;
+  if(campo==='fonte') NOTA_FONTE=val;
+};
+window.notasSetBusca=v=>{NOTA_BUSCA=v;render();};
+window.notasFiltrarPasta=v=>{NOTA_PASTA_FILTRO=v;render();};
+
+window.notaAtualizarPrevia=id=>{
+  const caixa=$(id),prev=$('nt_prev_'+id); if(!caixa||!prev) return;
+  const saved=id.startsWith('nt_sobs_')?D.notas_salvas.find(n=>n.id===id.slice(8)):null;
+  const fonte=saved?.fonte||NOTA_FONTE;
+  prev.innerHTML='<small>Prévia formatada</small>'+notaRenderRich(caixa.value,fonte);
+};
+window.notaFormatar=(id,acao)=>{
+  const el=$(id);if(!el) return;
+  const r=notaFormatarTexto(el.value,el.selectionStart,el.selectionEnd,acao);
+  el.value=r.texto;el.focus();el.setSelectionRange(r.inicio,r.fim);
+  el.dispatchEvent(new Event('input',{bubbles:true}));
+  if(id.startsWith('nt_sobs_')) window.notaSalvaCampo(id.slice(8),'observacao',el.value);
+};
+window.notaFixar=async id=>{
+  const n=D.notas_salvas.find(x=>x.id===id);if(!n)return;
+  if(await atualizar('notas_salvas',id,{fixada:!n.fixada,
+    atualizado_em:new Date().toISOString()}))render();
+};
+window.notaAnexar=async(id,fileList)=>{
+  if(DEMO_MODE)return toast('Modo demo: não é possível enviar arquivos fictícios.');
+  if(FALTANDO.includes('notas_anexos'))return toast('É necessário atualizar o banco para anexar arquivos.');
+  if(!D.notas_salvas.some(n=>n.id===id)||!GRUPO)return;
+  const arquivos=Array.from(fileList||[]).slice(0,10);
+  const status=$('nt_upload_'+id);
+  let enviados=0;
+  for(const file of arquivos){
+    if(!notaArquivoAceito(file)){
+      toast('Use JPG, PNG, WebP ou PDF com até 10 MB: '+file.name,4500);
+      continue;
+    }
+    if(status)status.textContent='Enviando '+file.name+'…';
+    const ext=notaExtensao(file.type);
+    const path=GRUPO+'/'+id+'/'+crypto.randomUUID()+'.'+ext;
+    try{
+      const {error}=await sb.storage.from('dueto-notas').upload(path,file,{
+        cacheControl:'3600',upsert:false,contentType:file.type
+      });
+      if(error){toast('Falha no envio: '+error.message,5000);continue;}
+      const anotado=await inserir('notas_anexos',{
+        nota_id:id,caminho:path,nome:String(file.name).slice(0,250),
+        mime:file.type,tamanho:file.size,criado_por:USER?.id||null
+      });
+      if(!anotado){
+        await sb.storage.from('dueto-notas').remove([path]);
+        continue;
+      }
+      enviados++;
+    }catch(e){toast('Falha no anexo: '+(e.message||e),5000);}
+  }
+  if(enviados){render();toast(enviados+' arquivo(s) anexado(s) com segurança');}
+  else if(status)status.textContent='Nenhum arquivo enviado.';
+};
+window.notaAbrirAnexo=async id=>{
+  const anexo=(D.notas_anexos||[]).find(x=>x.id===id);
+  if(!anexo)return;
+  if(DEMO_MODE)return toast('Modo demo: arquivo fictício.');
+  const {data,error}=await sb.storage.from('dueto-notas').download(anexo.caminho);
+  if(error||!data)return toast('Não consegui baixar: '+(error?.message||'arquivo indisponível'),5000);
+  const url=URL.createObjectURL(data);
+  const a=document.createElement('a');a.href=url;
+  a.download=anexo.nome;a.style.display='none';
+  document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),15000);
+};
+window.notaRemoverAnexo=async id=>{
+  const anexo=(D.notas_anexos||[]).find(x=>x.id===id);
+  if(!anexo)return;
+  if(DEMO_MODE)return toast('Modo demo: nada é excluído.');
+  if(!confirm('Excluir o anexo "'+anexo.nome+'"?'))return;
+  const {error}=await sb.storage.from('dueto-notas').remove([anexo.caminho]);
+  if(error)return toast('Falha ao excluir arquivo: '+error.message,5000);
+  if(await remover('notas_anexos',anexo.id)){render();toast('Anexo excluído');}
+};
+
+
 window.notaSalvarBloco=async()=>{
   if(FALTANDO.includes('notas_salvas')) return toast('Falta a tabela de notas salvas');
   const ids=Object.keys(NOTA_PEND);
   for(const id of ids) await notaSalvar(id);
   const ls=notaLinhas();
-  if(!ls.length) return toast('Adicione pelo menos uma linha antes de salvar');
+  if(!ls.length && !NOTA_OBS.trim() && !NOTA_TITULO.trim()) return toast('Escreva uma nota, título ou adicione uma linha');
   const agora=new Date();
   const titulo=NOTA_TITULO.trim() || ('Nota de '+agora.toLocaleDateString('pt-BR'));
   const linhas=ls.map(n=>({
@@ -5732,6 +5920,10 @@ window.notaSalvarBloco=async()=>{
   const n=await inserir('notas_salvas',{
     titulo,
     observacao:NOTA_OBS.trim()||null,
+    pasta:NOTA_PASTA.trim().slice(0,80)||'Geral',
+    etiquetas:notaTagsParse(NOTA_ETIQUETAS),
+    fonte:['padrao','manuscrita','mono'].includes(NOTA_FONTE)?NOTA_FONTE:'padrao',
+    fixada:false,
     linhas,
     total:notaTotal(),
     criado_por:USER?.id||null
@@ -5750,6 +5942,7 @@ window.notaSalvarBloco=async()=>{
   Object.values(NOTA_TIMER).forEach(clearTimeout);
   NOTA_PEND={}; NOTA_TIMER={}; D.notas=[];
   NOTA_OBS=''; NOTA_TITULO=''; NOTA_CALC='';
+  NOTA_PASTA='Geral'; NOTA_ETIQUETAS=''; NOTA_FONTE='padrao';
   cacheSave();
   render();
   toast('Nota salva · '+BRL(n.total)+' · bloco limpo');
@@ -5775,7 +5968,12 @@ async function notaSalvaAtualizar(id,linhas,extra={}){
 }
 window.notaSalvaCampo=async(id,campo,val)=>{
   const n=D.notas_salvas.find(x=>x.id===id); if(!n)return;
-  const patch={[campo]:val.trim?val.trim():val,atualizado_em:new Date().toISOString()};
+  if(!['titulo','observacao','pasta','etiquetas','fonte'].includes(campo)) return;
+  const seguro = campo==='etiquetas' ? notaTagsParse(val)
+    : campo==='fonte' ? (['padrao','manuscrita','mono'].includes(val)?val:'padrao')
+    : campo==='pasta' ? String(val||'').trim().slice(0,80)||'Geral'
+    : String(val||'').trim();
+  const patch={[campo]:seguro,atualizado_em:new Date().toISOString()};
   if(await atualizar('notas_salvas',id,patch)) render();
 };
 window.notaSalvaLinhaCampo=async(id,i,campo,val)=>{
@@ -5806,8 +6004,17 @@ window.notaSalvaExcluirLinha=async(id,i)=>{
 };
 
 window.notaExcluirSalva=async id=>{
-  if(!confirm('Excluir esta nota salva? A lista atual não será alterada.')) return;
-  if(await remover('notas_salvas',id)){ render(); toast('Nota salva excluída'); }
+  if(!confirm('Excluir esta nota e seus anexos? Esta ação vale para as duas pessoas.')) return;
+  if(DEMO_MODE) return toast('Modo demo: nenhuma alteração é salva.');
+  const anexos=(D.notas_anexos||[]).filter(a=>a.nota_id===id);
+  if(anexos.length){
+    const {error}=await sb.storage.from('dueto-notas').remove(anexos.map(x=>x.caminho));
+    if(error) return toast('Não excluí a nota porque não consegui retirar os anexos: '+error.message,5000);
+  }
+  if(await remover('notas_salvas',id)){
+    D.notas_anexos=D.notas_anexos.filter(x=>x.nota_id!==id);
+    render();toast('Nota e anexos excluídos');
+  }
 };
 
 window.notaDigitar=(id,campo,val)=>{
@@ -6322,10 +6529,15 @@ function render(){
      (até a própria gravação volta como aviso). Sem isto o cursor sairia do
      campo a cada salvamento. Só nesta aba: as outras seguem como sempre. */
   const ae=document.activeElement;
+  const notasAbertas=CUR==='notas'?[...m.querySelectorAll('details.nt-salva[open]')]
+    .map(el=>el.getAttribute('data-nota-id')).filter(Boolean):[];
   const foco = CUR==='notas' && ae && ae.id && m.contains(ae)
     ? {id:ae.id, a:ae.selectionStart, b:ae.selectionEnd} : null;
   m.innerHTML=(DEMO_MODE?'<div class="demo-banner"><b>DEMO</b> Dados totalmente fictícios · nada aqui é salvo no Supabase <button onclick="toggleDemo()">Sair do modo demo</button></div>':'')+(VIEWS[CUR]||vPainel)();
   if(CUR==='notas'){
+    [...m.querySelectorAll('details.nt-salva')].forEach(el=>{
+      if(notasAbertas.includes(el.getAttribute('data-nota-id')))el.open=true;
+    });
     if(foco && !NOTA_FOCO){ const el=$(foco.id);
       if(el){ el.focus({preventScroll:true}); try{ el.setSelectionRange(foco.a,foco.b); }catch(e){} } }
     notaDepois();
@@ -6553,7 +6765,7 @@ if('serviceWorker' in navigator)
         recarregou=true;
         window.location.reload();
       });
-      const reg=await navigator.serviceWorker.register('./sw.js?v=113.0',{updateViaCache:'none'});
+      const reg=await navigator.serviceWorker.register('./sw.js?v=114.0',{updateViaCache:'none'});
       await reg.update();
     }catch(e){}
   });

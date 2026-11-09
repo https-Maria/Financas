@@ -60,7 +60,7 @@ test('interface inicializa e navega pelas 19 telas em modo demonstrativo isolado
   page.on('pageerror', error => errors.push(error.message));
   await page.goto('http://127.0.0.1:8765/', { waitUntil: 'domcontentloaded' });
   await expect(page.locator('#main')).toBeVisible({ timeout: 20000 });
-  await expect(page.locator('.rodape-v')).toHaveText('v113.0');
+  await expect(page.locator('.rodape-v')).toHaveText('v114.0');
 
   await page.evaluate(() => window.toggleDemo());
   await expect(page.locator('.demo-banner')).toContainText('Dados totalmente fictícios');
@@ -102,4 +102,26 @@ test('painel, faturas e extrato mantêm controles e projeções visíveis', asyn
 
   await page.evaluate(() => window.go('integridade'));
   await expect(page.locator('#main')).toContainText('Diagnóstico');
+});
+
+
+test('notas avançadas: formata texto, filtra e mostra anexos da nota', async ({ page }) => {
+  await page.goto('http://127.0.0.1:8765/', { waitUntil:'domcontentloaded' });
+  await expect(page.locator('.rodape-v')).toHaveText('v114.0', {timeout:20000});
+  await page.evaluate(() => {window.toggleDemo(); window.go('notas');});
+  await expect(page.locator('#nt_obs')).toBeVisible();
+  await page.locator('#nt_obs').fill('Minhas anotações');
+  await page.evaluate(() => {
+    const e=document.getElementById('nt_obs');e.setSelectionRange(0,e.value.length);
+  });
+  await page.locator('.nt-savebox .nt-rich-tools button[title="Texto riscado"]').click();
+  await expect(page.locator('#nt_prev_nt_obs s')).toContainText('Minhas anotações');
+  await expect(page.locator('details.nt-salva')).toHaveCount(1);
+  await page.locator('details.nt-salva summary').click();
+  await expect(page.locator('details.nt-salva .nt-anexos')).toContainText('Anexos (0)');
+  await expect(page.locator('details.nt-salva .nt-notemeta')).toContainText('Viagens');
+  await page.locator('#nt_busca').fill('não existe');
+  await expect(page.locator('details.nt-salva')).toHaveCount(0);
+  await page.locator('#nt_busca').fill('viagem');
+  await expect(page.locator('details.nt-salva')).toHaveCount(1);
 });
