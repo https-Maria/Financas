@@ -1,8 +1,8 @@
 /* Service worker — cache do "casco" do app.
    Os dados vêm sempre do Supabase; aqui só guardamos a interface,
    para o app abrir mesmo sem internet. */
-const CACHE = 'dueto-v109.9';
-const SHELL = ['./', './index.html', './app.js?v=109.9', './manifest.json',
+const CACHE = 'dueto-v110.0';
+const SHELL = ['./', './index.html', './app.js?v=110.0', './manifest.json',
                './dueto-icon.svg'];
 
 self.addEventListener('install', e => {
