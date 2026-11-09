@@ -146,7 +146,14 @@ function criarDadosDemo(){
     ],
     auditoria:[],login_historico:[],
     notas:[{id:'demo-n1',descricao:'Comparar seguro do carro',conta:'',valor:null,ordem:1}],
-    notas_salvas:[],notas_anexos:[],
+    notas_salvas:[{
+      id:'demo-nota-salva',titulo:'Ideias para a próxima viagem',
+      observacao:'## O que organizar\n**Passagens** e ~~hotel antigo~~\n[[hand]]Pesquisar lugares novos[[/hand]]',
+      linhas:[{tipo:'check',descricao:'Ver os passeios',conta:'',concluido:false},
+              {tipo:'valor',descricao:'Passeios',conta:'2x85,00',valor:170,concluido:false}],
+      total:170,pasta:'Viagens',etiquetas:['planejamento','lazer'],fixada:true,
+      fonte:'padrao',criado_em:'2026-11-09T12:00:00Z',atualizado_em:'2026-11-09T12:00:00Z'
+    }],notas_anexos:[],
     config:{reserva_atual:10700,aporte_mensal:700,saldo_conferido:3248.60,saldo_conferido_em:ant+'-30'}
   };
 }
