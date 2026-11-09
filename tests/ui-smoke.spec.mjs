@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-const fakeSupabase = String.raw\`
+const fakeSupabase = String.raw`
 class FakeQuery {
   constructor(table) { this.table = table; }
   select() { return this; }
@@ -38,7 +38,7 @@ export function createClient() {
     }),
     removeChannel: async () => {}
   };
-}\`;
+}`;
 
 test.beforeEach(async ({ page }) => {
   // Bloqueia qualquer comunicação com o backend financeiro real.
