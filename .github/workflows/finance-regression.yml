@@ -7,31 +7,16 @@ on:
 jobs:
   financeiro:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Sintaxe do aplicativo
-        run: node --check app.js
-      - name: Sintaxe do motor financeiro
-        run: node --check finance-core.mjs
-      - name: Testes de regressão
-        run: node --test tests/finance-core.test.mjs
-      - name: Instalar Playwright e Chromium
+      - name: Validar sintaxe
         run: |
-          npm install --no-save @playwright/test@1.58.2
-          npx playwright install --with-deps chromium
-      - name: Testar telas no Chromium com Supabase simulado
-        run: |
-          python3 -m http.server 8765 --bind 127.0.0.1 >/tmp/dueto-web.log 2>&1 &
-          sleep 1
-          npx playwright test tests/ui-smoke.spec.mjs --browser=chromium --reporter=line
-      - name: Anexar evidências visuais de teste (somente dados fictícios)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: dueto-ui-smoke
-          path: test-results/
-          if-no-files-found: ignore
+          node --check app.js
+          node --check finance-core.mjs
+          node --check tests/views-smoke.test.mjs
+      - name: Testes financeiros e renderização de 19 telas
+        run: node --test tests/finance-core.test.mjs tests/views-smoke.test.mjs
