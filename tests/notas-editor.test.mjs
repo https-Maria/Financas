@@ -14,7 +14,7 @@ test('formatação de título, negrito, itálico, sublinhado, riscado e manuscri
 });
 test('texto HTML malicioso nunca vira elementos executáveis',()=>{
   const s=notaRenderRich('<img src=x onerror=alert(1)>\n<script>alert(1)</script>\n[[verde]]ok[[/verde]]');
-  assert.doesNotMatch(s,/<img|<script|onerror=/i);
+  assert.doesNotMatch(s,/<img\b|<script\b/i);
   assert.match(s,/&lt;img/);
   assert.match(s,/nota-verde/);
 });
