@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v109.7';
+const APP_VER='v109.8';
 
 /* =====================================================================
    ESTADO
@@ -2307,7 +2307,12 @@ function aplicaFiltro(tela, lista, campoBusca, campoTipo, campoCat){
 }
 
 let LANC_NAT='normal';
+let LANC_TERC_FORM={p:'Mãe',d:'',v:'',cartao:'',comp:''};
 window.setLancNat=v=>{ LANC_NAT=v; render(); };
+window.lancTercSet=(campo,val,redesenha)=>{
+  LANC_TERC_FORM[campo]=val;
+  if(redesenha) render();
+};
 
 function vLanc(){
   const doMes=D.lancamentos.filter(l=>ym(l.data)===MREF);
@@ -2329,6 +2334,35 @@ function vLanc(){
       <label class="chkfld"><input type="checkbox" id="l_gav" checked>
         Contar no Planejamento do Painel</label></div>`;
 
+  const camposTerceiro = (()=> {
+    const cartao=LANC_TERC_FORM.cartao||'';
+    const ehCartao=!!cartao;
+    const comps=mesesDisponiveis();
+    const compAtual=LANC_TERC_FORM.comp || mLabel(MREF);
+    return `
+      <div class="fld"><label>Data</label><input type="date" id="lt_d" value="${MREF}-01"></div>
+      <div class="fld" style="grid-column:span 2"><label>Descrição</label>
+        <input id="lt_n" value="${esc(LANC_TERC_FORM.d||'')}" placeholder="Ex.: Atua Modas"
+          oninput="lancTercSet('d',this.value)"></div>
+      <div class="fld"><label>Pessoa</label>
+        <input id="lt_p" value="${esc(LANC_TERC_FORM.p||'Mãe')}" placeholder="Ex.: Mãe"
+          oninput="lancTercSet('p',this.value)"></div>
+      <div class="fld"><label>Valor</label>
+        <input type="number" step="0.01" id="lt_v" value="${esc(LANC_TERC_FORM.v||'')}" placeholder="0,00"
+          oninput="lancTercSet('v',this.value)"></div>
+      <div class="fld"><label>Pago com</label><select id="lt_cart"
+        onchange="lancTercSet('cartao',this.value,true)">
+        <option value="" ${!cartao?'selected':''}>À vista (débito, Pix, dinheiro)</option>
+        ${cartoesAtivos.map(c=>`<option value="${esc(c.nome)}" ${cartao===c.nome?'selected':''}>${esc(c.nome)}</option>`).join('')}
+      </select></div>
+      ${ehCartao?`<div class="fld"><label>Em qual fatura</label><select id="lt_comp"
+          onchange="lancTercSet('comp',this.value)">
+        ${comps.map(k=>{const ml=mLabel(k);return `<option value="${ml}" ${ml===compAtual?'selected':''}>${ml}</option>`;}).join('')}
+      </select></div>`:''}
+      <div class="fld"><label>&nbsp;</label><button class="btn" onclick="addLancTerc()">Adicionar</button></div>
+    `;
+  })();
+
   const camposCaixinha = `
     <div class="fld" style="grid-column:span 2"><label>Guardar em</label><select id="l_meta">
       <option value="">Reserva de emergência</option>
@@ -2341,19 +2375,24 @@ function vLanc(){
       <div class="fld" style="grid-column:span 2"><label>Natureza</label>
         <select onchange="setLancNat(this.value)">
           <option value="normal" ${LANC_NAT==='normal'?'selected':''}>Normal</option>
+          <option value="terceiro" ${LANC_NAT==='terceiro'?'selected':''}>Gasto de terceiro</option>
           <option value="caixinha" ${LANC_NAT==='caixinha'?'selected':''}>Guardar na caixinha</option>
         </select></div>
     </div>
     <div class="form">
-      <div class="fld"><label>Data</label><input type="date" id="l_d" value="${MREF}-01"></div>
-      <div class="fld" style="grid-column:span 2"><label>Descrição${LANC_NAT==='caixinha'?' (opcional)':''}</label>
-        <input id="l_n" placeholder="${LANC_NAT==='caixinha'?'Deixe em branco pro nome padrão':'Ex.: Mercado, ou Estorno — devolução'}"></div>
-      ${LANC_NAT==='normal'?camposNormal:camposCaixinha}
-      <div class="fld"><label>&nbsp;</label><button class="btn" onclick="addLanc()">Adicionar</button></div>
+      ${LANC_NAT==='terceiro'
+        ? camposTerceiro
+        : `<div class="fld"><label>Data</label><input type="date" id="l_d" value="${MREF}-01"></div>
+          <div class="fld" style="grid-column:span 2"><label>Descrição${LANC_NAT==='caixinha'?' (opcional)':''}</label>
+            <input id="l_n" placeholder="${LANC_NAT==='caixinha'?'Deixe em branco pro nome padrão':'Ex.: Mercado, ou Estorno — devolução'}"></div>
+          ${LANC_NAT==='normal'?camposNormal:camposCaixinha}
+          <div class="fld"><label>&nbsp;</label><button class="btn" onclick="addLanc()">Adicionar</button></div>`}
     </div>
     ${LANC_NAT==='normal'?`<p class="note" style="margin-top:10px">Pra registrar um estorno: mesma tela,
       categoria <b>Cartão</b>, tipo <b>Entrada</b> — abate a fatura daquele cartão em vez de virar receita.
       <span class="tag t-ok" id="l_hint" style="${ehCreditoCartao?'':'display:none'}">é isso que você está montando agora</span></p>`:''}
+    ${LANC_NAT==='terceiro'?`<p class="note" style="margin-top:10px"><b>Gasto de terceiro</b> não entra como gasto de vocês.
+      Se for cartão, entra só na parte da pessoa e no total físico da fatura. Se for à vista, sai da conta agora e fica em <b>Terceiros</b> até a pessoa devolver.</p>`:''}
     ${LANC_NAT==='caixinha'?`<p class="note" style="margin-top:10px">Soma no guardado da meta escolhida e baixa do saldo em conta — mesma lógica da aba Metas.</p>`:''}
   </div></div>
   <div class="kpis">
@@ -2404,6 +2443,47 @@ window.lancCampos=()=>{
   const lbl=$('l_cart_lbl'); if(lbl) lbl.textContent='Pago com'+(c==='Cartão'?' *':'');
   const h=$('l_hint'); if(h) h.style.display=(c==='Cartão'&&t==='Entrada')?'':'none';
 };
+window.addLancTerc=async()=>{
+  const data=$('lt_d')?.value||hoje();
+  const pessoa=($('lt_p')?.value||'').trim();
+  const descricao=($('lt_n')?.value||'').trim();
+  const valor=parseFloat($('lt_v')?.value);
+  const cartao=$('lt_cart')?.value||null;
+  if(!data||!pessoa||!descricao||!valor) return toast('Preencha data, pessoa, descrição e valor');
+
+  const competencia=cartao ? ($('lt_comp')?.value || mLabel(MREF)) : null;
+  const terc=await inserir('terceiros',{
+    pessoa,descricao,valor,recebido:false,
+    origem:cartao||'À vista',
+    cartao,
+    competencia,
+    data_saida:cartao?null:data,
+    previsao:null
+  });
+  if(!terc) return;
+
+  if(!cartao){
+    const mov=await inserir('lancamentos',{
+      data,descricao:descricao+' — '+pessoa,
+      categoria:'Terceiros',tipo:'Saída',quem:pessoa,valor,
+      status:data>hoje()?'Projetado':'Confirmado',
+      criado_por:USER.id,na_gaveta:false,
+      observacao:'Gasto de terceiro lançado pela tela Lançamentos; fica a receber de '+pessoa+'.'
+    });
+    if(!mov){
+      await remover('terceiros',terc.id);
+      return toast('Não consegui registrar o movimento; o valor a receber foi desfeito',4200);
+    }
+  }
+
+  LANC_TERC_FORM={p:pessoa,d:'',v:'',cartao:'',comp:''};
+  MREF=ym(data);
+  render();
+  toast(cartao
+    ? pessoa+' deve '+BRL(valor)+' · entra no total da fatura do '+cartao+', mas não na parte do casal'
+    : pessoa+' deve '+BRL(valor)+' · saiu da conta e ficou a receber');
+};
+
 window.addLanc=async()=>{
   const d=$('l_d').value, nInf=$('l_n').value.trim();
   if(!d) return toast('Preencha a data');
