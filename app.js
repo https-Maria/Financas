@@ -5724,25 +5724,54 @@ function vNotas(){
   </div>
   ${FALTANDO.includes('notas_salvas')
     ? `<div class="warn">Para guardar cópias fechadas das notas, rode <b>migracao-notas-salvas.sql</b>.</div>`
-    : `<div class="panel nt-salvas"><h2>Notas salvas <small>${salvas.length}</small></h2>
+    : `<div class="panel nt-salvas"><h2>Notas salvas <small>${salvas.length} de ${todas.length}</small></h2>
        <div class="pbody">
+       <div class="nt-busca">
+         <div><label for="nt_busca">Buscar notas, textos e etiquetas</label>
+           <input id="nt_busca" placeholder="Buscar..." value="${esc(NOTA_BUSCA)}"
+             oninput="notasSetBusca(this.value)"></div>
+         <div><label for="nt_filtrar_pasta">Filtrar pasta</label>
+           <select id="nt_filtrar_pasta" onchange="notasFiltrarPasta(this.value)">
+             ${pastas.map(p=>`<option ${p===NOTA_PASTA_FILTRO?'selected':''}>${esc(p)}</option>`).join('')}
+           </select></div>
+       </div>
        ${salvas.length ? salvas.map(n=>{
           const linhas=notaSalvaLinhas(n);
           const feitas=linhas.filter(l=>l.tipo==='check'&&l.concluido).length;
           const checks=linhas.filter(l=>l.tipo==='check').length;
-          return `<details class="nt-salva">
+          return `<details class="nt-salva" data-nota-id="${n.id}">
             <summary>
               <span><b>${esc(n.titulo||'Nota salva')}</b><small>${notaDataSalva(n.criado_em)} · ${linhas.length} item${linhas.length===1?'':'s'}${checks?' · '+feitas+'/'+checks+' marcados':''}</small></span>
               <strong>${BRL(notaSalvaTotal(linhas))}</strong>
             </summary>
             <div class="nt-salva-corpo">
+              <div class="nt-note-headrow">
+                <button type="button" class="nt-pin ${n.fixada?'on':''}"
+                  onclick="notaFixar('${n.id}')" title="Fixar ou desafixar esta nota">
+                  ${n.fixada?'📌 Fixada':'📍 Fixar nota'}</button>
+              </div>
+              <div class="nt-notemeta">
+                <span>📁 ${esc(n.pasta||'Geral')}</span>
+                ${(n.etiquetas||[]).map(t=>`<span>#${esc(t)}</span>`).join('')}
+              </div>
               <div class="nt-salva-editor">
                 <label>Título</label>
                 <input value="${esc(n.titulo||'')}" placeholder="Título"
                   onchange="notaSalvaCampo('${n.id}','titulo',this.value)">
-                <label>Observação</label>
-                <textarea rows="3" placeholder="Observação"
+                <div class="nt-organizar">
+                  <div><label>Pasta</label><input value="${esc(n.pasta||'Geral')}"
+                    onchange="notaSalvaCampo('${n.id}','pasta',this.value)"></div>
+                  <div><label>Etiquetas</label><input value="${esc((n.etiquetas||[]).join(', '))}"
+                    onchange="notaSalvaCampo('${n.id}','etiquetas',this.value)"></div>
+                  <div><label>Fonte</label>
+                    ${notaFonteSelect(n.fonte||'padrao',`notaSalvaCampo('${n.id}','fonte',this.value)`)}</div>
+                </div>
+                <label>Texto e observações</label>
+                ${notaBarra('nt_sobs_'+n.id)}
+                <textarea id="nt_sobs_${n.id}" rows="5" placeholder="Texto livre da nota"
+                  oninput="notaAtualizarPrevia('nt_sobs_${n.id}')"
                   onchange="notaSalvaCampo('${n.id}','observacao',this.value)">${esc(n.observacao||'')}</textarea>
+                ${notaPrevia('nt_sobs_'+n.id,n.observacao||'',n.fonte||'padrao')}
               </div>
               <div class="nt-salva-linhas nt-salva-editaveis">
                 ${linhas.map((l,i)=>l.tipo==='check'
@@ -5762,6 +5791,7 @@ function vNotas(){
                       <button class="btn dgr sm" onclick="notaSalvaExcluirLinha('${n.id}',${i})">×</button>
                     </div>`).join('')}
               </div>
+              ${notaAnexosHTML(n)}
               <div class="rowbar" style="margin:10px 0 0">
                 <button class="btn alt sm" onclick="notaSalvaAdicionar('${n.id}','valor')">＋ Valor</button>
                 <button class="btn alt sm" onclick="notaSalvaAdicionar('${n.id}','check')">☑ Checklist</button>
@@ -5769,7 +5799,7 @@ function vNotas(){
               </div>
             </div>
           </details>`;
-       }).join('') : `<p class="note">Nenhuma nota fechada ainda. Monte a lista, escreva uma observação e toque em <b>Salvar esta nota</b>.</p>`}
+       }).join('') : `<p class="note">${todas.length?'Nenhuma nota corresponde aos filtros.':'Nenhuma nota salva. Escreva uma nota, com ou sem lista, e toque em Salvar esta nota.'}</p>`}
        </div></div>`}
   `;
 }
