@@ -7,6 +7,7 @@ on:
 jobs:
   financeiro:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -25,6 +26,7 @@ jobs:
       - name: Testar telas no Chromium com Supabase simulado
         run: |
           python3 -m http.server 8765 --bind 127.0.0.1 >/tmp/dueto-web.log 2>&1 &
+          sleep 1
           npx playwright test tests/ui-smoke.spec.mjs --browser=chromium --reporter=line
       - name: Anexar evidências visuais de teste (somente dados fictícios)
         if: always()
