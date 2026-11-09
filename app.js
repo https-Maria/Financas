@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v110.0';
+const APP_VER='v110.1';
 
 /* =====================================================================
    ESTADO
@@ -2611,8 +2611,9 @@ window.addLanc=async()=>{
       responsavel:$('l_q').value, origem:'lancamento_parcelado', criado_por:USER.id
     });
     if(ok){
-      MREF=ym(d); render();
+      MREF=ym(d);
       toast(n+' adicionado · '+parcelas+'x de '+BRL(vp)+' · 1ª fatura '+mLabel(comp));
+      go('parc');
     }
     return;
   }
