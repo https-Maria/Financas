@@ -54,7 +54,7 @@ test.beforeEach(async ({ page }) => {
 test('interface inicializa e navega pelas 19 telas em modo demonstrativo isolado', async ({ page }) => {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
-  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  await page.goto('http://127.0.0.1:8765/', { waitUntil: 'domcontentloaded' });
   await expect(page.locator('#main')).toBeVisible({ timeout: 20000 });
   await expect(page.locator('.rodape-v')).toHaveText('v113.0');
 
@@ -80,7 +80,7 @@ test('interface inicializa e navega pelas 19 telas em modo demonstrativo isolado
 });
 
 test('painel, faturas e extrato mantêm controles e projeções visíveis', async ({ page }) => {
-  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  await page.goto('http://127.0.0.1:8765/', { waitUntil: 'domcontentloaded' });
   await expect(page.locator('#main')).toBeVisible({ timeout: 20000 });
   await page.evaluate(() => window.toggleDemo());
 
