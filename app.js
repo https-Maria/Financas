@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v111.0';
+const APP_VER='v112.0';
 
 /* =====================================================================
    ESTADO
@@ -5570,13 +5570,14 @@ let NOTA_TIMER={};     // salvamento automático por linha
 let NOTA_CALC='';      // o que está na calculadora
 let NOTA_FOCO=null;    // campo pra focar depois do próximo desenho
 let NOTA_OBS='';       // observação do rascunho antes de virar uma nota salva
+let NOTA_TITULO='';    // título opcional da próxima nota salva
 
 function notaLinhas(){
   return D.notas.map(n=>({...n, ...(NOTA_PEND[n.id]||{})}))
     .sort((a,b)=>(a.ordem-b.ordem)||String(a.criado_em).localeCompare(String(b.criado_em)));
 }
 function notaTotal(){
-  return Math.round(notaLinhas().reduce((s,n)=>s+(notaCalcular(n.conta)||0),0)*100)/100;
+  return Math.round(notaLinhas().reduce((s,n)=>s+(n.tipo==='check'?0:(notaCalcular(n.conta)||0)),0)*100)/100;
 }
 function notaCelula(n){
   const v=notaCalcular(n.conta);
@@ -5600,7 +5601,7 @@ function notaSalvas(){
   return [...(D.notas_salvas||[])].sort((a,b)=>String(b.criado_em).localeCompare(String(a.criado_em)));
 }
 function vNotas(){
-  const cab=head('Bloco de notas','Rascunho do casal: uma lista que soma sozinha e uma calculadora do lado. Não entra no orçamento.');
+  const cab=head('Bloco de notas','Valores, anotações e checklists no mesmo lugar. Tudo editável e fora do orçamento.');
   if(FALTANDO.includes('notas'))
     return cab+`<div class="warn">Esta aba precisa da tabela de notas. Rode <b>migracao-notas.sql</b> no Supabase e recarregue.</div>`;
   const ls=notaLinhas(), tot=notaTotal(), salvas=notaSalvas();
@@ -5608,25 +5609,39 @@ function vNotas(){
     ['4'],['5'],['6'],['+','op'],['1'],['2'],['3'],['=','eq'],['0'],[','],['( )','fn'],['Usar na lista','anota']];
   return cab+`<div class="nt-grid">
     <div class="panel"><h2>Lista <small>${ls.length?ls.length+(ls.length>1?' linhas':' linha'):'vazia'}</small></h2><div class="pbody">
-      ${ls.length?`<div class="nt-itens">${ls.map(n=>`<div class="nt-item">
-        <input class="nt-nm" id="nt_d_${n.id}" value="${esc(n.descricao)}" placeholder="O quê" aria-label="Descrição"
-          oninput="notaDigitar('${n.id}','descricao',this.value)" onchange="notaSalvar('${n.id}')"
-          onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('nt_c_${n.id}').focus();}">
-        <input class="nt-v" id="nt_c_${n.id}" value="${esc(n.conta)}" placeholder="0,00" aria-label="Valor ou conta"
-          autocomplete="off" spellcheck="false"
-          oninput="notaDigitar('${n.id}','conta',this.value)" onchange="notaSalvar('${n.id}')"
-          onkeydown="if(event.key==='Enter'){event.preventDefault();notaProxima('${n.id}');}">
-        <span class="nt-r" id="nt_r_${n.id}">${notaCelula(n)}</span>
-        <span class="nt-d"><button class="btn dgr" onclick="notaApagar('${n.id}')" aria-label="Apagar linha">×</button></span>
-      </div>`).join('')}</div>`
+      ${ls.length?`<div class="nt-itens">${ls.map(n=>n.tipo==='check'
+        ? `<div class="nt-checkitem ${n.concluido?'done':''}">
+            <input class="nt-box" type="checkbox" ${n.concluido?'checked':''}
+              onchange="notaCheck('${n.id}',this.checked)" aria-label="Marcar item">
+            <input class="nt-nm nt-checktext" id="nt_d_${n.id}" value="${esc(n.descricao)}"
+              placeholder="Item do checklist" aria-label="Item do checklist"
+              oninput="notaDigitar('${n.id}','descricao',this.value)" onchange="notaSalvar('${n.id}')">
+            <span class="nt-checkstate">${n.concluido?'feito':'pendente'}</span>
+            <span class="nt-d"><button class="btn dgr" onclick="notaApagar('${n.id}')" aria-label="Apagar item">×</button></span>
+          </div>`
+        : `<div class="nt-item">
+            <input class="nt-nm" id="nt_d_${n.id}" value="${esc(n.descricao)}" placeholder="O quê" aria-label="Descrição"
+              oninput="notaDigitar('${n.id}','descricao',this.value)" onchange="notaSalvar('${n.id}')"
+              onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('nt_c_${n.id}').focus();}">
+            <input class="nt-v" id="nt_c_${n.id}" value="${esc(n.conta)}" placeholder="0,00" aria-label="Valor ou conta"
+              autocomplete="off" spellcheck="false"
+              oninput="notaDigitar('${n.id}','conta',this.value)" onchange="notaSalvar('${n.id}')"
+              onkeydown="if(event.key==='Enter'){event.preventDefault();notaProxima('${n.id}');}">
+            <span class="nt-r" id="nt_r_${n.id}">${notaCelula(n)}</span>
+            <span class="nt-d"><button class="btn dgr" onclick="notaApagar('${n.id}')" aria-label="Apagar linha">×</button></span>
+          </div>`).join('')}</div>`
       :`<p class="note" style="padding:4px 0 10px">Nada anotado ainda. Adicione uma linha ou faça uma conta e toque em <b>Usar na lista</b>.</p>`}
       <div class="rowbar" style="margin:12px 0 0">
-        <button class="btn alt sm" onclick="notaNova()">Adicionar linha</button>
+        <button class="btn alt sm" onclick="notaNova('valor')">＋ Valor</button>
+        <button class="btn alt sm" onclick="notaNova('check')">☑ Checklist</button>
         ${ls.length?`<button class="btn dgr" onclick="notaLimpar()">Limpar lista</button>`:''}
       </div>
       <div class="nt-total"><span>Total</span><b id="nt_total" class="${tot<0?'neg':''}">${BRL(tot)}</b></div>
 
       <div class="nt-savebox">
+        <label for="nt_titulo">Título da nota</label>
+        <input id="nt_titulo" value="${esc(NOTA_TITULO)}" placeholder="Ex.: Contas antes das férias"
+          oninput="notaTitulo(this.value)" style="width:100%;margin-bottom:10px">
         <label for="nt_obs">Observação da nota</label>
         <textarea id="nt_obs" rows="3" placeholder="Ex.: separar este valor para o fim do mês"
           oninput="notaObs(this.value)">${esc(NOTA_OBS)}</textarea>
@@ -5649,19 +5664,45 @@ function vNotas(){
     : `<div class="panel nt-salvas"><h2>Notas salvas <small>${salvas.length}</small></h2>
        <div class="pbody">
        ${salvas.length ? salvas.map(n=>{
-          const linhas=Array.isArray(n.linhas)?n.linhas:[];
+          const linhas=notaSalvaLinhas(n);
+          const feitas=linhas.filter(l=>l.tipo==='check'&&l.concluido).length;
+          const checks=linhas.filter(l=>l.tipo==='check').length;
           return `<details class="nt-salva">
             <summary>
-              <span><b>${esc(n.titulo||'Nota salva')}</b><small>${notaDataSalva(n.criado_em)} · ${linhas.length} linha${linhas.length===1?'':'s'}</small></span>
-              <strong>${BRL(n.total)}</strong>
+              <span><b>${esc(n.titulo||'Nota salva')}</b><small>${notaDataSalva(n.criado_em)} · ${linhas.length} item${linhas.length===1?'':'s'}${checks?' · '+feitas+'/'+checks+' marcados':''}</small></span>
+              <strong>${BRL(notaSalvaTotal(linhas))}</strong>
             </summary>
             <div class="nt-salva-corpo">
-              ${n.observacao?`<p class="nt-obs-salva">${esc(n.observacao)}</p>`:''}
-              <div class="nt-salva-linhas">
-                ${linhas.map(l=>`<div><span>${esc(l.descricao||'Sem descrição')}</span><b>${BRL(l.valor==null?notaCalcular(l.conta):l.valor)}</b></div>`).join('')}
+              <div class="nt-salva-editor">
+                <label>Título</label>
+                <input value="${esc(n.titulo||'')}" placeholder="Título"
+                  onchange="notaSalvaCampo('${n.id}','titulo',this.value)">
+                <label>Observação</label>
+                <textarea rows="3" placeholder="Observação"
+                  onchange="notaSalvaCampo('${n.id}','observacao',this.value)">${esc(n.observacao||'')}</textarea>
+              </div>
+              <div class="nt-salva-linhas nt-salva-editaveis">
+                ${linhas.map((l,i)=>l.tipo==='check'
+                  ? `<div class="nt-saved-check ${l.concluido?'done':''}">
+                      <input type="checkbox" ${l.concluido?'checked':''}
+                        onchange="notaSalvaLinhaCheck('${n.id}',${i},this.checked)">
+                      <input value="${esc(l.descricao||'')}" placeholder="Item"
+                        onchange="notaSalvaLinhaCampo('${n.id}',${i},'descricao',this.value)">
+                      <button class="btn dgr sm" onclick="notaSalvaExcluirLinha('${n.id}',${i})">×</button>
+                    </div>`
+                  : `<div class="nt-saved-value">
+                      <input value="${esc(l.descricao||'')}" placeholder="Descrição"
+                        onchange="notaSalvaLinhaCampo('${n.id}',${i},'descricao',this.value)">
+                      <input class="nt-v" value="${esc(l.conta||notaTexto(l.valor||0))}" placeholder="0,00"
+                        onchange="notaSalvaLinhaCampo('${n.id}',${i},'conta',this.value)">
+                      <b>${BRL(l.valor==null?notaCalcular(l.conta):l.valor)}</b>
+                      <button class="btn dgr sm" onclick="notaSalvaExcluirLinha('${n.id}',${i})">×</button>
+                    </div>`).join('')}
               </div>
               <div class="rowbar" style="margin:10px 0 0">
-                <button class="btn dgr" onclick="notaExcluirSalva('${n.id}')">Excluir nota salva</button>
+                <button class="btn alt sm" onclick="notaSalvaAdicionar('${n.id}','valor')">＋ Valor</button>
+                <button class="btn alt sm" onclick="notaSalvaAdicionar('${n.id}','check')">☑ Checklist</button>
+                <button class="btn dgr sm" onclick="notaExcluirSalva('${n.id}')">Excluir nota</button>
               </div>
             </div>
           </details>`;
@@ -5676,6 +5717,7 @@ function notaDepois(){
 }
 
 window.notaObs=v=>{ NOTA_OBS=v; };
+window.notaTitulo=v=>{ NOTA_TITULO=v; };
 
 window.notaSalvarBloco=async()=>{
   if(FALTANDO.includes('notas_salvas')) return toast('Falta a tabela de notas salvas');
@@ -5684,11 +5726,13 @@ window.notaSalvarBloco=async()=>{
   const ls=notaLinhas();
   if(!ls.length) return toast('Adicione pelo menos uma linha antes de salvar');
   const agora=new Date();
-  const titulo='Nota de '+agora.toLocaleDateString('pt-BR');
+  const titulo=NOTA_TITULO.trim() || ('Nota de '+agora.toLocaleDateString('pt-BR'));
   const linhas=ls.map(n=>({
+    tipo:n.tipo==='check'?'check':'valor',
     descricao:n.descricao||'',
-    conta:n.conta||'',
-    valor:notaCalcular(n.conta)
+    conta:n.tipo==='check'?'':(n.conta||''),
+    valor:n.tipo==='check'?null:notaCalcular(n.conta),
+    concluido:n.tipo==='check'?!!n.concluido:false
   }));
   const n=await inserir('notas_salvas',{
     titulo,
@@ -5698,9 +5742,59 @@ window.notaSalvarBloco=async()=>{
     criado_por:USER?.id||null
   });
   if(!n) return;
-  NOTA_OBS='';
+  NOTA_OBS=''; NOTA_TITULO='';
   render();
   toast('Nota salva · '+BRL(n.total));
+};
+
+function notaSalvaLinhas(n){
+  return (Array.isArray(n.linhas)?n.linhas:[]).map(l=>({
+    tipo:l.tipo==='check'?'check':'valor',
+    descricao:l.descricao||'',
+    conta:l.tipo==='check'?'':(l.conta||''),
+    valor:l.tipo==='check'?null:(l.valor==null?notaCalcular(l.conta):+l.valor),
+    concluido:l.tipo==='check'?!!l.concluido:false
+  }));
+}
+function notaSalvaTotal(linhas){
+  return Math.round(linhas.reduce((s,l)=>s+(l.tipo==='check'?0:(l.valor==null?notaCalcular(l.conta)||0:+l.valor)),0)*100)/100;
+}
+async function notaSalvaAtualizar(id,linhas,extra={}){
+  const total=notaSalvaTotal(linhas);
+  const ok=await atualizar('notas_salvas',id,{linhas,total,atualizado_em:new Date().toISOString(),...extra});
+  if(ok) render();
+  return ok;
+}
+window.notaSalvaCampo=async(id,campo,val)=>{
+  const n=D.notas_salvas.find(x=>x.id===id); if(!n)return;
+  const patch={[campo]:val.trim?val.trim():val,atualizado_em:new Date().toISOString()};
+  if(await atualizar('notas_salvas',id,patch)) render();
+};
+window.notaSalvaLinhaCampo=async(id,i,campo,val)=>{
+  const n=D.notas_salvas.find(x=>x.id===id); if(!n)return;
+  const linhas=notaSalvaLinhas(n); if(!linhas[i])return;
+  linhas[i][campo]=val;
+  if(campo==='conta') linhas[i].valor=notaCalcular(val);
+  await notaSalvaAtualizar(id,linhas);
+};
+window.notaSalvaLinhaCheck=async(id,i,checked)=>{
+  const n=D.notas_salvas.find(x=>x.id===id); if(!n)return;
+  const linhas=notaSalvaLinhas(n); if(!linhas[i])return;
+  linhas[i].concluido=!!checked;
+  await notaSalvaAtualizar(id,linhas);
+};
+window.notaSalvaAdicionar=async(id,tipo)=>{
+  const n=D.notas_salvas.find(x=>x.id===id); if(!n)return;
+  const linhas=notaSalvaLinhas(n);
+  linhas.push(tipo==='check'
+    ? {tipo:'check',descricao:'',conta:'',valor:null,concluido:false}
+    : {tipo:'valor',descricao:'',conta:'',valor:null,concluido:false});
+  await notaSalvaAtualizar(id,linhas);
+};
+window.notaSalvaExcluirLinha=async(id,i)=>{
+  const n=D.notas_salvas.find(x=>x.id===id); if(!n)return;
+  const linhas=notaSalvaLinhas(n); linhas.splice(i,1);
+  await notaSalvaAtualizar(id,linhas);
 };
 
 window.notaExcluirSalva=async id=>{
@@ -5733,13 +5827,17 @@ window.notaSalvar=async id=>{
   Object.keys(enviar).forEach(k=>{ if(agora[k]===enviar[k]) delete agora[k]; });
   if(Object.keys(agora).length) NOTA_PEND[id]=agora; else delete NOTA_PEND[id];
 };
-async function notaInserir(descricao,conta){
+async function notaInserir(descricao,conta,tipo='valor'){
   const ordem=D.notas.reduce((m,n)=>Math.max(m,n.ordem||0),0)+1;
-  return inserir('notas',{descricao, conta, valor:notaCalcular(conta), ordem, criado_por:USER?.id||null});
+  return inserir('notas',{descricao, conta:tipo==='check'?'':conta, valor:tipo==='check'?null:notaCalcular(conta),
+    tipo, concluido:false, ordem, criado_por:USER?.id||null});
 }
-window.notaNova=async()=>{
-  const n=await notaInserir('',''); if(!n) return;
+window.notaNova=async(tipo='valor')=>{
+  const n=await notaInserir('','',tipo); if(!n) return;
   NOTA_FOCO='nt_d_'+n.id; render();
+};
+window.notaCheck=async(id,checked)=>{
+  if(await atualizar('notas',id,{concluido:!!checked,atualizado_em:new Date().toISOString()})) render();
 };
 window.notaProxima=async id=>{
   await notaSalvar(id);
