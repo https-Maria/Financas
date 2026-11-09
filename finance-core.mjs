@@ -37,7 +37,9 @@ export function parcelasMes(parcelamentos, competencia, extra, mesAtual) {
   return total / 100;
 }
 
-export function lancamentoPertenceAoCiclo(lancamento, competencia, janela) {
+export function lancamentoPertenceAoCiclo(lancamento, competencia, janela, competenciaCongelada = null) {
+  // Ajuste que já integra uma fotografia não pode migrar para outra fatura.
+  if (competenciaCongelada) return competenciaCongelada === competencia;
   const informada = String(lancamento?.competencia_fatura || '');
   if (VALIDA_COMPETENCIA.test(informada)) return informada === competencia;
   if (janela?.ini && janela?.fim) {
