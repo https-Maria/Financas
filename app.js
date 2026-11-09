@@ -1,4 +1,10 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.118.0';
+import {
+  mesesDaParcela as mesesDaParcelaCore, parcelaCaiEm as parcelaCaiEmCore,
+  parcelasMes as parcelasMesCore, lancamentoPertenceAoCiclo,
+  mesDeCaixa as mesDeCaixaCore, categoriaNeutra, movimentoOrcamentario, repartirFatura,
+  totalComposicaoFatura
+} from './finance-core.mjs?v=113.0';
 
 /* =====================================================================
    CONFIGURAÇÃO
@@ -11,7 +17,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v112.2';
+const APP_VER='v113.0';
 
 /* =====================================================================
    ESTADO
@@ -254,25 +260,9 @@ const crediariosDoMes = k =>
   D.parcelamentos.filter(p=>ehCrediario(p) && +p.restantes>0 && parcelaCaiEm(p,k));
 const totCrediario = k => crediariosDoMes(k).reduce((s,p)=>s+ +p.valor_parcela,0);
 
-function mesesDaParcela(p){
-  if(Array.isArray(p.competencias) && p.competencias.length)
-    return p.competencias.slice(0, p.restantes);
-  const ini=p.primeira_fatura?ym(p.primeira_fatura):ym(hoje());
-  return Array.from({length:+p.restantes||0},(_,i)=>addM(ini,i));
-}
-const parcelaCaiEm=(p,k)=>mesesDaParcela(p).includes(k);
-
-function parcelasMes(k, extra){
-  let t=0;
-  const conta=(p)=>{
-    const ini = p.primeira_fatura ? ym(p.primeira_fatura) : ym(hoje());
-    const idx = mesesEntre(ini,k);
-    if(idx>=0 && idx<p.restantes) t += +p.valor_parcela;
-  };
-  D.parcelamentos.forEach(conta);
-  if(extra) conta(extra);
-  return t;
-}
+const mesesDaParcela = p => mesesDaParcelaCore(p,ym(hoje()));
+const parcelaCaiEm = (p,k) => parcelaCaiEmCore(p,k,ym(hoje()));
+const parcelasMes = (k,extra) => parcelasMesCore(D.parcelamentos,k,extra,ym(hoje()));
 function mesesEntre(a,b){const[ay,am]=a.split('-').map(Number),[by,bm]=b.split('-').map(Number);
   return (by-ay)*12+(bm-am);}
 /* Fatura de verdade: vem dos lançamentos. Se você já lançou o pagamento da
@@ -477,8 +467,8 @@ function temaCartao(c, bbIndex=0){
   return 'dueto';
 }
 function terceirosCartaoMes(nome,k){
-  return D.terceiros.filter(t=>t.cartao===nome &&
-    (!t.competencia || t.competencia===mLabel(k)))
+  // Sem competência definida, um terceiro não pode aparecer em todas as faturas.
+  return D.terceiros.filter(t=>t.cartao===nome && t.competencia===mLabel(k))
     .reduce((s,t)=>s+ +t.valor,0);
 }
 function totalVisualCartao(nome,k){
@@ -897,7 +887,8 @@ function cofreRevelar(cartao,payload){
   set('cofre_titular_'+cartao.id,cartao.nome_impresso||cartao.titular||'—');
   set('cofre_nome_'+cartao.id,cartao.nome);
   set('cofre_fatura_'+cartao.id,BRL(total));
-  set('cofre_resp_'+cartao.id,cartao.responsavel_fatura_atual&&cartao.fatura_competencia===MREF
+  set('cofre_resp_'+cartao.id,cartao.responsavel_fatura_atual&&
+    cartao.responsavel_fatura_atual!=='Banco conferido'&&cartao.fatura_competencia===MREF
     ? cartao.responsavel_fatura_atual : '');
   set('cofre_vence_'+cartao.id,vence);
   set('cofre_fecha_'+cartao.id,fecha);
@@ -994,9 +985,14 @@ window.bloquearCofre=()=>{cofreBloquear();toast('Cofre bloqueado');};
    esta aba cria isso, e sempre SOMA — cobrança extra some, estorno abate —
    em cima de tudo o mais, sem depender de ciclo ou cálculo. */
 function ajustesFatura(nome, k){
+  const janela=janelaFatura(nome,k);
+  const congelados=new Map();
+  D.faturas_fechadas.filter(f=>f.cartao===nome).forEach(f=>
+    (f.composicao?.ajustes||[]).forEach(a=>congelados.set(a.id,f.competencia)));
   return D.lancamentos.filter(l=>
-    (l.competencia_fatura||ym(l.data))===k && !l.protegido &&
-    (l.cartao||'')===nome && l.categoria==='Ajuste Fatura');
+    !l.protegido && (l.cartao||'')===nome &&
+    l.categoria==='Ajuste Fatura' &&
+    lancamentoPertenceAoCiclo(l,k,janela,congelados.get(l.id)));
 }
 /* Quais ajustes ainda somam: todos, a não ser que a fatura tenha sido marcada
    no Painel — aí os que já existiam estão dentro da foto. */
@@ -1023,7 +1019,7 @@ function composicaoFatura(nome,k){
     id:l.id,data:l.data,descricao:l.descricao,valor:+l.valor,tipo:l.tipo,categoria:l.categoria
   }));
   const terceiros=D.terceiros.filter(t=>t.cartao===nome &&
-    (!t.competencia || t.competencia===mLabel(k))).map(t=>({
+    t.competencia===mLabel(k)).map(t=>({
       id:t.id,pessoa:t.pessoa,descricao:t.descricao,valor:+t.valor,competencia:t.competencia
     }));
   const ajustes=ajustesFatura(nome,k).map(l=>({
@@ -1036,31 +1032,28 @@ async function congelarFatura(nome,k,valorForcado){
   if(FALTANDO.includes('faturas_fechadas')) return null;
   const existente=faturaFechada(nome,k); if(existente) return existente;
   const ciclo=cicloDe(nome,k), jan=janelaFatura(nome,k), comp=composicaoFatura(nome,k);
-  const sua=valorForcado==null ? faturaCartaoViva(nome,k) : +valorForcado;
   const terc=comp.terceiros.reduce((s,x)=>s+ +x.valor,0);
   const rep=comp.reports.reduce((s,x)=>s+ +x.valor,0);
+  const valores=repartirFatura({
+    banco:faturaBancoInformada(nome,k),terceiros:terc,reports:rep,
+    modelado:faturaCartaoViva(nome,k),forcado:valorForcado
+  });
+  if(valores.erro){toast(valores.erro+' Confira os valores antes de fechar.',5000);return null;}
   const linha={grupo_id:GRUPO,cartao:nome,competencia:k,fecha:ciclo?.fecha||jan?.fim||null,
-    vence:ciclo?.vence||null,sua_parte:sua,total_real:sua+terc+rep,composicao:comp,
-    criado_por:USER?.id||null};
+    vence:ciclo?.vence||null,sua_parte:valores.sua_parte,total_real:valores.total_real,
+    composicao:comp,criado_por:USER?.id||null};
+  // INSERT, nunca UPSERT: duas sessões não podem sobrescrever uma fotografia histórica.
   const {data,error}=await sb.from('faturas_fechadas')
-    .upsert(linha,{onConflict:'grupo_id,cartao,competencia'}).select().single();
+    .insert(linha).select().single();
   if(error){ toast('Não consegui congelar a fatura: '+error.message,5000); return null; }
   const i=D.faturas_fechadas.findIndex(x=>x.id===data.id);
   if(i>=0) D.faturas_fechadas[i]=data; else D.faturas_fechadas.push(data);
   cacheSave(); return data;
 }
-async function descongelarFatura(nome,k){
-  const f=faturaFechada(nome,k); if(!f) return true;
-  return remover('faturas_fechadas',f.id);
-}
-
 /* Parcela de uma compra simulada neste mês. Independe de cartão escolhido:
    uma compra sem cartão definido ainda pesa no orçamento. */
 function parcelaExtra(k, extra){
-  if(!extra) return 0;
-  const ini=extra.primeira_fatura?ym(extra.primeira_fatura):ym(hoje());
-  const idx=mesesEntre(ini,k);
-  return (idx>=0 && idx<extra.restantes) ? +extra.valor_parcela : 0;
+  return extra && parcelaCaiEm(extra,k) ? +extra.valor_parcela : 0;
 }
 
 /* Cartão que vence no dia 1 é pago com a sobra do último dia do mês anterior.
@@ -1303,7 +1296,8 @@ function avulsosDoMes(k){
   const cartoesAtivos = new Set(D.cartoes.filter(c=>c.ativo).map(c=>c.nome));
   return D.lancamentos.filter(l=>{
     if(mesDeCaixa(l)!==k) return false;
-    if(l.beneficio || l.protegido) return false;          // VA e Reports têm lugar próprio
+    if(l.beneficio || l.protegido || categoriaNeutra(l.categoria)) return false;
+    // VA/Reports e movimentações neutras não integram o orçamento do casal.
     /* Qualquer lançamento com cartão marcado já faz parte da fatura daquele
        cartão — categoria Cartão, Ajuste Fatura, Compras, tanto faz. Nunca
        deve contar de novo como linha solta do dia a dia. */
@@ -1406,10 +1400,8 @@ function blocosDoMes(k, comPlanejado){
    último dia do mês anterior. Então, para efeito de caixa, o dinheiro sai no
    mês anterior — mesmo que o lançamento esteja datado no dia 1. */
 function mesDeCaixa(l){
-  const k=ym(l.data);
-  if(l.cartao && venceNoDia1(l.cartao) && String(l.data).slice(8,10)==='01')
-    return addM(k,-1);
-  return k;
+  // Somente o pagamento da fatura usa a reserva do mês anterior.
+  return mesDeCaixaCore(l,!!l.cartao && venceNoDia1(l.cartao));
 }
 
 /* Reports é dinheiro protegido: entra, paga coisas alocadas a ele, e o que
@@ -1438,16 +1430,18 @@ function reservasMes(k){
 }
 
 function realizado(k){
-  /* Realizado é só o que de fato aconteceu. Projetado não pode contaminar mês fechado.
-     Reembolso/principal de terceiros mexe no banco, mas não é renda nem gasto do casal. */
-  const ls=D.lancamentos.filter(l=>mesDeCaixa(l)===k && l.status!=='Projetado');
-  const orc=l=>!l.protegido&&!l.beneficio&&l.categoria!=='Transferência interna'&&l.categoria!=='Terceiros';
+  /* Base de CAIXA: compras no crédito pertencem à fatura, não ao dia da compra.
+     Transferências e reembolsos continuam no extrato bancário, não na renda. */
+  const ls=D.lancamentos.filter(l=>mesDeCaixa(l)===k && l.status==='Confirmado');
+  const orc=movimentoOrcamentario;
   const ent=ls.filter(l=>l.tipo==='Entrada'&&orc(l)).reduce((s,l)=>s+ +l.valor,0);
   const sai=ls.filter(l=>l.tipo==='Saída'&&orc(l)).reduce((s,l)=>s+ +l.valor,0);
-  const va =ls.filter(l=>l.beneficio).reduce((s,l)=>s+ +l.valor,0);
+  const va=ls.filter(l=>l.beneficio).reduce((s,l)=>s+ +l.valor,0);
+  const reembolsos=ls.filter(l=>l.tipo==='Entrada' && /^Reembolso/i.test(l.categoria||''))
+    .reduce((s,l)=>s+ +l.valor,0);
   const porCat={};
   ls.filter(l=>l.tipo==='Saída'&&orc(l)).forEach(l=>porCat[l.categoria]=(porCat[l.categoria]||0)+ +l.valor);
-  return {ent,sai,va,sal:ent-sai,n:ls.length,porCat,temDados:ls.some(orc)};
+  return {ent,sai,va,reembolsos,sal:ent-sai,n:ls.length,porCat,temDados:ls.some(orc)};
 }
 
 /* =====================================================================
@@ -1504,21 +1498,8 @@ async function carregarTudo(){
   }
 }
 
-let AUTO_FREEZE=false;
-async function autoCongelarFaturasFechadas(){
-  if(DEMO_MODE||AUTO_FREEZE||FALTANDO.includes('faturas_fechadas')) return;
-  AUTO_FREEZE=true;
-  try{
-    const corte='2026-10-26';
-    const ciclos=D.ciclos.filter(c=>c.fecha&&c.fecha>=corte&&c.fecha<hoje()&&!c.inferido)
-      .sort((a,b)=>a.fecha.localeCompare(b.fecha));
-    for(const c of ciclos){
-      if(!D.cartoes.some(x=>x.ativo&&x.nome===c.cartao)) continue;
-      if(faturaFechada(c.cartao,c.competencia)) continue;
-      await congelarFatura(c.cartao,c.competencia);
-    }
-  }finally{AUTO_FREEZE=false;}
-}
+/* Fechar o ciclo não equivale a pagar/conferir a fatura.
+   Fotografias são criadas apenas quando o usuário confirma no Painel. */
 
 async function inserir(tabela, linha){
   if(DEMO_MODE){ toast('Modo demo: nenhuma alteração é salva.',3000); return null; }
@@ -1802,8 +1783,11 @@ window.marcarItem=async(dia,lado,ix)=>{
   const rel=lancRelacionado(it,MREF);
   const feito=rel && rel.itens.some(confirmado);
   if(feito){
-    if(it.tipo==='cartao' || it.tipo==='reserva')
-      await descongelarFatura(it.cartao, it.tipo==='reserva'?it.competencia:MREF);
+    if((it.tipo==='cartao' || it.tipo==='reserva') &&
+       faturaFechada(it.cartao,it.tipo==='reserva'?it.competencia:MREF)){
+      toast('Fatura histórica protegida. Ajuste a diferença numa fatura aberta.',5000);
+      return;
+    }
     /* desmarcar: o que o painel criou some; o que veio de outra origem só
        volta a ser previsão, para não perder o valor real da fatura */
     for(const l of rel.itens.filter(confirmado)){
@@ -1815,6 +1799,13 @@ window.marcarItem=async(dia,lado,ix)=>{
     return;
   }
   if(rel){
+    if(it.tipo==='cartao' || it.tipo==='reserva'){
+      const compFat=it.tipo==='reserva'?it.competencia:MREF;
+      if(!faturaFechada(it.cartao,compFat)){
+        const snap=await congelarFatura(it.cartao,compFat,it.valor);
+        if(!snap) return;
+      }
+    }
     for(const l of rel.itens){
       const mud={status:'Confirmado'};
       if(it.tipo==='avulso' && !veioDoPainel(l)) mud.observacao=MARCA_PAINEL;
@@ -1983,17 +1974,16 @@ function chartFluxo(n=12,ini){
 }
 
 function primeiroMesComParcela(){
-  const h=horizon(24,MREF);
-  const k=h.find(m=>parcelasMes(m)>0);
-  return k||MREF;
+  const meses=D.parcelamentos.flatMap(p=>mesesDaParcela(p)).filter(m=>m>=MREF).sort();
+  return meses[0]||MREF;
 }
 function ultimoMesParcela(){
   let ult=null;
   D.parcelamentos.forEach(p=>{
     if(p.restantes>0){
-      const ini=p.primeira_fatura?ym(p.primeira_fatura):ym(hoje());
-      const fim=addM(ini,p.restantes-1);
-      if(!ult||fim>ult) ult=fim;
+      const meses=mesesDaParcela(p);
+      const fim=meses.length ? [...meses].sort().at(-1) : null;
+      if(fim && (!ult||fim>ult)) ult=fim;
     }});
   return ult?mLabel(ult):'—';
 }
@@ -2485,9 +2475,12 @@ function vLanc(){
     ${LANC_NAT==='caixinha'?`<p class="note" style="margin-top:10px">Soma no guardado da meta escolhida e baixa do saldo em conta — mesma lógica da aba Metas.</p>`:''}
   </div></div>
   <div class="kpis">
-    ${kpi('Entradas',BRL(r.ent),'','pos')} ${kpi('Saídas',BRL(r.sai),'','neg')}
-    ${kpi('Saldo',BRL(r.sal),'',r.sal<0?'neg':'pos')} ${kpi('Benefícios',BRL(r.va),'fora do saldo','amb')}
+    ${kpi('Entradas',BRL(r.ent),'caixa do casal','pos')} ${kpi('Saídas',BRL(r.sai),'caixa do casal','neg')}
+    ${kpi('Saldo',BRL(r.sal),'sem transferências',r.sal<0?'neg':'pos')} ${kpi('Benefícios',BRL(r.va),'fora do saldo','amb')}
   </div>
+  <p class="note" style="margin-bottom:14px">Realizado considera apenas movimentos confirmados do orçamento.
+    Compras no crédito entram quando a fatura é paga; transferências e reembolsos não são renda.
+    ${r.reembolsos>0?'Reembolsos recebidos, separados da renda: <b>'+BRL(r.reembolsos)+'</b>.':''}</p>
   <div class="panel"><h2>${mLabel(MREF)} <small>${ls.length} de ${doMes.length} lançamento${doMes.length===1?'':'s'}</small>
     <select style="max-width:140px" onchange="setMes(this.value)">
       ${mesesDisponiveis().map(k=>`<option value="${k}" ${k===MREF?'selected':''}>${mLabel(k)}</option>`).join('')}
@@ -2866,7 +2859,7 @@ function vTerc(){
 
   const pessoasTodas=[...new Set(D.terceiros.map(t=>t.pessoa))].sort();
   const ehCart=D.cartoes.some(c=>c.nome===TERC_ORIG);
-  const vezes=Math.max(1,+(TERC_FORM.n||1));
+  const vezes=Math.max(1,+(window.TERC_FORM.n||1));
   const comStatus=D.terceiros.map(t=>({...t,_status:emAberto(t)?'pendente':'recebido'}));
   const filtrados=aplicaFiltro('terc',comStatus,['pessoa','descricao'],'_status','pessoa');
   const exibindoRecebidos=filtroDe('terc').tipo==='recebido';
@@ -2957,10 +2950,10 @@ function vTerc(){
   <div class="pbody">
     <div class="form">
       <div class="fld"><label>Quem</label><input id="t_p" placeholder="Ex.: Mãe"
-        value="${esc(TERC_FORM.p||'')}" oninput="tercSet('p',this.value)"></div>
+        value="${esc(window.TERC_FORM.p||'')}" oninput="tercSet('p',this.value)"></div>
       <div class="fld" style="grid-column:span 2"><label>O que é</label>
         <input id="t_d" placeholder="Ex.: Renner"
-          value="${esc(TERC_FORM.d||'')}" oninput="tercSet('d',this.value)"></div>
+          value="${esc(window.TERC_FORM.d||'')}" oninput="tercSet('d',this.value)"></div>
       <div class="fld"><label>Saiu de onde</label><select id="t_o" onchange="setTercOrig(this.value)">
         <optgroup label="Fora do cartão">
           <option ${TERC_ORIG==='Pix'?'selected':''}>Pix</option>
@@ -2973,14 +2966,14 @@ function vTerc(){
       </select></div>
       ${ehCart
         ? `<div class="fld"><label>Em quantas vezes</label><select id="t_n" onchange="tercSet('n',this.value,true)">
-              ${Array.from({length:24},(_,i)=>i+1).map(n=>`<option value="${n}" ${String(TERC_FORM.n||'1')===String(n)?'selected':''}>${n===1?'à vista':n+'x'}</option>`).join('')}
+              ${Array.from({length:24},(_,i)=>i+1).map(n=>`<option value="${n}" ${String(window.TERC_FORM.n||'1')===String(n)?'selected':''}>${n===1?'à vista':n+'x'}</option>`).join('')}
             </select></div>
            <div class="fld"><label>${vezes>1?'Valor de cada parcela':'Valor'}</label>
-             <input type="number" step="0.01" id="t_v" value="${TERC_FORM.v||''}"
+             <input type="number" step="0.01" id="t_v" value="${window.TERC_FORM.v||''}"
                oninput="tercSet('v',this.value)" onchange="tercSet('v',this.value,true)"></div>
            <div class="fld"><label>${vezes>1?'Fatura da 1ª parcela':'Em qual fatura'}</label>
             <select id="t_cp">${mesesDisponiveis().map(m=>`<option value="${mLabel(m)}" ${m===MREF?'selected':''}>${mLabel(m)}</option>`).join('')}</select></div>`
-        : `<div class="fld"><label>Valor</label><input type="number" step="0.01" id="t_v" value="${TERC_FORM.v||''}" oninput="tercSet('v',this.value)"></div>
+        : `<div class="fld"><label>Valor</label><input type="number" step="0.01" id="t_v" value="${window.TERC_FORM.v||''}" oninput="tercSet('v',this.value)"></div>
            <div class="fld"><label>Quando saiu</label><input type="date" id="t_ds" value="${hoje()}"></div>
            <div class="fld"><label>Previsão de volta</label><input type="date" id="t_pv"></div>`}
       <div class="fld"><label>&nbsp;</label><button class="btn" onclick="addTerc()">Registrar</button></div>
@@ -2997,7 +2990,7 @@ window.addTerc=async()=>{
   const ehCartao=D.cartoes.some(c=>c.nome===origem);
   /* Parcelado: uma linha por fatura, com "Parcela i/n" na descrição — é o
      formato que a própria lista agrupa de volta num compromisso só. */
-  const n = ehCartao ? Math.max(1, +(TERC_FORM.n||1)) : 1;
+  const n = ehCartao ? Math.max(1, +(window.TERC_FORM.n||1)) : 1;
   const comp1 = ehCartao ? ($('t_cp')?.value || mLabel(MREF)) : null;
   const avanca = (comp, i) => {               /* 'MM/AAAA' + i meses */
     const [mm,aa]=comp.split('/').map(Number);
@@ -3034,7 +3027,7 @@ window.tercSet=(campo,val,redesenha)=>{
 };
 window.setTercOrig=v=>{
   window.TERC_FORM={p:$('t_p')?.value||'', d:$('t_d')?.value||'',
-                    v:$('t_v')?.value||'', n:TERC_FORM.n||'1'};
+                    v:$('t_v')?.value||'', n:window.TERC_FORM.n||'1'};
   TERC_ORIG=v; render();
   setTimeout(()=>$('t_v')?.focus(),0);
 };
@@ -4226,7 +4219,8 @@ function gastosPorCategoria(k){
     const v=venceNoDia1(c.nome)?faturaCartao(c.nome,addM(k,1)):faturaCartao(c.nome,k);
     if(v>0) soma('Cartão',v);
   });
-  avulsosDoMes(k).filter(l=>l.tipo==='Saída').forEach(l=>soma(l.categoria||'Outros',+l.valor));
+  avulsosDoMes(k).filter(l=>l.tipo==='Saída' && movimentoOrcamentario(l))
+    .forEach(l=>soma(l.categoria||'Outros',+l.valor));
   return Object.entries(m).map(([cat,v])=>({cat,v})).sort((a,b)=>b.v-a.v);
 }
 
@@ -4688,7 +4682,7 @@ function vDash(){
   </div>
 
   <div class="grid2">
-    <div class="panel"><h2>Para onde vai cada real<small>${mLabel(k)}</small></h2><div class="pbody">
+    <div class="panel"><h2>Para onde vai cada real<small>Orçamento previsto · ${mLabel(k)}</small></h2><div class="pbody">
       ${[['Contas fixas',I.fix,I.pctFix,'var(--steel)'],
          ['Dívidas',I.servico,I.pctServico,'var(--neg)'],
          ['Assinaturas',I.assin,I.pctAssin,'var(--amber)'],
@@ -5203,12 +5197,13 @@ window.salvarTotalBanco=async(nome,k)=>{
   const c=D.cartoes.find(x=>x.nome===nome);
   if(!c) return toast('Cartão não encontrado');
   const v=parseFloat($('fat_banco_total')?.value);
-  if(!v || v<0) return toast('Informe o total que aparece no banco');
+  if(!Number.isFinite(v) || v<0) return toast('Informe o total que aparece no banco');
   const ok=await atualizar('cartoes',c.id,{
     fatura_atual:+v.toFixed(2),
     fatura_competencia:k,
     fatura_atualizada_em:new Date().toISOString(),
-    responsavel_fatura_atual:'Banco conferido'
+    responsavel_fatura_atual:c.responsavel_fatura_atual==='Banco conferido'
+      ? null : c.responsavel_fatura_atual
   });
   if(ok){ render(); toast('Total do banco salvo · '+BRL(v)+' passa a ser a verdade desta fatura'); }
 };
@@ -5259,7 +5254,7 @@ function vFatura(){
     })) : assinaturasDaFatura(n,comp);
   const terceiros = snap ? (snap.composicao?.terceiros||[]) :
     D.terceiros.filter(t=>t.cartao===n &&
-      (!t.competencia || t.competencia===mLabel(comp)));
+      t.competencia===mLabel(comp));
   /* A lista tem que bater com a conta de "Sua parte": compras à vista (somam)
      e créditos no cartão (abatem). Ficam de fora o total declarado e os
      ajustes, que têm painel próprio, e o Reports, que é dinheiro protegido
@@ -5337,7 +5332,7 @@ function vFatura(){
     ${kpi('Sua parte da fatura',BRL(valor),bancoInformado!=null?'derivada do banco':(real?'confirmado':'estimado'),(bancoInformado!=null||real)?'pos':'amb')}
     ${kpi('Total real do cartão',BRL(totalBanco),bancoInformado!=null?'conferido no banco':'estimado pelo Dueto')}
     ${kpi('Terceiros',BRL(somaTerc),terceiros.length+' item'+(terceiros.length===1?'':'s'))}
-    ${kpi('Parcelado comprometido',BRL(parcelas.reduce((s,p)=>s+(+p.valor_parcela)*(mesesDaParcela(p).filter(m=>m>=comp).length||1),0)),'saldo das compras parceladas desta fatura')}
+    ${kpi('Parcelado comprometido',BRL(parcelas.reduce((s,p)=>s+(+p.valor_parcela)*mesesDaParcela(p).filter(m=>m>=comp).length,0)),'saldo das compras parceladas desta fatura')}
   </div>
 
   ${!snap?`<div class="panel" style="margin-bottom:16px"><h2>Conferir com o banco
@@ -6016,7 +6011,7 @@ function integridadeItens(){
 
   D.cartoes.filter(c=>c.ativo).forEach(c=>{
     const falt=[];
-    if(!c.dia_fecha)falt.push('fechamento');
+    if(!c.dia_fecha && !D.ciclos.some(x=>x.cartao===c.nome))falt.push('fechamento');
     if(!c.dia_venc)falt.push('vencimento');
     if(c.limite==null)falt.push('limite');
     if(!c.final4)falt.push('final 4');
@@ -6041,6 +6036,10 @@ function integridadeItens(){
   if(tercSemComp.length) add('warn',tercSemComp.length+' terceiro(s) sem competência válida',
     'Sem competência, a cobrança pode cair na fatura errada.','terc');
 
+  const recebidosSemData=D.terceiros.filter(t=>t.recebido && !t.recebido_em);
+  if(recebidosSemData.length) add('warn',recebidosSemData.length+' recebimento(s) de terceiros sem data',
+    'A quitação está registrada, mas a data não pode ser inferida com segurança.','terc');
+
   const passados=D.lancamentos.filter(l=>l.status==='Projetado' && String(l.data)<h);
   if(passados.length) add('warn',passados.length+' lançamento(s) projetado(s) no passado',
     'Confirme, corrija a data ou remova o que não aconteceu.','lanc');
@@ -6058,7 +6057,43 @@ function integridadeItens(){
   D.parcelamentos.forEach(p=>{
     if(+p.restantes<0 || (+p.total_parcelas>0 && +p.restantes>+p.total_parcelas))
       add('crit','Parcelamento com quantidade inválida',p.descricao+' está com '+p.restantes+' restantes de '+p.total_parcelas+'.','parc');
+    if(Array.isArray(p.competencias) && p.competencias.length){
+      const lista=p.competencias;
+      if(lista.length!==+p.restantes)
+        add('warn','Competências não conferem com parcelas restantes',
+          p.descricao+': '+lista.length+' competência(s) para '+p.restantes+' parcela(s).','parc');
+      if(new Set(lista).size!==lista.length || lista.some(m=>!/^\d{4}-(0[1-9]|1[0-2])$/.test(m)))
+        add('crit','Lista de competências inválida',p.descricao+' tem mês duplicado ou inválido.','parc');
+    }
   });
+
+  D.faturas_fechadas.forEach(f=>{
+    const itens=totalComposicaoFatura(f.composicao||{});
+    const diferenca=Math.round(((+f.total_real||0)-itens)*100)/100;
+    if(Math.abs(diferenca)>0.01)
+      add('warn','Fotografia histórica sem conciliação completa',
+        f.cartao+' '+mLabel(f.competencia)+': diferença de '+BRL(diferenca)+
+        ' entre total congelado e itens identificados. Não altere o histórico sem conferir o extrato.','fatura');
+  });
+
+  const semFoto=D.ciclos.filter(c=>!c.inferido && c.fecha && c.fecha<h &&
+    D.cartoes.some(x=>x.nome===c.cartao) && !faturaFechada(c.cartao,c.competencia));
+  if(semFoto.length) add('warn',semFoto.length+' fatura(s) fechada(s) sem fotografia histórica',
+    'Ciclos passados sem snapshot. O Dueto não vai inventar valores ou congelar automaticamente.','fatura');
+
+  const categoriasRendaSaida=D.lancamentos.filter(l=>l.tipo==='Saída' && l.categoria==='Salário/Renda');
+  if(categoriasRendaSaida.length) add('warn',categoriasRendaSaida.length+' saída(s) classificadas como salário/renda',
+    'Revise a categoria dos lançamentos. Nenhuma reclassificação foi automática.','lanc');
+
+  const confereBanco=D.cartoes.filter(c=>c.responsavel_fatura_atual==='Banco conferido');
+  if(confereBanco.length) add('info','Campo de responsável contém status antigo',
+    'O status bancário não será mais gravado no campo de responsável. Revise os cadastros legados.','cad');
+
+  const transf=D.lancamentos.filter(l=>l.categoria==='Transferência interna' && l.status==='Confirmado');
+  const saldoTransf=transf.reduce((s,l)=>s+(l.tipo==='Entrada'?+l.valor:-l.valor),0);
+  if(transf.length && Math.abs(saldoTransf)>0.01)
+    add('info','Transferências internas sem pareamento verificável',
+      'Saldo líquido dos lançamentos: '+BRL(saldoTransf)+'. Sem contas de origem/destino vinculadas, não é seguro compensar automaticamente.','lanc');
 
   const encerradas=D.rendas.filter(r=>r.ativo && r.encerra_em && ym(r.encerra_em)<=atual);
   if(encerradas.length) add('info',encerradas.length+' renda(s) encerrada(s) ainda marcada(s) ativa(s)',
@@ -6496,7 +6531,6 @@ async function iniciar(){
     }
     GRUPO=m.grupo_id; EU=m.nome;
     await carregarTudo();
-    await autoCongelarFaturasFechadas();
     if(LOGIN_PENDENTE){
       await registrarLogin(LOGIN_PENDENTE);
       LOGIN_PENDENTE=null;
@@ -6519,7 +6553,7 @@ if('serviceWorker' in navigator)
         recarregou=true;
         window.location.reload();
       });
-      const reg=await navigator.serviceWorker.register('./sw.js?v=109.9',{updateViaCache:'none'});
+      const reg=await navigator.serviceWorker.register('./sw.js?v=113.0',{updateViaCache:'none'});
       await reg.update();
     }catch(e){}
   });

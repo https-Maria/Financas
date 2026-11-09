@@ -1,0 +1,47 @@
+name: Dueto - regressões financeiras
+on:
+  push:
+    branches: [main, 'refactor/**']
+  pull_request:
+    branches: [main]
+jobs:
+  financeiro:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validar sintaxe
+        run: |
+          node --check app.js
+          node --check finance-core.mjs
+          node --check tests/views-smoke.test.mjs
+      - name: Testes financeiros e renderização de 19 telas
+        run: node --test tests/finance-core.test.mjs tests/views-smoke.test.mjs
+
+  navegador:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Preparar Chromium
+        run: |
+          npm install --no-save @playwright/test@1.58.2
+          npx playwright install --with-deps chromium
+      - name: Testes visuais e navegação com dados isolados
+        run: |
+          python3 -m http.server 8765 --bind 127.0.0.1 >/tmp/dueto-web.log 2>&1 &
+          sleep 1
+          npx playwright test tests/ui-smoke.spec.mjs --browser=chromium --reporter=line
+      - name: Guardar evidências de teste, apenas dados fictícios
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dueto-ui-smoke
+          path: test-results/
+          if-no-files-found: ignore
