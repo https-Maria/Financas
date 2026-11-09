@@ -5686,7 +5686,7 @@ function vNotas(){
                   ? `<div class="nt-saved-check ${l.concluido?'done':''}">
                       <input type="checkbox" ${l.concluido?'checked':''}
                         onchange="notaSalvaLinhaCheck('${n.id}',${i},this.checked)">
-                      <input value="${esc(l.descricao||'')}" placeholder="Item"
+                      <input type="text" value="${esc(l.descricao||'')}" placeholder="Item"
                         onchange="notaSalvaLinhaCampo('${n.id}',${i},'descricao',this.value)">
                       <button class="btn dgr sm" onclick="notaSalvaExcluirLinha('${n.id}',${i})">×</button>
                     </div>`
