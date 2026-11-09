@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v112.1';
+const APP_VER='v112.2';
 
 /* =====================================================================
    ESTADO
@@ -5656,7 +5656,7 @@ function vNotas(){
     <div class="panel"><h2>Calculadora</h2><div class="pbody">
       <div class="nt-visor"><div class="nt-conta" id="nt_conta"></div><div class="nt-res" id="nt_res">0</div></div>
       <div class="nt-teclas">${teclas.map(([t,c])=>`<button type="button" class="nt-tk ${c||''}" onclick="notaTecla('${t}')">${t}</button>`).join('')}</div>
-      <p class="note" style="margin-top:10px">Toque num valor da lista para trazer ele para cá.</p>
+      <p class="note" style="margin-top:10px">Toque num valor da lista para trazer ele para cá. No computador, você também pode digitar direto pelo teclado ou teclado numérico; <b>Enter</b> calcula.</p>
     </div></div>
   </div>
   ${FALTANDO.includes('notas_salvas')
@@ -5897,6 +5897,33 @@ window.notaTecla=async t=>{
   }
   notaVisor();
 };
+
+/* Teclado físico / numérico da calculadora do bloco de notas.
+   Só captura teclas quando a aba Notas está aberta e a pessoa NÃO está
+   digitando em input/textarea/select/contenteditable. Assim o atalho nunca
+   interfere no título, observação, checklist ou valores da própria nota. */
+document.addEventListener('keydown',e=>{
+  if(CUR!=='notas' || e.ctrlKey || e.metaKey || e.altKey) return;
+  const a=document.activeElement;
+  if(a && (a.matches?.('input,textarea,select') || a.isContentEditable)) return;
+
+  let t=null;
+  if(/^\d$/.test(e.key)) t=e.key;
+  else if(e.key===',' || e.key==='.' || e.code==='NumpadDecimal') t=',';
+  else if(e.key==='+') t='+';
+  else if(e.key==='-') t='−';
+  else if(e.key==='*' || e.key.toLowerCase()==='x') t='×';
+  else if(e.key==='/') t='÷';
+  else if(e.key==='(' || e.key===')') t=e.key;
+  else if(e.key==='Backspace') t='⌫';
+  else if(e.key==='Enter' || e.key==='=') t='=';
+  else if(e.key==='Escape' || e.key.toLowerCase()==='c') t='C';
+
+  if(t!==null){
+    e.preventDefault();
+    notaTecla(t);
+  }
+});
 
 /* Extrato: TUDO do mês, agrupado nos mesmos períodos das gavetas do Painel,
    com o saldo da conta correndo linha a linha. Diferente da gaveta, aqui
