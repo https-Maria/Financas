@@ -93,3 +93,17 @@ export function repartirFatura({ banco = null, terceiros = 0, reports = 0,
     fonte: totalBanco == null ? (forcado == null ? 'modelado' : 'manual') : 'banco'
   };
 }
+
+export function totalComposicaoFatura(comp = {}) {
+  const lista = chave => Array.isArray(comp[chave]) ? comp[chave] : [];
+  let total = 0;
+  total += lista('parcelas').reduce((s,x)=>s+CENTAVOS(x.valor_parcela),0);
+  total += lista('assinaturas').reduce((s,x)=>s+CENTAVOS(Number(x.valor)*(Number(x.vz)||0)),0);
+  for (const chave of ['avulsos','ajustes']) {
+    total += lista(chave).reduce((s,x)=>s+(x.tipo==='Entrada'?-1:1)*CENTAVOS(x.valor),0);
+  }
+  for (const chave of ['terceiros','reports']) {
+    total += lista(chave).reduce((s,x)=>s+CENTAVOS(x.valor),0);
+  }
+  return total/100;
+}
