@@ -886,7 +886,8 @@ function cofreRevelar(cartao,payload){
   set('cofre_titular_'+cartao.id,cartao.nome_impresso||cartao.titular||'—');
   set('cofre_nome_'+cartao.id,cartao.nome);
   set('cofre_fatura_'+cartao.id,BRL(total));
-  set('cofre_resp_'+cartao.id,cartao.responsavel_fatura_atual&&cartao.fatura_competencia===MREF
+  set('cofre_resp_'+cartao.id,cartao.responsavel_fatura_atual&&
+    cartao.responsavel_fatura_atual!=='Banco conferido'&&cartao.fatura_competencia===MREF
     ? cartao.responsavel_fatura_atual : '');
   set('cofre_vence_'+cartao.id,vence);
   set('cofre_fecha_'+cartao.id,fecha);
@@ -1977,9 +1978,9 @@ function ultimoMesParcela(){
   let ult=null;
   D.parcelamentos.forEach(p=>{
     if(p.restantes>0){
-      const ini=p.primeira_fatura?ym(p.primeira_fatura):ym(hoje());
-      const fim=addM(ini,p.restantes-1);
-      if(!ult||fim>ult) ult=fim;
+      const meses=mesesDaParcela(p);
+      const fim=meses.length ? [...meses].sort().at(-1) : null;
+      if(fim && (!ult||fim>ult)) ult=fim;
     }});
   return ult?mLabel(ult):'—';
 }
@@ -4212,7 +4213,8 @@ function gastosPorCategoria(k){
     const v=venceNoDia1(c.nome)?faturaCartao(c.nome,addM(k,1)):faturaCartao(c.nome,k);
     if(v>0) soma('Cartão',v);
   });
-  avulsosDoMes(k).filter(l=>l.tipo==='Saída').forEach(l=>soma(l.categoria||'Outros',+l.valor));
+  avulsosDoMes(k).filter(l=>l.tipo==='Saída' && movimentoOrcamentario(l))
+    .forEach(l=>soma(l.categoria||'Outros',+l.valor));
   return Object.entries(m).map(([cat,v])=>({cat,v})).sort((a,b)=>b.v-a.v);
 }
 
@@ -5189,12 +5191,13 @@ window.salvarTotalBanco=async(nome,k)=>{
   const c=D.cartoes.find(x=>x.nome===nome);
   if(!c) return toast('Cartão não encontrado');
   const v=parseFloat($('fat_banco_total')?.value);
-  if(!v || v<0) return toast('Informe o total que aparece no banco');
+  if(!Number.isFinite(v) || v<0) return toast('Informe o total que aparece no banco');
   const ok=await atualizar('cartoes',c.id,{
     fatura_atual:+v.toFixed(2),
     fatura_competencia:k,
     fatura_atualizada_em:new Date().toISOString(),
-    responsavel_fatura_atual:'Banco conferido'
+    responsavel_fatura_atual:c.responsavel_fatura_atual==='Banco conferido'
+      ? null : c.responsavel_fatura_atual
   });
   if(ok){ render(); toast('Total do banco salvo · '+BRL(v)+' passa a ser a verdade desta fatura'); }
 };
@@ -5245,7 +5248,7 @@ function vFatura(){
     })) : assinaturasDaFatura(n,comp);
   const terceiros = snap ? (snap.composicao?.terceiros||[]) :
     D.terceiros.filter(t=>t.cartao===n &&
-      (!t.competencia || t.competencia===mLabel(comp)));
+      t.competencia===mLabel(comp));
   /* A lista tem que bater com a conta de "Sua parte": compras à vista (somam)
      e créditos no cartão (abatem). Ficam de fora o total declarado e os
      ajustes, que têm painel próprio, e o Reports, que é dinheiro protegido
@@ -5323,7 +5326,7 @@ function vFatura(){
     ${kpi('Sua parte da fatura',BRL(valor),bancoInformado!=null?'derivada do banco':(real?'confirmado':'estimado'),(bancoInformado!=null||real)?'pos':'amb')}
     ${kpi('Total real do cartão',BRL(totalBanco),bancoInformado!=null?'conferido no banco':'estimado pelo Dueto')}
     ${kpi('Terceiros',BRL(somaTerc),terceiros.length+' item'+(terceiros.length===1?'':'s'))}
-    ${kpi('Parcelado comprometido',BRL(parcelas.reduce((s,p)=>s+(+p.valor_parcela)*(mesesDaParcela(p).filter(m=>m>=comp).length||1),0)),'saldo das compras parceladas desta fatura')}
+    ${kpi('Parcelado comprometido',BRL(parcelas.reduce((s,p)=>s+(+p.valor_parcela)*mesesDaParcela(p).filter(m=>m>=comp).length,0)),'saldo das compras parceladas desta fatura')}
   </div>
 
   ${!snap?`<div class="panel" style="margin-bottom:16px"><h2>Conferir com o banco
@@ -6482,7 +6485,6 @@ async function iniciar(){
     }
     GRUPO=m.grupo_id; EU=m.nome;
     await carregarTudo();
-    await autoCongelarFaturasFechadas();
     if(LOGIN_PENDENTE){
       await registrarLogin(LOGIN_PENDENTE);
       LOGIN_PENDENTE=null;
