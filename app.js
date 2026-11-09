@@ -5,6 +5,8 @@ import {
   mesDeCaixa as mesDeCaixaCore, categoriaNeutra, movimentoOrcamentario, repartirFatura,
   totalComposicaoFatura
 } from './finance-core.mjs?v=113.0';
+import { notaRenderRich, notaFormatarTexto, notaTagsParse, notaFiltrar,
+  notaArquivoAceito, notaExtensao, NOTA_MAX_ARQUIVO } from './notas-editor.mjs?v=114.0';
 
 /* =====================================================================
    CONFIGURAÇÃO
@@ -17,16 +19,16 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v113.0';
+const APP_VER='v114.0';
 
 /* =====================================================================
    ESTADO
    ===================================================================== */
 const TABELAS = ['rendas','fixas','beneficios','cartoes','parcelamentos',
-                 'assinaturas','assinatura_excecoes','lancamentos','terceiros','metas','casa_itens','financiamentos','agenda','snapshots','ciclos','faturas_fechadas','auditoria','login_historico','notas','notas_salvas'];
+                 'assinaturas','assinatura_excecoes','lancamentos','terceiros','metas','casa_itens','financiamentos','agenda','snapshots','ciclos','faturas_fechadas','auditoria','login_historico','notas','notas_salvas','notas_anexos'];
 let USER=null, GRUPO=null, EU=null;
 let D = {rendas:[],fixas:[],beneficios:[],cartoes:[],parcelamentos:[],
-         assinaturas:[],assinatura_excecoes:[],lancamentos:[],terceiros:[],metas:[],casa_itens:[],financiamentos:[],agenda:[],snapshots:[],ciclos:[],faturas_fechadas:[],auditoria:[],login_historico:[],notas:[],notas_salvas:[],config:null};
+         assinaturas:[],assinatura_excecoes:[],lancamentos:[],terceiros:[],metas:[],casa_itens:[],financiamentos:[],agenda:[],snapshots:[],ciclos:[],faturas_fechadas:[],auditoria:[],login_historico:[],notas:[],notas_salvas:[],notas_anexos:[],config:null};
 let ONLINE = navigator.onLine, SYNC='off', FALTANDO=[];
 let DEMO_MODE=false, DEMO_REAL_D=null, DEMO_REAL_EU=null, DEMO_REAL_FALTANDO=null;
 
@@ -144,7 +146,7 @@ function criarDadosDemo(){
     ],
     auditoria:[],login_historico:[],
     notas:[{id:'demo-n1',descricao:'Comparar seguro do carro',conta:'',valor:null,ordem:1}],
-    notas_salvas:[],
+    notas_salvas:[],notas_anexos:[],
     config:{reserva_atual:10700,aporte_mensal:700,saldo_conferido:3248.60,saldo_conferido_em:ant+'-30'}
   };
 }
@@ -1922,6 +1924,7 @@ const MIGRACAO_DE = {
   agenda:'migracao-agenda.sql', snapshots:'migracao-backup.sql',
   ciclos:'migracao-ciclos.sql', auditoria:'migracao-auditoria.sql', login_historico:'migracao-auditoria.sql',
   notas:'migracao-notas.sql', notas_salvas:'migracao-notas-salvas.sql',
+  notas_anexos:'migracao-v114-notas-avancadas.sql',
 };
 function head(t,p){
   /* Tabelas que têm migração própria (casa, financiamento, agenda, cópias,
@@ -5566,6 +5569,8 @@ let NOTA_CALC='';      // o que está na calculadora
 let NOTA_FOCO=null;    // campo pra focar depois do próximo desenho
 let NOTA_OBS='';       // observação do rascunho antes de virar uma nota salva
 let NOTA_TITULO='';    // título opcional da próxima nota salva
+let NOTA_PASTA='Geral', NOTA_ETIQUETAS='', NOTA_FONTE='padrao';
+let NOTA_BUSCA='', NOTA_PASTA_FILTRO='Todas';
 
 function notaLinhas(){
   return D.notas.map(n=>({...n, ...(NOTA_PEND[n.id]||{})}))
@@ -5593,7 +5598,7 @@ function notaDataSalva(x){
   catch(e){return String(x||'');}
 }
 function notaSalvas(){
-  return [...(D.notas_salvas||[])].sort((a,b)=>String(b.criado_em).localeCompare(String(a.criado_em)));
+  return notaFiltrar(D.notas_salvas||[],NOTA_BUSCA,NOTA_PASTA_FILTRO);
 }
 function vNotas(){
   const cab=head('Bloco de notas','Valores, anotações e checklists no mesmo lugar. Tudo editável e fora do orçamento.');
