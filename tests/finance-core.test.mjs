@@ -31,6 +31,13 @@ test('ajuste sem competência segue janela do ciclo e não o mês civil', () => 
   assert.equal(lancamentoPertenceAoCiclo(l,'2026-12',janela),true);
   assert.equal(lancamentoPertenceAoCiclo(l,'2026-10',{ini:'2026-08-23',fim:'2026-09-23'}),false);
 });
+test('ajuste já congelado não migra para dezembro mesmo com data 31/10', () => {
+  const l={data:'2026-10-31'};
+  assert.equal(lancamentoPertenceAoCiclo(l,'2026-10',
+    {ini:'2026-08-23',fim:'2026-09-23'},'2026-10'),true);
+  assert.equal(lancamentoPertenceAoCiclo(l,'2026-12',
+    {ini:'2026-10-26',fim:'2026-11-23'},'2026-10'),false);
+});
 test('competência explícita prevalece sobre data e janela', () => {
   assert.equal(lancamentoPertenceAoCiclo({data:'2026-10-31',competencia_fatura:'2026-10'},
     '2026-12',{ini:'2026-10-26',fim:'2026-11-23'}),false);
