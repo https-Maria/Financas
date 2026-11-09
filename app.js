@@ -6036,6 +6036,10 @@ function integridadeItens(){
   if(tercSemComp.length) add('warn',tercSemComp.length+' terceiro(s) sem competência válida',
     'Sem competência, a cobrança pode cair na fatura errada.','terc');
 
+  const recebidosSemData=D.terceiros.filter(t=>t.recebido && !t.recebido_em);
+  if(recebidosSemData.length) add('warn',recebidosSemData.length+' recebimento(s) de terceiros sem data',
+    'A quitação está registrada, mas a data não pode ser inferida com segurança.','terc');
+
   const passados=D.lancamentos.filter(l=>l.status==='Projetado' && String(l.data)<h);
   if(passados.length) add('warn',passados.length+' lançamento(s) projetado(s) no passado',
     'Confirme, corrija a data ou remova o que não aconteceu.','lanc');
