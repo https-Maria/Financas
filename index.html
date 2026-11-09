@@ -509,7 +509,27 @@ input:focus,select:focus{border-color:var(--steel);outline:none;box-shadow:0 0 0
 .nt-d{text-align:right}
 .nt-d .btn.dgr{font-size:16px;line-height:1;padding:4px 7px;color:var(--muted)}
 .nt-d .btn.dgr:hover,.nt-d .btn.dgr:focus-visible{color:var(--neg)}
-@media(max-width:520px){.nt-item{grid-template-columns:1fr 1fr 30px}.nt-nm{grid-column:1/3}.nt-d{grid-row:1;grid-column:3}}
+.nt-checkitem{display:grid;grid-template-columns:28px 1fr 70px 30px;gap:6px;align-items:center;
+  padding:6px 0;border-bottom:1px solid var(--rule-soft)}
+.nt-box,.nt-saved-check input[type="checkbox"]{width:19px;height:19px;accent-color:var(--steel);cursor:pointer}
+.nt-checkitem .nt-checktext{border-color:transparent;background:none}
+.nt-checkitem.done .nt-checktext,.nt-saved-check.done input[type="text"]{text-decoration:line-through;color:var(--muted)}
+.nt-checkstate{font-size:10.5px;color:var(--muted);text-align:right}
+.nt-salva-editor{display:grid;gap:6px;margin-bottom:10px}
+.nt-salva-editor label{font-size:10.5px;color:var(--muted);font-weight:600}
+.nt-salva-editor input,.nt-salva-editor textarea{width:100%;border:1px solid var(--rule);border-radius:7px;
+  background:var(--panel);color:var(--ink);padding:8px 9px;font:inherit}
+.nt-salva-editor textarea{resize:vertical;min-height:66px}
+.nt-salva-editaveis>div{align-items:center}
+.nt-saved-check{display:grid!important;grid-template-columns:24px 1fr 34px;gap:7px}
+.nt-saved-value{display:grid!important;grid-template-columns:minmax(120px,1fr) 110px 92px 34px;gap:7px}
+.nt-saved-check input[type="text"],.nt-saved-value input{min-width:0;border:1px solid transparent;background:transparent;padding:6px 7px}
+.nt-saved-check input[type="text"]:focus,.nt-saved-value input:focus{border-color:var(--steel);background:var(--panel);outline:none}
+@media(max-width:520px){
+  .nt-item{grid-template-columns:1fr 1fr 30px}.nt-nm{grid-column:1/3}.nt-d{grid-row:1;grid-column:3}
+  .nt-checkitem{grid-template-columns:26px 1fr 30px}.nt-checkstate{display:none}
+  .nt-saved-value{grid-template-columns:1fr 90px 30px}.nt-saved-value b{grid-column:1/3;text-align:right}
+}
 .nt-total{display:flex;justify-content:space-between;align-items:baseline;padding-top:12px;margin-top:12px;border-top:2px solid var(--ink)}
 .nt-total span{font-size:13px;font-weight:600}
 .nt-total b{font-family:var(--mono);font-size:22px;font-weight:700;letter-spacing:-.02em;color:var(--pos)}
@@ -765,6 +785,6 @@ window.duetoSplashPronta=()=>{
 <div id="root"><div class="gate"><div class="gatebox"><h1>Dueto</h1>
 <p class="sub">Preparando suas finanças…</p></div></div></div>
 <div class="toast" id="toast"></div>
-<script type="module" src="app.js?v=111.0"></script>
+<script type="module" src="app.js?v=112.0"></script>
 </body>
 </html>
