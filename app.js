@@ -2859,7 +2859,7 @@ function vTerc(){
 
   const pessoasTodas=[...new Set(D.terceiros.map(t=>t.pessoa))].sort();
   const ehCart=D.cartoes.some(c=>c.nome===TERC_ORIG);
-  const vezes=Math.max(1,+(TERC_FORM.n||1));
+  const vezes=Math.max(1,+(window.TERC_FORM.n||1));
   const comStatus=D.terceiros.map(t=>({...t,_status:emAberto(t)?'pendente':'recebido'}));
   const filtrados=aplicaFiltro('terc',comStatus,['pessoa','descricao'],'_status','pessoa');
   const exibindoRecebidos=filtroDe('terc').tipo==='recebido';
@@ -2950,10 +2950,10 @@ function vTerc(){
   <div class="pbody">
     <div class="form">
       <div class="fld"><label>Quem</label><input id="t_p" placeholder="Ex.: Mãe"
-        value="${esc(TERC_FORM.p||'')}" oninput="tercSet('p',this.value)"></div>
+        value="${esc(window.TERC_FORM.p||'')}" oninput="tercSet('p',this.value)"></div>
       <div class="fld" style="grid-column:span 2"><label>O que é</label>
         <input id="t_d" placeholder="Ex.: Renner"
-          value="${esc(TERC_FORM.d||'')}" oninput="tercSet('d',this.value)"></div>
+          value="${esc(window.TERC_FORM.d||'')}" oninput="tercSet('d',this.value)"></div>
       <div class="fld"><label>Saiu de onde</label><select id="t_o" onchange="setTercOrig(this.value)">
         <optgroup label="Fora do cartão">
           <option ${TERC_ORIG==='Pix'?'selected':''}>Pix</option>
@@ -2966,14 +2966,14 @@ function vTerc(){
       </select></div>
       ${ehCart
         ? `<div class="fld"><label>Em quantas vezes</label><select id="t_n" onchange="tercSet('n',this.value,true)">
-              ${Array.from({length:24},(_,i)=>i+1).map(n=>`<option value="${n}" ${String(TERC_FORM.n||'1')===String(n)?'selected':''}>${n===1?'à vista':n+'x'}</option>`).join('')}
+              ${Array.from({length:24},(_,i)=>i+1).map(n=>`<option value="${n}" ${String(window.TERC_FORM.n||'1')===String(n)?'selected':''}>${n===1?'à vista':n+'x'}</option>`).join('')}
             </select></div>
            <div class="fld"><label>${vezes>1?'Valor de cada parcela':'Valor'}</label>
-             <input type="number" step="0.01" id="t_v" value="${TERC_FORM.v||''}"
+             <input type="number" step="0.01" id="t_v" value="${window.TERC_FORM.v||''}"
                oninput="tercSet('v',this.value)" onchange="tercSet('v',this.value,true)"></div>
            <div class="fld"><label>${vezes>1?'Fatura da 1ª parcela':'Em qual fatura'}</label>
             <select id="t_cp">${mesesDisponiveis().map(m=>`<option value="${mLabel(m)}" ${m===MREF?'selected':''}>${mLabel(m)}</option>`).join('')}</select></div>`
-        : `<div class="fld"><label>Valor</label><input type="number" step="0.01" id="t_v" value="${TERC_FORM.v||''}" oninput="tercSet('v',this.value)"></div>
+        : `<div class="fld"><label>Valor</label><input type="number" step="0.01" id="t_v" value="${window.TERC_FORM.v||''}" oninput="tercSet('v',this.value)"></div>
            <div class="fld"><label>Quando saiu</label><input type="date" id="t_ds" value="${hoje()}"></div>
            <div class="fld"><label>Previsão de volta</label><input type="date" id="t_pv"></div>`}
       <div class="fld"><label>&nbsp;</label><button class="btn" onclick="addTerc()">Registrar</button></div>
@@ -2990,7 +2990,7 @@ window.addTerc=async()=>{
   const ehCartao=D.cartoes.some(c=>c.nome===origem);
   /* Parcelado: uma linha por fatura, com "Parcela i/n" na descrição — é o
      formato que a própria lista agrupa de volta num compromisso só. */
-  const n = ehCartao ? Math.max(1, +(TERC_FORM.n||1)) : 1;
+  const n = ehCartao ? Math.max(1, +(window.TERC_FORM.n||1)) : 1;
   const comp1 = ehCartao ? ($('t_cp')?.value || mLabel(MREF)) : null;
   const avanca = (comp, i) => {               /* 'MM/AAAA' + i meses */
     const [mm,aa]=comp.split('/').map(Number);
@@ -3027,7 +3027,7 @@ window.tercSet=(campo,val,redesenha)=>{
 };
 window.setTercOrig=v=>{
   window.TERC_FORM={p:$('t_p')?.value||'', d:$('t_d')?.value||'',
-                    v:$('t_v')?.value||'', n:TERC_FORM.n||'1'};
+                    v:$('t_v')?.value||'', n:window.TERC_FORM.n||'1'};
   TERC_ORIG=v; render();
   setTimeout(()=>$('t_v')?.focus(),0);
 };
