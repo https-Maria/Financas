@@ -985,10 +985,13 @@ window.bloquearCofre=()=>{cofreBloquear();toast('Cofre bloqueado');};
    em cima de tudo o mais, sem depender de ciclo ou cálculo. */
 function ajustesFatura(nome, k){
   const janela=janelaFatura(nome,k);
+  const congelados=new Map();
+  D.faturas_fechadas.filter(f=>f.cartao===nome).forEach(f=>
+    (f.composicao?.ajustes||[]).forEach(a=>congelados.set(a.id,f.competencia)));
   return D.lancamentos.filter(l=>
     !l.protegido && (l.cartao||'')===nome &&
     l.categoria==='Ajuste Fatura' &&
-    lancamentoPertenceAoCiclo(l,k,janela));
+    lancamentoPertenceAoCiclo(l,k,janela,congelados.get(l.id)));
 }
 /* Quais ajustes ainda somam: todos, a não ser que a fatura tenha sido marcada
    no Painel — aí os que já existiam estão dentro da foto. */
