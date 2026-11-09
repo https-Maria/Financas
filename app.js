@@ -5600,6 +5600,54 @@ function notaDataSalva(x){
 function notaSalvas(){
   return notaFiltrar(D.notas_salvas||[],NOTA_BUSCA,NOTA_PASTA_FILTRO);
 }
+
+function notaBarra(id){
+  const itens=[
+    ['negrito','B','Negrito'],['italico','I','Itálico'],
+    ['riscado','S̶','Texto riscado'],['sublinhado','U̲','Sublinhar'],
+    ['titulo','H1','Título'],['subtitulo','H2','Subtítulo'],
+    ['manuscrita','Aa','Letra manuscrita'],['mono','01','Monoespaçada'],
+    ['rosa','●','Rosa'],['lavanda','●','Lavanda'],['verde','●','Verde']
+  ];
+  return `<div class="nt-rich-tools" role="toolbar" aria-label="Formatar texto">
+    ${itens.map(([acao,rotulo,titulo])=>`<button type="button"
+      class="nt-rich-${acao}" title="${titulo}" aria-label="${titulo}"
+      onclick="notaFormatar(${jsArg(id)},'${acao}')">${rotulo}</button>`).join('')}
+    </div>`;
+}
+function notaPrevia(id,conteudo,fonte){
+  return `<div class="nt-rich-preview" id="nt_prev_${esc(id)}">
+    <small>Prévia formatada</small>${notaRenderRich(conteudo,fonte)}
+  </div>`;
+}
+function notaFonteSelect(valor,altera){
+  return `<select aria-label="Fonte do texto" onchange="${altera}">
+    <option value="padrao" ${valor==='padrao'?'selected':''}>Fonte padrão</option>
+    <option value="manuscrita" ${valor==='manuscrita'?'selected':''}>Manuscrita</option>
+    <option value="mono" ${valor==='mono'?'selected':''}>Monoespaçada</option>
+  </select>`;
+}
+function notaAnexosHTML(n){
+  const anexos=(D.notas_anexos||[]).filter(a=>a.nota_id===n.id);
+  return `<section class="nt-anexos" aria-label="Anexos da nota">
+    <div class="nt-anexos-top"><b>Anexos (${anexos.length})</b>
+      <label class="btn alt sm" for="nt_file_${n.id}">📎 Anexar fotos ou PDF</label>
+      <input type="file" id="nt_file_${n.id}" hidden multiple
+        accept="image/jpeg,image/png,image/webp,application/pdf"
+        onchange="notaAnexar(${jsArg(n.id)},this.files)">
+    </div>
+    <span class="nt-upload-info">Arquivos JPG, PNG, WebP ou PDF até 10 MB cada. Visíveis apenas ao seu grupo.</span>
+    <div class="nt-upload-status" id="nt_upload_${n.id}" aria-live="polite"></div>
+    <div class="nt-arquivos">${anexos.map(a=>`<div class="nt-arquivo">
+      <span>${a.mime==='application/pdf'?'📄':'🖼️'}</span>
+      <button type="button" class="nt-arqname" onclick="notaAbrirAnexo(${jsArg(a.id)})">${esc(a.nome)}</button>
+      <small>${(Number(a.tamanho)/1048576).toFixed(1)} MB</small>
+      <button class="nt-arqremove" type="button" aria-label="Excluir anexo"
+        onclick="notaRemoverAnexo(${jsArg(a.id)})">×</button>
+    </div>`).join('')}</div>
+  </section>`;
+}
+
 function vNotas(){
   const cab=head('Bloco de notas','Valores, anotações e checklists no mesmo lugar. Tudo editável e fora do orçamento.');
   if(FALTANDO.includes('notas'))
