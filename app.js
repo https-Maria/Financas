@@ -5653,6 +5653,8 @@ function vNotas(){
   if(FALTANDO.includes('notas'))
     return cab+`<div class="warn">Esta aba precisa da tabela de notas. Rode <b>migracao-notas.sql</b> no Supabase e recarregue.</div>`;
   const ls=notaLinhas(), tot=notaTotal(), salvas=notaSalvas();
+  const todas=D.notas_salvas||[];
+  const pastas=['Todas',...[...new Set(todas.map(n=>n.pasta||'Geral'))].sort()];
   const teclas=[['C','fn'],['⌫','fn'],['÷','op'],['×','op'],['7'],['8'],['9'],['−','op'],
     ['4'],['5'],['6'],['+','op'],['1'],['2'],['3'],['=','eq'],['0'],[','],['( )','fn'],['Usar na lista','anota']];
   return cab+`<div class="nt-grid">
@@ -5690,12 +5692,25 @@ function vNotas(){
         <label for="nt_titulo">Título da nota</label>
         <input id="nt_titulo" value="${esc(NOTA_TITULO)}" placeholder="Ex.: Contas antes das férias"
           oninput="notaTitulo(this.value)" style="width:100%;margin-bottom:10px">
-        <label for="nt_obs">Observação da nota</label>
-        <textarea id="nt_obs" rows="3" placeholder="Ex.: separar este valor para o fim do mês"
-          oninput="notaObs(this.value)">${esc(NOTA_OBS)}</textarea>
+        <div class="nt-organizar">
+          <div><label for="nt_pasta">Pasta</label>
+            <input id="nt_pasta" value="${esc(NOTA_PASTA)}" placeholder="Geral"
+              oninput="notaMetaRascunho('pasta',this.value)" list="nt_pastas_sug"></div>
+          <div><label for="nt_tags">Etiquetas (separe por vírgula)</label>
+            <input id="nt_tags" value="${esc(NOTA_ETIQUETAS)}" placeholder="casa, viagem, urgente"
+              oninput="notaMetaRascunho('etiquetas',this.value)"></div>
+          <div><label>Fonte</label>
+            ${notaFonteSelect(NOTA_FONTE,"notaMetaRascunho('fonte',this.value);notaAtualizarPrevia('nt_obs')")}</div>
+        </div>
+        <datalist id="nt_pastas_sug">${pastas.filter(p=>p!=='Todas').map(p=>`<option value="${esc(p)}">`).join('')}</datalist>
+        <label for="nt_obs">Texto e observações</label>
+        ${notaBarra('nt_obs')}
+        <textarea id="nt_obs" rows="5" placeholder="Escreva sua nota. Selecione um trecho e use a barra para formatar."
+          oninput="notaObs(this.value);notaAtualizarPrevia('nt_obs')">${esc(NOTA_OBS)}</textarea>
+        ${notaPrevia('nt_obs',NOTA_OBS,NOTA_FONTE)}
         <div class="nt-saveactions">
-          <span class="note">A lista já salva cada linha automaticamente. Este botão guarda uma <b>cópia fechada</b> dela com a observação.</span>
-          <button class="btn" onclick="notaSalvarBloco()" ${ls.length?'':'disabled'}>Salvar esta nota</button>
+          <span class="note">A lista salva automaticamente. Este botão guarda uma <b>nota independente</b> com texto e listas; você poderá anexar arquivos depois.</span>
+          <button class="btn" onclick="notaSalvarBloco()">Salvar esta nota</button>
         </div>
       </div>
 
