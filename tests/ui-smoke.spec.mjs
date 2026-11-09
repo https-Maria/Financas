@@ -1,5 +1,9 @@
 import { test, expect } from '@playwright/test';
 
+// O registro do service worker reinicia a página; no teste de interface,
+// desabilite esse ciclo para validar a navegação de modo determinístico.
+test.use({ serviceWorkers: 'block' });
+
 const fakeSupabase = String.raw`
 class FakeQuery {
   constructor(table) { this.table = table; }
