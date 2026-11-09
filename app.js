@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v110.1';
+const APP_VER='v111.0';
 
 /* =====================================================================
    ESTADO
@@ -445,9 +445,23 @@ function faturaCartaoViva(nome,k){
     : (faturaCalculada(nome,k) - somaValores(creditosCartao(nome,k)) + somaValores(comprasAVista(nome,k)));
   return base + somaAjustesFatura(nome,k,real);
 }
+function faturaBancoInformada(nome,k){
+  const c=D.cartoes.find(x=>x.nome===nome);
+  return c && c.fatura_competencia===k && c.fatura_atual!=null
+    ? +c.fatura_atual : null;
+}
 function faturaCartao(nome,k){
   const fechada=faturaFechada(nome,k);
-  return fechada ? +fechada.sua_parte : faturaCartaoViva(nome,k);
+  if(fechada) return +fechada.sua_parte;
+  /* Se o banco informou o total real desta competência, ele manda.
+     O Dueto usa terceiros/Reports só para separar quanto pertence ao casal. */
+  const banco=faturaBancoInformada(nome,k);
+  if(banco!=null){
+    const terc=terceirosCartaoMes(nome,k);
+    const rep=reportsFatura(nome,k).filter(l=>l.tipo!=='Entrada').reduce((s,l)=>s+ +l.valor,0);
+    return Math.max(0,banco-terc-rep);
+  }
+  return faturaCartaoViva(nome,k);
 }
 
 /* ---- Central visual de cartões ----
@@ -470,12 +484,11 @@ function terceirosCartaoMes(nome,k){
 function totalVisualCartao(nome,k){
   const fechada=faturaFechada(nome,k);
   if(fechada && fechada.total_real!=null) return +fechada.total_real;
+  const banco=faturaBancoInformada(nome,k);
+  if(banco!=null) return banco;
   const terc=terceirosCartaoMes(nome,k);
-  const rep=reportsFatura(nome,k).reduce((s,l)=>s+ +l.valor,0);
-  const modelado=faturaCartao(nome,k)+terc+rep;
-  if(modelado) return modelado;
-  const c=D.cartoes.find(x=>x.nome===nome);
-  return c && c.fatura_competencia===k && c.fatura_atual!=null ? +c.fatura_atual : 0;
+  const rep=reportsFatura(nome,k).filter(l=>l.tipo!=='Entrada').reduce((s,l)=>s+ +l.valor,0);
+  return faturaCartaoViva(nome,k)+terc+rep;
 }
 function dataCurta(d){
   if(!d) return '—';
@@ -5185,6 +5198,30 @@ window.setAssinExcecao=async(id,k,val)=>{
   else D.assinatura_excecoes.push(data);
   cacheSave();render();toast('Esta fatura vai usar '+vezes+'x para a assinatura');
 };
+window.salvarTotalBanco=async(nome,k)=>{
+  if(faturaFechada(nome,k)) return toast('Fatura fechada — histórico protegido');
+  const c=D.cartoes.find(x=>x.nome===nome);
+  if(!c) return toast('Cartão não encontrado');
+  const v=parseFloat($('fat_banco_total')?.value);
+  if(!v || v<0) return toast('Informe o total que aparece no banco');
+  const ok=await atualizar('cartoes',c.id,{
+    fatura_atual:+v.toFixed(2),
+    fatura_competencia:k,
+    fatura_atualizada_em:new Date().toISOString(),
+    responsavel_fatura_atual:'Banco conferido'
+  });
+  if(ok){ render(); toast('Total do banco salvo · '+BRL(v)+' passa a ser a verdade desta fatura'); }
+};
+window.limparTotalBanco=async(nome,k)=>{
+  if(faturaFechada(nome,k)) return toast('Fatura fechada — histórico protegido');
+  const c=D.cartoes.find(x=>x.nome===nome);
+  if(!c || c.fatura_competencia!==k) return;
+  const ok=await atualizar('cartoes',c.id,{
+    fatura_atual:null,fatura_competencia:null,fatura_atualizada_em:null,responsavel_fatura_atual:null
+  });
+  if(ok){ render(); toast('Conferência removida — voltou para estimativa'); }
+};
+
 window.addAjusteFatura=async(nome,k)=>{
   if(faturaFechada(nome,k)) return toast('Fatura fechada — histórico protegido');
   const desc=$('fat_desc')?.value.trim();
@@ -5212,6 +5249,7 @@ function vFatura(){
   const calc = faturaCalculada(n,comp);
   const valor = faturaCartao(n,comp);
   const snap = faturaFechada(n,comp);
+  const bancoInformado = snap ? null : faturaBancoInformada(n,comp);
 
   const parcelas = snap ? (snap.composicao?.parcelas||[]) :
     D.parcelamentos.filter(p=>(p.cartao||'')===n && parcelaCaiEm(p,comp));
@@ -5243,7 +5281,12 @@ function vFatura(){
   const proximas = snap ? [] : D.parcelamentos.filter(p=>(p.cartao||'')===n && +p.restantes>0
     && !parcelaCaiEm(p,comp) && mesesDaParcela(p).some(m=>m>comp));
 
-  const totalBanco=valor+somaTerc+somaReports;
+  /* O total modelado serve para explicar/projetar; o informado pelo banco,
+     quando existe, é o número oficial usado no orçamento. */
+  const totalModelado=faturaCartaoViva(n,comp)+somaTerc+somaReports;
+  const totalBanco=snap && snap.total_real!=null ? +snap.total_real
+    : (bancoInformado!=null ? bancoInformado : totalModelado);
+  const divergencia=bancoInformado!=null ? +(bancoInformado-totalModelado).toFixed(2) : null;
   const statusFat=snap?'Fechada':real?'Paga':(ciclo&&ciclo.fecha<hoje()?'Fechada':'Aberta');
   const proj6=Array.from({length:6},(_,i)=>addM(k,i)).map(m=>({
     k:m,sua:faturaCartao(n,m),terc:terceirosCartaoMes(n,m),
@@ -5281,6 +5324,7 @@ function vFatura(){
       <small>${real?'valor lançado/confirmado':'estimado pelos cadastros'}</small></div>
     <div class="v107-fat-side">
       <span>Total do banco <b>${BRL(totalBanco)}</b></span>
+      <span>${bancoInformado!=null?'Conferido no banco':'Ainda estimado'}</span>
       <span>Terceiros <b>${BRL(somaTerc)}</b></span>
       <span>Reports <b>${BRL(somaReports)}</b></span>
     </div>
@@ -5290,11 +5334,32 @@ function vFatura(){
   </div>
 
   <div class="kpis">
-    ${kpi('Sua parte da fatura',BRL(valor),real?'confirmado':'estimado',real?'pos':'amb')}
-    ${kpi('Total real do cartão',BRL(totalBanco),'banco = casal + terceiros + Reports')}
+    ${kpi('Sua parte da fatura',BRL(valor),bancoInformado!=null?'derivada do banco':(real?'confirmado':'estimado'),(bancoInformado!=null||real)?'pos':'amb')}
+    ${kpi('Total real do cartão',BRL(totalBanco),bancoInformado!=null?'conferido no banco':'estimado pelo Dueto')}
     ${kpi('Terceiros',BRL(somaTerc),terceiros.length+' item'+(terceiros.length===1?'':'s'))}
     ${kpi('Parcelado comprometido',BRL(parcelas.reduce((s,p)=>s+(+p.valor_parcela)*(mesesDaParcela(p).filter(m=>m>=comp).length||1),0)),'saldo das compras parceladas desta fatura')}
   </div>
+
+  ${!snap?`<div class="panel" style="margin-bottom:16px"><h2>Conferir com o banco
+    <small>o número do banco sempre vence a estimativa do Dueto</small></h2>
+    <div class="pbody">
+      <div class="form">
+        <div class="fld"><label>Total que aparece no banco</label>
+          <input id="fat_banco_total" type="number" step="0.01"
+            value="${bancoInformado!=null?bancoInformado:''}" placeholder="0,00"></div>
+        <div class="fld"><label>&nbsp;</label>
+          <button class="btn" onclick="salvarTotalBanco(${jsArg(n)},'${comp}')">Usar valor do banco</button></div>
+        ${bancoInformado!=null?`<div class="fld"><label>&nbsp;</label>
+          <button class="btn alt" onclick="limparTotalBanco(${jsArg(n)},'${comp}')">Voltar para estimativa</button></div>`:''}
+      </div>
+      <div class="note" style="margin-top:10px">
+        Dueto mapeou <b>${BRL(totalModelado)}</b>.
+        ${bancoInformado!=null
+          ? `Banco informa <b>${BRL(bancoInformado)}</b> · diferença para conciliar:
+             <b>${divergencia===0?'R$ 0,00':(divergencia>0?'+':'−')+BRL(Math.abs(divergencia))}</b>.`
+          : `Sem conferência, o total é mostrado como <b>estimativa</b>, nunca como valor real.`}
+      </div>
+    </div></div>`:''}
 
   ${alertasFat.length?`<div class="v107-alerts">${alertasFat.map(a=>`<div class="v107-alert ${a.c}"><b>${a.t}</b><span>${a.d}</span></div>`).join('')}</div>`:''}
 
