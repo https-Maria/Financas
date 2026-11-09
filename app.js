@@ -2475,9 +2475,12 @@ function vLanc(){
     ${LANC_NAT==='caixinha'?`<p class="note" style="margin-top:10px">Soma no guardado da meta escolhida e baixa do saldo em conta — mesma lógica da aba Metas.</p>`:''}
   </div></div>
   <div class="kpis">
-    ${kpi('Entradas',BRL(r.ent),'','pos')} ${kpi('Saídas',BRL(r.sai),'','neg')}
-    ${kpi('Saldo',BRL(r.sal),'',r.sal<0?'neg':'pos')} ${kpi('Benefícios',BRL(r.va),'fora do saldo','amb')}
+    ${kpi('Entradas',BRL(r.ent),'caixa do casal','pos')} ${kpi('Saídas',BRL(r.sai),'caixa do casal','neg')}
+    ${kpi('Saldo',BRL(r.sal),'sem transferências',r.sal<0?'neg':'pos')} ${kpi('Benefícios',BRL(r.va),'fora do saldo','amb')}
   </div>
+  <p class="note" style="margin-bottom:14px">Realizado considera apenas movimentos confirmados do orçamento.
+    Compras no crédito entram quando a fatura é paga; transferências e reembolsos não são renda.
+    ${r.reembolsos>0?'Reembolsos recebidos, separados da renda: <b>'+BRL(r.reembolsos)+'</b>.':''}</p>
   <div class="panel"><h2>${mLabel(MREF)} <small>${ls.length} de ${doMes.length} lançamento${doMes.length===1?'':'s'}</small>
     <select style="max-width:140px" onchange="setMes(this.value)">
       ${mesesDisponiveis().map(k=>`<option value="${k}" ${k===MREF?'selected':''}>${mLabel(k)}</option>`).join('')}
@@ -4679,7 +4682,7 @@ function vDash(){
   </div>
 
   <div class="grid2">
-    <div class="panel"><h2>Para onde vai cada real<small>${mLabel(k)}</small></h2><div class="pbody">
+    <div class="panel"><h2>Para onde vai cada real<small>Orçamento previsto · ${mLabel(k)}</small></h2><div class="pbody">
       ${[['Contas fixas',I.fix,I.pctFix,'var(--steel)'],
          ['Dívidas',I.servico,I.pctServico,'var(--neg)'],
          ['Assinaturas',I.assin,I.pctAssin,'var(--amber)'],
