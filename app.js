@@ -6052,7 +6052,7 @@ function integridadeItens(){
       if(lista.length!==+p.restantes)
         add('warn','Competências não conferem com parcelas restantes',
           p.descricao+': '+lista.length+' competência(s) para '+p.restantes+' parcela(s).','parc');
-      if(new Set(lista).size!==lista.length || lista.some(m=>!/^\\d{4}-(0[1-9]|1[0-2])$/.test(m)))
+      if(new Set(lista).size!==lista.length || lista.some(m=>!/^\d{4}-(0[1-9]|1[0-2])$/.test(m)))
         add('crit','Lista de competências inválida',p.descricao+' tem mês duplicado ou inválido.','parc');
     }
   });
