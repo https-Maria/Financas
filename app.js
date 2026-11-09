@@ -11,7 +11,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v109.9';
+const APP_VER='v110.0';
 
 /* =====================================================================
    ESTADO
@@ -2314,6 +2314,63 @@ window.lancTercSet=(campo,val,redesenha)=>{
   if(redesenha) render();
 };
 
+/* Primeira fatura de uma compra parcelada feita pela tela Lançamentos.
+   Quando há ciclos cadastrados, usa exatamente a janela de fechamento já
+   conhecida pelo app. Sem ciclos, mantém o comportamento conservador da
+   antiga tela "Nova compra": começa no mês seguinte e deixa a usuária corrigir. */
+function primeiraFaturaCompra(cartao,data){
+  const base=ym(data||hoje());
+  if(!cartao) return addM(base,1);
+  const d=String(data||hoje());
+  if(D.ciclos.some(c=>c.cartao===cartao)){
+    for(let i=-1;i<=18;i++){
+      const k=addM(base,i);
+      const j=janelaFatura(cartao,k);
+      if(j && d>j.ini && d<=j.fim) return k;
+    }
+  }
+  return addM(base,1);
+}
+
+/* Mostra parcelamento só para compra normal, de saída, feita no cartão.
+   Pagamento de fatura/estorno continuam com a lógica antiga e nunca viram dívida. */
+window.lancParcelasAtualiza=(recalcularFatura)=>{
+  const cart=$('l_cart')?.value||null;
+  const cat=$('l_c')?.value||'';
+  const tipo=$('l_t')?.value||'';
+  const wrap=$('l_parc_wrap'), fatWrap=$('l_fat_wrap'), resumo=$('l_parc_resumo');
+  const sel=$('l_parc'), fat=$('l_fat');
+  const habilitado=!!cart && tipo==='Saída' && cat!=='Cartão';
+
+  if(wrap) wrap.style.display=habilitado?'':'none';
+  if(!habilitado){
+    if(sel) sel.value='1';
+    if(fatWrap) fatWrap.style.display='none';
+    if(resumo) resumo.textContent='';
+    return;
+  }
+
+  const n=Math.max(1,Math.min(24,+(sel?.value||1)));
+  if(fatWrap) fatWrap.style.display=n>1?'':'none';
+
+  if(n>1 && fat){
+    const data=$('l_d')?.value||hoje();
+    const sugerida=primeiraFaturaCompra(cart,data);
+    const atual=(!recalcularFatura && fat.value) ? fat.value : sugerida;
+    const meses=horizon(16,addM(sugerida,-1));
+    if(!meses.includes(atual)) meses.push(atual);
+    meses.sort();
+    fat.innerHTML=meses.map(k=>`<option value="${k}" ${k===atual?'selected':''}>${mLabel(k)}</option>`).join('');
+  }
+
+  const total=parseFloat($('l_v')?.value);
+  if(resumo){
+    resumo.innerHTML=n>1 && total>0
+      ? `Cada parcela: <b>${BRL(total/n)}</b> · total: <b>${BRL(total)}</b>`
+      : '';
+  }
+};
+
 function vLanc(){
   const doMes=D.lancamentos.filter(l=>ym(l.data)===MREF);
   const cats=[...new Set(doMes.map(l=>l.categoria))].sort();
@@ -2326,10 +2383,22 @@ function vLanc(){
     <div class="fld"><label>Categoria</label><select id="l_c" onchange="lancCampos()">${CATS.map(c=>`<option>${c}</option>`).join('')}</select></div>
     <div class="fld"><label>Tipo</label><select id="l_t" onchange="lancCampos()"><option>Saída</option><option>Entrada</option></select></div>
     <div class="fld"><label>Quem</label><select id="l_q">${['Casal','Maria','Jéssica'].map(q=>`<option>${q}</option>`).join('')}</select></div>
-    <div class="fld"><label>Valor</label><input type="number" step="0.01" id="l_v" placeholder="0,00"></div>
-    <div class="fld"><label id="l_cart_lbl">Pago com${$('l_c')&&$('l_c').value==='Cartão'?' *':''}</label><select id="l_cart">
+    <div class="fld"><label>Valor total</label><input type="number" step="0.01" id="l_v" placeholder="0,00"
+      oninput="lancParcelasAtualiza(false)"></div>
+    <div class="fld"><label id="l_cart_lbl">Pago com${$('l_c')&&$('l_c').value==='Cartão'?' *':''}</label><select id="l_cart"
+      onchange="lancParcelasAtualiza(true)">
       <option value="">À vista (débito, Pix, dinheiro)</option>
       ${cartoesAtivos.map(c=>`<option>${esc(c.nome)}</option>`).join('')}</select></div>
+    <div class="fld" id="l_parc_wrap" style="display:none"><label>Parcelas</label>
+      <select id="l_parc" onchange="lancParcelasAtualiza(false)">
+        ${Array.from({length:24},(_,i)=>i+1).map(n=>`<option value="${n}">${n===1?'1x (à vista no cartão)':n+'x'}</option>`).join('')}
+      </select>
+      <div class="note" id="l_parc_resumo" style="margin-top:5px"></div>
+    </div>
+    <div class="fld" id="l_fat_wrap" style="display:none"><label>1ª fatura</label>
+      <select id="l_fat"></select>
+      <div class="note" style="margin-top:5px">Sugerida pelo ciclo do cartão; você pode corrigir.</div>
+    </div>
     <div class="fld" style="grid-column:span 2"><label>&nbsp;</label>
       <label class="chkfld"><input type="checkbox" id="l_gav" checked>
         Contar no Planejamento do Painel</label></div>`;
@@ -2388,7 +2457,8 @@ function vLanc(){
     <div class="form">
       ${LANC_NAT==='terceiro'
         ? camposTerceiro
-        : `<div class="fld"><label>Data</label><input type="date" id="l_d" value="${MREF}-01"></div>
+        : `<div class="fld"><label>Data</label><input type="date" id="l_d" value="${MREF}-01"
+            onchange="lancParcelasAtualiza(true)"></div>
           <div class="fld" style="grid-column:span 2"><label>Descrição${LANC_NAT==='caixinha'?' (opcional)':''}</label>
             <input id="l_n" placeholder="${LANC_NAT==='caixinha'?'Deixe em branco pro nome padrão':'Ex.: Mercado, ou Estorno — devolução'}"></div>
           ${LANC_NAT==='normal'?camposNormal:camposCaixinha}
@@ -2448,6 +2518,7 @@ window.lancCampos=()=>{
   const c=$('l_c')?.value, t=$('l_t')?.value;
   const lbl=$('l_cart_lbl'); if(lbl) lbl.textContent='Pago com'+(c==='Cartão'?' *':'');
   const h=$('l_hint'); if(h) h.style.display=(c==='Cartão'&&t==='Entrada')?'':'none';
+  lancParcelasAtualiza(true);
 };
 window.addLancTerc=async()=>{
   const data=$('lt_d')?.value||hoje();
@@ -2524,6 +2595,28 @@ window.addLanc=async()=>{
     tipo=$('l_t').value;
   if(!n||!v) return toast('Preencha descrição e valor');
   if(cat==='Cartão' && !cart) return toast('Escolha o cartão — senão isso não abate a fatura de ninguém', 4400);
+
+  /* Compra parcelada no cartão vira UM parcelamento, não vários lançamentos.
+     Assim a fatura recebe só a parcela de cada mês e nunca o valor total em dobro. */
+  const parcelas=(cart && tipo==='Saída' && cat!=='Cartão')
+    ? Math.max(1,Math.min(24,+($('l_parc')?.value||1))) : 1;
+  if(parcelas>1){
+    const comp=$('l_fat')?.value || primeiraFaturaCompra(cart,d);
+    if(faturaFechada(cart,comp))
+      return toast('A fatura de '+mLabel(comp)+' já está fechada. Escolha uma 1ª fatura ainda aberta para não alterar o histórico.',5200);
+    const vp=+(v/parcelas).toFixed(2);
+    const ok=await inserir('parcelamentos',{
+      descricao:n, cartao:cart, valor_parcela:vp,
+      total_parcelas:parcelas, restantes:parcelas, primeira_fatura:comp+'-01',
+      responsavel:$('l_q').value, origem:'lancamento_parcelado', criado_por:USER.id
+    });
+    if(ok){
+      MREF=ym(d); render();
+      toast(n+' adicionado · '+parcelas+'x de '+BRL(vp)+' · 1ª fatura '+mLabel(comp));
+    }
+    return;
+  }
+
   const statusLanc=d>hoje()?'Projetado':'Confirmado';
   const ok=await inserir('lancamentos',{data:d,descricao:n,categoria:cat,cartao:cart,
     tipo,quem:$('l_q').value,valor:v,status:statusLanc,criado_por:USER.id,
