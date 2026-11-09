@@ -2,7 +2,8 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.118.0';
 import {
   mesesDaParcela as mesesDaParcelaCore, parcelaCaiEm as parcelaCaiEmCore,
   parcelasMes as parcelasMesCore, lancamentoPertenceAoCiclo,
-  mesDeCaixa as mesDeCaixaCore, categoriaNeutra, movimentoOrcamentario, repartirFatura
+  mesDeCaixa as mesDeCaixaCore, categoriaNeutra, movimentoOrcamentario, repartirFatura,
+  totalComposicaoFatura
 } from './finance-core.mjs?v=113.0';
 
 /* =====================================================================
@@ -1973,9 +1974,8 @@ function chartFluxo(n=12,ini){
 }
 
 function primeiroMesComParcela(){
-  const h=horizon(24,MREF);
-  const k=h.find(m=>parcelasMes(m)>0);
-  return k||MREF;
+  const meses=D.parcelamentos.flatMap(p=>mesesDaParcela(p)).filter(m=>m>=MREF).sort();
+  return meses[0]||MREF;
 }
 function ultimoMesParcela(){
   let ult=null;
@@ -6058,6 +6058,15 @@ function integridadeItens(){
       if(new Set(lista).size!==lista.length || lista.some(m=>!/^\d{4}-(0[1-9]|1[0-2])$/.test(m)))
         add('crit','Lista de competências inválida',p.descricao+' tem mês duplicado ou inválido.','parc');
     }
+  });
+
+  D.faturas_fechadas.forEach(f=>{
+    const itens=totalComposicaoFatura(f.composicao||{});
+    const diferenca=Math.round(((+f.total_real||0)-itens)*100)/100;
+    if(Math.abs(diferenca)>0.01)
+      add('warn','Fotografia histórica sem conciliação completa',
+        f.cartao+' '+mLabel(f.competencia)+': diferença de '+BRL(diferenca)+
+        ' entre total congelado e itens identificados. Não altere o histórico sem conferir o extrato.','fatura');
   });
 
   const semFoto=D.ciclos.filter(c=>!c.inferido && c.fecha && c.fecha<h &&
