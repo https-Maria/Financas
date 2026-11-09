@@ -1,4 +1,9 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.118.0';
+import {
+  mesesDaParcela as mesesDaParcelaCore, parcelaCaiEm as parcelaCaiEmCore,
+  parcelasMes as parcelasMesCore, lancamentoPertenceAoCiclo,
+  mesDeCaixa as mesDeCaixaCore, categoriaNeutra, movimentoOrcamentario, repartirFatura
+} from './finance-core.mjs?v=113.0';
 
 /* =====================================================================
    CONFIGURAÇÃO
@@ -11,7 +16,7 @@ const CFG = {
 };
 const sb = createClient(CFG.url, CFG.key);
 
-const APP_VER='v112.2';
+const APP_VER='v113.0';
 
 /* =====================================================================
    ESTADO
@@ -254,25 +259,9 @@ const crediariosDoMes = k =>
   D.parcelamentos.filter(p=>ehCrediario(p) && +p.restantes>0 && parcelaCaiEm(p,k));
 const totCrediario = k => crediariosDoMes(k).reduce((s,p)=>s+ +p.valor_parcela,0);
 
-function mesesDaParcela(p){
-  if(Array.isArray(p.competencias) && p.competencias.length)
-    return p.competencias.slice(0, p.restantes);
-  const ini=p.primeira_fatura?ym(p.primeira_fatura):ym(hoje());
-  return Array.from({length:+p.restantes||0},(_,i)=>addM(ini,i));
-}
-const parcelaCaiEm=(p,k)=>mesesDaParcela(p).includes(k);
-
-function parcelasMes(k, extra){
-  let t=0;
-  const conta=(p)=>{
-    const ini = p.primeira_fatura ? ym(p.primeira_fatura) : ym(hoje());
-    const idx = mesesEntre(ini,k);
-    if(idx>=0 && idx<p.restantes) t += +p.valor_parcela;
-  };
-  D.parcelamentos.forEach(conta);
-  if(extra) conta(extra);
-  return t;
-}
+const mesesDaParcela = p => mesesDaParcelaCore(p,ym(hoje()));
+const parcelaCaiEm = (p,k) => parcelaCaiEmCore(p,k,ym(hoje()));
+const parcelasMes = (k,extra) => parcelasMesCore(D.parcelamentos,k,extra,ym(hoje()));
 function mesesEntre(a,b){const[ay,am]=a.split('-').map(Number),[by,bm]=b.split('-').map(Number);
   return (by-ay)*12+(bm-am);}
 /* Fatura de verdade: vem dos lançamentos. Se você já lançou o pagamento da
@@ -477,8 +466,8 @@ function temaCartao(c, bbIndex=0){
   return 'dueto';
 }
 function terceirosCartaoMes(nome,k){
-  return D.terceiros.filter(t=>t.cartao===nome &&
-    (!t.competencia || t.competencia===mLabel(k)))
+  // Sem competência definida, um terceiro não pode aparecer em todas as faturas.
+  return D.terceiros.filter(t=>t.cartao===nome && t.competencia===mLabel(k))
     .reduce((s,t)=>s+ +t.valor,0);
 }
 function totalVisualCartao(nome,k){
@@ -994,9 +983,11 @@ window.bloquearCofre=()=>{cofreBloquear();toast('Cofre bloqueado');};
    esta aba cria isso, e sempre SOMA — cobrança extra some, estorno abate —
    em cima de tudo o mais, sem depender de ciclo ou cálculo. */
 function ajustesFatura(nome, k){
+  const janela=janelaFatura(nome,k);
   return D.lancamentos.filter(l=>
-    (l.competencia_fatura||ym(l.data))===k && !l.protegido &&
-    (l.cartao||'')===nome && l.categoria==='Ajuste Fatura');
+    !l.protegido && (l.cartao||'')===nome &&
+    l.categoria==='Ajuste Fatura' &&
+    lancamentoPertenceAoCiclo(l,k,janela));
 }
 /* Quais ajustes ainda somam: todos, a não ser que a fatura tenha sido marcada
    no Painel — aí os que já existiam estão dentro da foto. */
@@ -1023,7 +1014,7 @@ function composicaoFatura(nome,k){
     id:l.id,data:l.data,descricao:l.descricao,valor:+l.valor,tipo:l.tipo,categoria:l.categoria
   }));
   const terceiros=D.terceiros.filter(t=>t.cartao===nome &&
-    (!t.competencia || t.competencia===mLabel(k))).map(t=>({
+    t.competencia===mLabel(k)).map(t=>({
       id:t.id,pessoa:t.pessoa,descricao:t.descricao,valor:+t.valor,competencia:t.competencia
     }));
   const ajustes=ajustesFatura(nome,k).map(l=>({
@@ -1036,31 +1027,28 @@ async function congelarFatura(nome,k,valorForcado){
   if(FALTANDO.includes('faturas_fechadas')) return null;
   const existente=faturaFechada(nome,k); if(existente) return existente;
   const ciclo=cicloDe(nome,k), jan=janelaFatura(nome,k), comp=composicaoFatura(nome,k);
-  const sua=valorForcado==null ? faturaCartaoViva(nome,k) : +valorForcado;
   const terc=comp.terceiros.reduce((s,x)=>s+ +x.valor,0);
   const rep=comp.reports.reduce((s,x)=>s+ +x.valor,0);
+  const valores=repartirFatura({
+    banco:faturaBancoInformada(nome,k),terceiros:terc,reports:rep,
+    modelado:faturaCartaoViva(nome,k),forcado:valorForcado
+  });
+  if(valores.erro){toast(valores.erro+' Confira os valores antes de fechar.',5000);return null;}
   const linha={grupo_id:GRUPO,cartao:nome,competencia:k,fecha:ciclo?.fecha||jan?.fim||null,
-    vence:ciclo?.vence||null,sua_parte:sua,total_real:sua+terc+rep,composicao:comp,
-    criado_por:USER?.id||null};
+    vence:ciclo?.vence||null,sua_parte:valores.sua_parte,total_real:valores.total_real,
+    composicao:comp,criado_por:USER?.id||null};
+  // INSERT, nunca UPSERT: duas sessões não podem sobrescrever uma fotografia histórica.
   const {data,error}=await sb.from('faturas_fechadas')
-    .upsert(linha,{onConflict:'grupo_id,cartao,competencia'}).select().single();
+    .insert(linha).select().single();
   if(error){ toast('Não consegui congelar a fatura: '+error.message,5000); return null; }
   const i=D.faturas_fechadas.findIndex(x=>x.id===data.id);
   if(i>=0) D.faturas_fechadas[i]=data; else D.faturas_fechadas.push(data);
   cacheSave(); return data;
 }
-async function descongelarFatura(nome,k){
-  const f=faturaFechada(nome,k); if(!f) return true;
-  return remover('faturas_fechadas',f.id);
-}
-
 /* Parcela de uma compra simulada neste mês. Independe de cartão escolhido:
    uma compra sem cartão definido ainda pesa no orçamento. */
 function parcelaExtra(k, extra){
-  if(!extra) return 0;
-  const ini=extra.primeira_fatura?ym(extra.primeira_fatura):ym(hoje());
-  const idx=mesesEntre(ini,k);
-  return (idx>=0 && idx<extra.restantes) ? +extra.valor_parcela : 0;
+  return extra && parcelaCaiEm(extra,k) ? +extra.valor_parcela : 0;
 }
 
 /* Cartão que vence no dia 1 é pago com a sobra do último dia do mês anterior.
@@ -1303,7 +1291,8 @@ function avulsosDoMes(k){
   const cartoesAtivos = new Set(D.cartoes.filter(c=>c.ativo).map(c=>c.nome));
   return D.lancamentos.filter(l=>{
     if(mesDeCaixa(l)!==k) return false;
-    if(l.beneficio || l.protegido) return false;          // VA e Reports têm lugar próprio
+    if(l.beneficio || l.protegido || categoriaNeutra(l.categoria)) return false;
+    // VA/Reports e movimentações neutras não integram o orçamento do casal.
     /* Qualquer lançamento com cartão marcado já faz parte da fatura daquele
        cartão — categoria Cartão, Ajuste Fatura, Compras, tanto faz. Nunca
        deve contar de novo como linha solta do dia a dia. */
@@ -1406,10 +1395,8 @@ function blocosDoMes(k, comPlanejado){
    último dia do mês anterior. Então, para efeito de caixa, o dinheiro sai no
    mês anterior — mesmo que o lançamento esteja datado no dia 1. */
 function mesDeCaixa(l){
-  const k=ym(l.data);
-  if(l.cartao && venceNoDia1(l.cartao) && String(l.data).slice(8,10)==='01')
-    return addM(k,-1);
-  return k;
+  // Somente o pagamento da fatura usa a reserva do mês anterior.
+  return mesDeCaixaCore(l,!!l.cartao && venceNoDia1(l.cartao));
 }
 
 /* Reports é dinheiro protegido: entra, paga coisas alocadas a ele, e o que
@@ -1438,16 +1425,18 @@ function reservasMes(k){
 }
 
 function realizado(k){
-  /* Realizado é só o que de fato aconteceu. Projetado não pode contaminar mês fechado.
-     Reembolso/principal de terceiros mexe no banco, mas não é renda nem gasto do casal. */
-  const ls=D.lancamentos.filter(l=>mesDeCaixa(l)===k && l.status!=='Projetado');
-  const orc=l=>!l.protegido&&!l.beneficio&&l.categoria!=='Transferência interna'&&l.categoria!=='Terceiros';
+  /* Base de CAIXA: compras no crédito pertencem à fatura, não ao dia da compra.
+     Transferências e reembolsos continuam no extrato bancário, não na renda. */
+  const ls=D.lancamentos.filter(l=>mesDeCaixa(l)===k && l.status==='Confirmado');
+  const orc=movimentoOrcamentario;
   const ent=ls.filter(l=>l.tipo==='Entrada'&&orc(l)).reduce((s,l)=>s+ +l.valor,0);
   const sai=ls.filter(l=>l.tipo==='Saída'&&orc(l)).reduce((s,l)=>s+ +l.valor,0);
-  const va =ls.filter(l=>l.beneficio).reduce((s,l)=>s+ +l.valor,0);
+  const va=ls.filter(l=>l.beneficio).reduce((s,l)=>s+ +l.valor,0);
+  const reembolsos=ls.filter(l=>l.tipo==='Entrada' && /^Reembolso/i.test(l.categoria||''))
+    .reduce((s,l)=>s+ +l.valor,0);
   const porCat={};
   ls.filter(l=>l.tipo==='Saída'&&orc(l)).forEach(l=>porCat[l.categoria]=(porCat[l.categoria]||0)+ +l.valor);
-  return {ent,sai,va,sal:ent-sai,n:ls.length,porCat,temDados:ls.some(orc)};
+  return {ent,sai,va,reembolsos,sal:ent-sai,n:ls.length,porCat,temDados:ls.some(orc)};
 }
 
 /* =====================================================================
@@ -1504,21 +1493,8 @@ async function carregarTudo(){
   }
 }
 
-let AUTO_FREEZE=false;
-async function autoCongelarFaturasFechadas(){
-  if(DEMO_MODE||AUTO_FREEZE||FALTANDO.includes('faturas_fechadas')) return;
-  AUTO_FREEZE=true;
-  try{
-    const corte='2026-10-26';
-    const ciclos=D.ciclos.filter(c=>c.fecha&&c.fecha>=corte&&c.fecha<hoje()&&!c.inferido)
-      .sort((a,b)=>a.fecha.localeCompare(b.fecha));
-    for(const c of ciclos){
-      if(!D.cartoes.some(x=>x.ativo&&x.nome===c.cartao)) continue;
-      if(faturaFechada(c.cartao,c.competencia)) continue;
-      await congelarFatura(c.cartao,c.competencia);
-    }
-  }finally{AUTO_FREEZE=false;}
-}
+/* Fechar o ciclo não equivale a pagar/conferir a fatura.
+   Fotografias são criadas apenas quando o usuário confirma no Painel. */
 
 async function inserir(tabela, linha){
   if(DEMO_MODE){ toast('Modo demo: nenhuma alteração é salva.',3000); return null; }
@@ -1802,8 +1778,11 @@ window.marcarItem=async(dia,lado,ix)=>{
   const rel=lancRelacionado(it,MREF);
   const feito=rel && rel.itens.some(confirmado);
   if(feito){
-    if(it.tipo==='cartao' || it.tipo==='reserva')
-      await descongelarFatura(it.cartao, it.tipo==='reserva'?it.competencia:MREF);
+    if((it.tipo==='cartao' || it.tipo==='reserva') &&
+       faturaFechada(it.cartao,it.tipo==='reserva'?it.competencia:MREF)){
+      toast('Fatura histórica protegida. Ajuste a diferença numa fatura aberta.',5000);
+      return;
+    }
     /* desmarcar: o que o painel criou some; o que veio de outra origem só
        volta a ser previsão, para não perder o valor real da fatura */
     for(const l of rel.itens.filter(confirmado)){
@@ -1815,6 +1794,13 @@ window.marcarItem=async(dia,lado,ix)=>{
     return;
   }
   if(rel){
+    if(it.tipo==='cartao' || it.tipo==='reserva'){
+      const compFat=it.tipo==='reserva'?it.competencia:MREF;
+      if(!faturaFechada(it.cartao,compFat)){
+        const snap=await congelarFatura(it.cartao,compFat,it.valor);
+        if(!snap) return;
+      }
+    }
     for(const l of rel.itens){
       const mud={status:'Confirmado'};
       if(it.tipo==='avulso' && !veioDoPainel(l)) mud.observacao=MARCA_PAINEL;
